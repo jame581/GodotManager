@@ -32,6 +32,11 @@
   - Fetch/Install: browse remote versions/editions, start download with progress bars; confirm force overwrite.
 - Keep TUI as a layer over Phase 1 services to reuse logic.
 
+### Current TUI (baseline)
+- `tui` command launches interactive menu: list installs, install (URL or local archive), activate, remove, doctor summary.
+- Progress bar wraps install flow; prompts handle edition/platform/source/force/activate.
+- Activation/removal reuse registry/environment services.
+
 ## Data Model
 - Install entry: { id, version, edition (Standard|DotNet), platform, path, checksum?, addedAt, isActive }.
 - Config: default installs root, shim target, verbosity.
