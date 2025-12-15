@@ -10,21 +10,38 @@ namespace GodotManager.Commands;
 internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 {
     private readonly InstallerService _installer;
+    private readonly GodotDownloadUrlBuilder _urlBuilder;
 
-    public InstallCommand(InstallerService installer)
+    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder)
     {
         _installer = installer;
+        _urlBuilder = urlBuilder;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         try
         {
+            Uri? url = null;
+            if (!string.IsNullOrWhiteSpace(settings.Url))
+            {
+                url = new Uri(settings.Url);
+            }
+            else if (string.IsNullOrWhiteSpace(settings.ArchivePath))
+            {
+                if (!_urlBuilder.TryBuildUri(settings.Version, settings.Edition, settings.Platform, out url, out var error))
+                {
+                    return Fail(error ?? "Unable to build download URL.");
+                }
+
+                AnsiConsole.MarkupLineInterpolated($"[grey]Auto URL[/]: {url}");
+            }
+
             var request = new InstallRequest(
                 settings.Version,
                 settings.Edition,
                 settings.Platform,
-                settings.Url is null ? null : new Uri(settings.Url),
+                url,
                 settings.ArchivePath,
                 settings.InstallPath,
                 settings.Activate,
@@ -37,9 +54,14 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Install failed:[/] {ex.Message}");
-            return -1;
+            return Fail(ex.Message);
         }
+    }
+
+    private static int Fail(string message)
+    {
+        AnsiConsole.MarkupLineInterpolated($"[red]Install failed:[/] {message}");
+        return -1;
     }
 
     internal sealed class Settings : CommandSettings
@@ -75,9 +97,9 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 return ValidationResult.Error("Version is required.");
             }
 
-            if (string.IsNullOrWhiteSpace(Url) && string.IsNullOrWhiteSpace(ArchivePath))
+            if (!string.IsNullOrWhiteSpace(Url) && !Uri.IsWellFormedUriString(Url, UriKind.Absolute))
             {
-                return ValidationResult.Error("Provide --url or --archive.");
+                return ValidationResult.Error("--url is not a valid absolute URI.");
             }
 
             return ValidationResult.Success();

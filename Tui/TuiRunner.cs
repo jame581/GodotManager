@@ -15,13 +15,15 @@ internal sealed class TuiRunner
     private readonly InstallerService _installer;
     private readonly EnvironmentService _environment;
     private readonly AppPaths _paths;
+    private readonly GodotDownloadUrlBuilder _urlBuilder;
 
-    public TuiRunner(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths)
+    public TuiRunner(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths, GodotDownloadUrlBuilder urlBuilder)
     {
         _registry = registry;
         _installer = installer;
         _environment = environment;
         _paths = paths;
+        _urlBuilder = urlBuilder;
     }
 
     public async Task<int> RunAsync()
@@ -81,21 +83,12 @@ internal sealed class TuiRunner
         var edition = AnsiConsole.Prompt(new SelectionPrompt<InstallEdition>().Title("Edition:").AddChoices(InstallEdition.Standard, InstallEdition.DotNet));
         var platform = AnsiConsole.Prompt(new SelectionPrompt<InstallPlatform>().Title("Platform:").AddChoices(InstallPlatform.Windows, InstallPlatform.Linux)
             .UseConverter(p => p.ToString())) ;
-        var source = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Source:").AddChoices("Download URL", "Local archive"));
+        var useLocal = AnsiConsole.Confirm("Use a local archive instead of downloading?", false);
 
         string? url = null;
         string? archive = null;
 
-        if (source == "Download URL")
-        {
-            url = AnsiConsole.Prompt(new TextPrompt<string>("Archive URL:"));
-            if (!Uri.TryCreate(url, UriKind.Absolute, out _))
-            {
-                AnsiConsole.MarkupLine("[red]Invalid URL.[/]");
-                return;
-            }
-        }
-        else
+        if (useLocal)
         {
             archive = AnsiConsole.Prompt(new TextPrompt<string>("Archive path:"));
             if (!File.Exists(archive))
@@ -103,6 +96,17 @@ internal sealed class TuiRunner
                 AnsiConsole.MarkupLine("[red]Archive not found.[/]");
                 return;
             }
+        }
+        else
+        {
+            if (!_urlBuilder.TryBuildUri(version, edition, platform, out var built, out var error))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Could not build download URL:[/] {error}");
+                return;
+            }
+
+            url = built!.ToString();
+            AnsiConsole.MarkupLineInterpolated($"[grey]Download URL[/]: {url}");
         }
 
         var installDir = AnsiConsole.Prompt(new TextPrompt<string>("Install directory [grey](blank = default)[/]:").AllowEmpty());

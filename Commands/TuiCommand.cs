@@ -11,9 +11,9 @@ internal sealed class TuiCommand : AsyncCommand
 {
     private readonly TuiRunner _runner;
 
-    public TuiCommand(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths)
+    public TuiCommand(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths, GodotDownloadUrlBuilder urlBuilder)
     {
-        _runner = new TuiRunner(registry, installer, environment, paths);
+        _runner = new TuiRunner(registry, installer, environment, paths, urlBuilder);
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context)

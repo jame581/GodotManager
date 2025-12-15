@@ -13,6 +13,7 @@ services.AddSingleton<RegistryService>();
 services.AddSingleton<EnvironmentService>();
 services.AddSingleton<InstallerService>();
 services.AddSingleton<HttpClient>();
+services.AddSingleton<GodotDownloadUrlBuilder>();
 
 var registrar = new TypeRegistrar(services);
 var app = new CommandApp(registrar);
