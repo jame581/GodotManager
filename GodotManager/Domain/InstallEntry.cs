@@ -3,13 +3,13 @@ using System.Text.Json.Serialization;
 
 namespace GodotManager.Domain;
 
-internal enum InstallEdition
+public enum InstallEdition
 {
     Standard,
     DotNet
 }
 
-internal enum InstallPlatform
+public enum InstallPlatform
 {
     Windows,
     Linux
