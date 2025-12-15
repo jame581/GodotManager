@@ -30,9 +30,29 @@ app.Configure(config =>
 	config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
 });
 
+string[] NormalizeArgs(string[] input)
+{
+	if (input.Length == 0)
+	{
+		return input;
+	}
+
+	var first = input[0];
+	if (first.StartsWith("--") && first.Length > 2)
+	{
+		// Allow shorthand like `dotnet run --list` instead of `dotnet run -- list`.
+		var command = first.TrimStart('-');
+		return new[] { command }.Concat(input.Skip(1)).ToArray();
+	}
+
+	return input;
+}
+
+var normalizedArgs = NormalizeArgs(args);
+
 try
 {
-	return app.Run(args);
+	return app.Run(normalizedArgs);
 }
 catch (CommandRuntimeException ex)
 {
