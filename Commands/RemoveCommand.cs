@@ -53,7 +53,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
     internal sealed class Settings : CommandSettings
     {
-        [CommandArgument(0, "id")]
+        [CommandArgument(0, "<id>")]
         public Guid Id { get; set; }
 
         [CommandOption("--delete")]
