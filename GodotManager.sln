@@ -4,7 +4,7 @@ VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GodotManager", "GodotManager\GodotManager.csproj", "{CF046B24-9873-FFCB-CC8C-AD26D161B311}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GodotManager.Tests", "Tests\GodotManager.Tests.csproj", "{E7AEFDB1-E359-4D30-9D83-00BEB7AD1A20}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GodotManager.Tests", "GodotManager.Tests\GodotManager.Tests.csproj", "{E7AEFDB1-E359-4D30-9D83-00BEB7AD1A20}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
