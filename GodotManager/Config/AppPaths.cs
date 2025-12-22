@@ -17,21 +17,24 @@ internal sealed class AppPaths
 
     public AppPaths()
     {
+        var overrideBase = Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME");
+        var overrideGlobalBase = Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT");
+
         if (OperatingSystem.IsWindows())
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var appData = overrideBase ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             ConfigDirectory = System.IO.Path.Combine(appData, "GodotManager");
-            _userShimDirectory = System.IO.Path.Combine(ConfigDirectory, "bin");
+            _userShimDirectory = System.IO.Path.Combine(appData, "GodotManager", "bin");
             _globalShimDirectory = _userShimDirectory;
-            _userInstallRoot = System.IO.Path.Combine(ConfigDirectory, "installs");
+            _userInstallRoot = System.IO.Path.Combine(appData, "GodotManager", "installs");
             _globalInstallRoot = _userInstallRoot;
         }
         else
         {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var home = overrideBase ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             ConfigDirectory = System.IO.Path.Combine(home, ".config", "godot-manager");
             _userShimDirectory = System.IO.Path.Combine(home, ".local", "bin");
-            _globalShimDirectory = "/usr/local/bin";
+            _globalShimDirectory = overrideGlobalBase ?? "/usr/local/bin";
             _userInstallRoot = System.IO.Path.Combine(home, ".local", "bin", "godot-manager");
             _globalInstallRoot = System.IO.Path.Combine(_globalShimDirectory, "godot-manager");
         }

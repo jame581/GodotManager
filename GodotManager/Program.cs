@@ -3,6 +3,7 @@ using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
+using GodotManager.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -28,6 +29,7 @@ app.Configure(config =>
 	config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");
 	config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
 	config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
+	config.AddCommand<CleanCommand>("clean").WithDescription("Remove godot-manager installs, shims, and config");
 });
 
 string[] NormalizeArgs(string[] input)
