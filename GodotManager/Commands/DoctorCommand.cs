@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using GodotManager.Config;
 using GodotManager.Services;
+using GodotManager.Domain;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -43,9 +44,10 @@ internal sealed class DoctorCommand : AsyncCommand
             AnsiConsole.MarkupLineInterpolated($"[green]{_paths.EnvVarName}[/] -> {env}");
         }
 
+        var scope = active?.Scope ?? InstallScope.User;
         var shimPath = OperatingSystem.IsWindows()
-            ? Path.Combine(_paths.ShimDirectory, "godot.cmd")
-            : Path.Combine(_paths.ShimDirectory, "godot");
+            ? Path.Combine(_paths.GetShimDirectory(scope), "godot.cmd")
+            : Path.Combine(_paths.GetShimDirectory(scope), "godot");
 
         if (File.Exists(shimPath))
         {

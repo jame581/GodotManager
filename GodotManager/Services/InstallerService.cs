@@ -15,6 +15,7 @@ internal sealed record InstallRequest(
     string Version,
     InstallEdition Edition,
     InstallPlatform Platform,
+    InstallScope Scope,
     Uri? DownloadUri,
     string? ArchivePath,
     string? InstallPath,
@@ -44,7 +45,8 @@ internal sealed class InstallerService
         }
 
         var registry = await _registry.LoadAsync(cancellationToken);
-        var targetDir = request.InstallPath ?? Path.Combine(_paths.InstallRoot, BuildFolderName(request));
+        var installRoot = request.InstallPath ?? Path.Combine(_paths.GetInstallRoot(request.Scope), BuildFolderName(request));
+        var targetDir = installRoot;
 
         if (Directory.Exists(targetDir) && !request.Force)
         {
@@ -71,6 +73,7 @@ internal sealed class InstallerService
             Version = request.Version,
             Edition = request.Edition,
             Platform = request.Platform,
+            Scope = request.Scope,
             Path = targetDir,
             AddedAt = DateTimeOffset.UtcNow
         };
@@ -92,7 +95,8 @@ internal sealed class InstallerService
     {
         var edition = request.Edition == InstallEdition.DotNet ? "dotnet" : "standard";
         var platform = request.Platform == InstallPlatform.Windows ? "windows" : "linux";
-        return $"{request.Version}-{edition}-{platform}";
+        var scope = request.Scope == InstallScope.Global ? "global" : "user";
+        return $"{request.Version}-{edition}-{platform}-{scope}";
     }
 
     private async Task<string> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)

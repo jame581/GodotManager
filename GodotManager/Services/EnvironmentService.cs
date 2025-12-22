@@ -35,7 +35,7 @@ internal sealed class EnvironmentService
     {
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.User);
 
-        var shimPath = Path.Combine(_paths.ShimDirectory, "godot.cmd");
+        var shimPath = Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot.cmd");
         var exe = Path.Combine(entry.Path, "Godot.exe");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
@@ -46,7 +46,7 @@ internal sealed class EnvironmentService
         var exportLine = $"export {_paths.EnvVarName}=\"{entry.Path}\"";
         File.WriteAllText(_paths.EnvScriptPath, exportLine + Environment.NewLine);
 
-        var shimPath = Path.Combine(_paths.ShimDirectory, "godot");
+        var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot");
         var binaryCandidates = new[]
         {
             Path.Combine(entry.Path, "godot"),

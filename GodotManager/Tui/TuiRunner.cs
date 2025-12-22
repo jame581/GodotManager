@@ -83,6 +83,11 @@ internal sealed class TuiRunner
         var edition = AnsiConsole.Prompt(new SelectionPrompt<InstallEdition>().Title("Edition:").AddChoices(InstallEdition.Standard, InstallEdition.DotNet));
         var platform = AnsiConsole.Prompt(new SelectionPrompt<InstallPlatform>().Title("Platform:").AddChoices(InstallPlatform.Windows, InstallPlatform.Linux)
             .UseConverter(p => p.ToString())) ;
+        var scope = InstallScope.User;
+        if (!OperatingSystem.IsWindows())
+        {
+            scope = AnsiConsole.Prompt(new SelectionPrompt<InstallScope>().Title("Scope:").AddChoices(InstallScope.User, InstallScope.Global));
+        }
         var useLocal = AnsiConsole.Confirm("Use a local archive instead of downloading?", false);
 
         string? url = null;
@@ -118,7 +123,7 @@ internal sealed class TuiRunner
         var force = AnsiConsole.Confirm("Force overwrite if directory exists?", false);
         var activate = AnsiConsole.Confirm("Activate after install?", true);
 
-        var request = new InstallRequest(version, edition, platform, url is null ? null : new Uri(url), archive, installDir, activate, force);
+        var request = new InstallRequest(version, edition, platform, scope, url is null ? null : new Uri(url), archive, installDir, activate, force);
 
         InstallEntry? result = null;
         await AnsiConsole.Progress().StartAsync(async ctx =>
@@ -216,9 +221,10 @@ internal sealed class TuiRunner
             AnsiConsole.MarkupLineInterpolated($"[green]{_paths.EnvVarName}[/] -> {env}");
         }
 
+        var scope = active?.Scope ?? InstallScope.User;
         var shimPath = OperatingSystem.IsWindows()
-            ? Path.Combine(_paths.ShimDirectory, "godot.cmd")
-            : Path.Combine(_paths.ShimDirectory, "godot");
+            ? Path.Combine(_paths.GetShimDirectory(scope), "godot.cmd")
+            : Path.Combine(_paths.GetShimDirectory(scope), "godot");
 
         if (File.Exists(shimPath))
         {
