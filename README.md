@@ -104,6 +104,7 @@ dotnet test -v detailed
 - Auto-URL construction for known Godot version patterns.
 - Environment variable overrides available: `GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
+- **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 
 ## Author
 

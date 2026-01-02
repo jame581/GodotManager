@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,6 +54,10 @@ internal sealed class EnvironmentService
         // Also set in current process so doctor command shows it immediately
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.Process);
         
+        // Add shim directory to PATH
+        var shimDir = _paths.GetShimDirectory(entry.Scope);
+        AddToPath(shimDir, target);
+        
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
@@ -80,6 +85,39 @@ internal sealed class EnvironmentService
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";
         File.WriteAllText(shimPath, shimContent);
         UnixFilePermissions.MakeExecutable(shimPath);
+    }
+
+    private static void AddToPath(string directory, EnvironmentVariableTarget target)
+    {
+        try
+        {
+            var currentPath = Environment.GetEnvironmentVariable("PATH", target) ?? string.Empty;
+            
+            // Check if directory is already in PATH
+            var paths = currentPath.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            var alreadyInPath = paths.Any(p => 
+                string.Equals(p.Trim(), directory, StringComparison.OrdinalIgnoreCase));
+            
+            if (!alreadyInPath)
+            {
+                var newPath = string.IsNullOrEmpty(currentPath) 
+                    ? directory 
+                    : $"{currentPath};{directory}";
+                
+                Environment.SetEnvironmentVariable("PATH", newPath, target);
+                
+                // Also update current process PATH
+                var processPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process) ?? string.Empty;
+                if (!processPath.Contains(directory, StringComparison.OrdinalIgnoreCase))
+                {
+                    Environment.SetEnvironmentVariable("PATH", $"{processPath};{directory}", EnvironmentVariableTarget.Process);
+                }
+            }
+        }
+        catch
+        {
+            // PATH update is best-effort; if it fails, shim will still be created
+        }
     }
 
     private static void BroadcastEnvironmentChange()

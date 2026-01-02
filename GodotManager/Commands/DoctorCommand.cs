@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using GodotManager.Config;
 using GodotManager.Services;
@@ -78,6 +79,25 @@ internal sealed class DoctorCommand : AsyncCommand
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shimPath}");
+        }
+
+        // Check if shim directory is in PATH (Windows only)
+        if (OperatingSystem.IsWindows())
+        {
+            var shimDir = _paths.GetShimDirectory(scope);
+            var pathVar = Environment.GetEnvironmentVariable("PATH", registryTarget) ?? string.Empty;
+            var inPath = pathVar.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                .Any(p => string.Equals(p.Trim(), shimDir, StringComparison.OrdinalIgnoreCase));
+            
+            if (inPath)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[green]Shim directory in PATH[/]: {shimDir}");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]Shim directory NOT in PATH[/]: {shimDir}");
+                AnsiConsole.MarkupLine($"[grey]  Run activate command again to add it to PATH, then restart your terminal.[/]");
+            }
         }
 
         return 0;
