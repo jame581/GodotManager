@@ -77,11 +77,11 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         [CommandOption("-p|--platform <PLATFORM>")]
         public InstallPlatform Platform { get; set; } = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
 
-        [CommandOption("--scope <SCOPE>")]
-        [Description("Install scope: User or Global (Linux only). Default User.")]
+        [CommandOption("-s|--scope <SCOPE>")]
+        [Description("Install scope: User or Global. Global requires administrator privileges.")]
         public InstallScope Scope { get; set; } = InstallScope.User;
 
-        [CommandOption("--url <URL>")]
+        [CommandOption("-u|--url <URL>")]
         public string? Url { get; set; }
 
         [CommandOption("--archive <PATH>")]
@@ -106,15 +106,6 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             if (!string.IsNullOrWhiteSpace(Url) && !Uri.IsWellFormedUriString(Url, UriKind.Absolute))
             {
                 return ValidationResult.Error("--url is not a valid absolute URI.");
-            }
-
-            if (!OperatingSystem.IsWindows() && Scope == InstallScope.Global)
-            {
-                // allowed
-            }
-            else if (OperatingSystem.IsWindows() && Scope == InstallScope.Global)
-            {
-                return ValidationResult.Error("Global scope is not supported on Windows.");
             }
 
             return ValidationResult.Success();

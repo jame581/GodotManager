@@ -25,9 +25,12 @@ internal sealed class AppPaths
             var appData = overrideBase ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             ConfigDirectory = System.IO.Path.Combine(appData, "GodotManager");
             _userShimDirectory = System.IO.Path.Combine(appData, "GodotManager", "bin");
-            _globalShimDirectory = _userShimDirectory;
             _userInstallRoot = System.IO.Path.Combine(appData, "GodotManager", "installs");
-            _globalInstallRoot = _userInstallRoot;
+
+            // Global scope for Windows: C:\Program Files\GodotManager
+            var programFiles = overrideGlobalBase ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            _globalInstallRoot = System.IO.Path.Combine(programFiles, "GodotManager", "installs");
+            _globalShimDirectory = System.IO.Path.Combine(programFiles, "GodotManager", "bin");
         }
         else
         {
@@ -61,12 +64,9 @@ internal sealed class AppPaths
         System.IO.Directory.CreateDirectory(_userShimDirectory);
         System.IO.Directory.CreateDirectory(_userInstallRoot);
 
-        // Only attempt global dirs on Linux; permission may be required.
-        if (!OperatingSystem.IsWindows())
-        {
-            TryCreateDirectory(_globalShimDirectory);
-            TryCreateDirectory(_globalInstallRoot);
-        }
+        // Attempt global dirs; permission may be required.
+        TryCreateDirectory(_globalShimDirectory);
+        TryCreateDirectory(_globalInstallRoot);
     }
 
     private static void TryCreateDirectory(string path)

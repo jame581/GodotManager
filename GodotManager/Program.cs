@@ -1,9 +1,7 @@
-﻿using System.Net.Http;
-using GodotManager.Commands;
+﻿using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
-using GodotManager.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;

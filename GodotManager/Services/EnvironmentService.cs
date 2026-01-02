@@ -33,9 +33,13 @@ internal sealed class EnvironmentService
 
     private void ApplyWindows(InstallEntry entry)
     {
-        Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.User);
+        var target = entry.Scope == InstallScope.Global 
+            ? EnvironmentVariableTarget.Machine 
+            : EnvironmentVariableTarget.User;
+        
+        Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, target);
 
-        var shimPath = Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot.cmd");
+        var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot.cmd");
         var exe = Path.Combine(entry.Path, "Godot.exe");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);

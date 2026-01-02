@@ -36,12 +36,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         CleanupDirectory(_paths.ConfigDirectory, "config");
         CleanupDirectory(_paths.GetInstallRoot(InstallScope.User), "user installs");
         CleanupDirectory(_paths.GetShimDirectory(InstallScope.User), "user shims");
-
-        if (!OperatingSystem.IsWindows())
-        {
-            CleanupDirectory(_paths.GetInstallRoot(InstallScope.Global), "global installs");
-            CleanupDirectory(_paths.GetShimDirectory(InstallScope.Global), "global shims");
-        }
+        CleanupDirectory(_paths.GetInstallRoot(InstallScope.Global), "global installs");
+        CleanupDirectory(_paths.GetShimDirectory(InstallScope.Global), "global shims");
 
         return 0;
     }

@@ -83,11 +83,14 @@ internal sealed class TuiRunner
         var edition = AnsiConsole.Prompt(new SelectionPrompt<InstallEdition>().Title("Edition:").AddChoices(InstallEdition.Standard, InstallEdition.DotNet));
         var platform = AnsiConsole.Prompt(new SelectionPrompt<InstallPlatform>().Title("Platform:").AddChoices(InstallPlatform.Windows, InstallPlatform.Linux)
             .UseConverter(p => p.ToString())) ;
-        var scope = InstallScope.User;
-        if (!OperatingSystem.IsWindows())
-        {
-            scope = AnsiConsole.Prompt(new SelectionPrompt<InstallScope>().Title("Scope:").AddChoices(InstallScope.User, InstallScope.Global));
-        }
+        
+        var scope = AnsiConsole.Prompt(new SelectionPrompt<InstallScope>()
+            .Title("Scope:")
+            .AddChoices(InstallScope.User, InstallScope.Global)
+            .UseConverter(s => s == InstallScope.Global 
+                ? "Global (requires admin/sudo)" 
+                : "User"));
+        
         var useLocal = AnsiConsole.Confirm("Use a local archive instead of downloading?", false);
 
         string? url = null;
