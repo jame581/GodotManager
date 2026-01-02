@@ -130,8 +130,15 @@ internal sealed class TuiRunner
 
         var force = AnsiConsole.Confirm("Force overwrite if directory exists?", false);
         var activate = AnsiConsole.Confirm("Activate after install?", true);
+        var dryRun = AnsiConsole.Confirm("Preview only (dry-run)?", false);
 
-        var request = new InstallRequest(version, edition, platform, scope, url is null ? null : new Uri(url), archive, installDir, activate, force);
+        var request = new InstallRequest(version, edition, platform, scope, url is null ? null : new Uri(url), archive, installDir, activate, force, dryRun);
+
+        if (dryRun)
+        {
+            PreviewInstall(request, url is null ? null : new Uri(url));
+            return;
+        }
 
         InstallEntry? result = null;
         await AnsiConsole.Progress().StartAsync(async ctx =>
@@ -143,6 +150,48 @@ internal sealed class TuiRunner
         if (result is not null)
         {
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) -> [cyan]{result.Path}[/]");
+        }
+    }
+
+    private static void PreviewInstall(InstallRequest request, Uri? url)
+    {
+        AnsiConsole.MarkupLine("\n[yellow bold]DRY RUN - No changes will be made[/]\n");
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+
+        table.AddRow("Version", request.Version);
+        table.AddRow("Edition", request.Edition.ToString());
+        table.AddRow("Platform", request.Platform.ToString());
+        table.AddRow("Scope", request.Scope.ToString());
+        
+        if (url != null)
+        {
+            table.AddRow("Download URL", url.ToString());
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ArchivePath))
+        {
+            table.AddRow("Archive Path", request.ArchivePath);
+        }
+
+        var installPath = request.InstallPath ?? "[grey](auto-generated)[/]";
+        table.AddRow("Install Path", installPath);
+        table.AddRow("Force Overwrite", request.Force ? "Yes" : "No");
+        table.AddRow("Activate After", request.Activate ? "Yes" : "No");
+
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
+        AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
+        AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
+        AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
+        
+        if (request.Activate)
+        {
+            AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");
+            AnsiConsole.MarkupLine("[grey]5.[/] Update GODOT_HOME environment variable");
+            AnsiConsole.MarkupLine("[grey]6.[/] Write shim script");
         }
     }
 
@@ -160,11 +209,58 @@ internal sealed class TuiRunner
             .UseConverter(i => Markup.Escape($"{i.Version} ({i.Edition}, {i.Platform}) [{i.Id:N}]"))
             .AddChoices(registry.Installs));
 
+        var dryRun = AnsiConsole.Confirm("Preview only (dry-run)?", false);
+
+        if (dryRun)
+        {
+            PreviewActivate(choice, registry);
+            return;
+        }
+
         registry.MarkActive(choice.Id);
         await _registry.SaveAsync(registry);
         await _environment.ApplyActiveAsync(choice);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {choice.Version} ({choice.Edition}, {choice.Platform})");
+        
+        if (OperatingSystem.IsWindows())
+        {
+            AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
+        }
+    }
+
+    private static void PreviewActivate(InstallEntry install, InstallRegistry registry)
+    {
+        AnsiConsole.MarkupLine("\n[yellow bold]DRY RUN - No changes will be made[/]\n");
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+
+        table.AddRow("Install ID", install.Id.ToString("N"));
+        table.AddRow("Version", install.Version);
+        table.AddRow("Edition", install.Edition.ToString());
+        table.AddRow("Platform", install.Platform.ToString());
+        table.AddRow("Scope", install.Scope.ToString());
+        table.AddRow("Install Path", install.Path);
+        
+        var currentActive = registry.GetActive();
+        if (currentActive != null)
+        {
+            table.AddRow("Currently Active", $"{currentActive.Version} ({currentActive.Edition})");
+        }
+        else
+        {
+            table.AddRow("Currently Active", "[grey](none)[/]");
+        }
+
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
+        AnsiConsole.MarkupLine("[grey]1.[/] Mark install as active in registry");
+        AnsiConsole.MarkupLine("[grey]2.[/] Update GODOT_HOME environment variable");
+        AnsiConsole.MarkupLine("[grey]3.[/] Write shim script");
+        AnsiConsole.MarkupLine("[grey]4.[/] Save registry changes");
     }
 
     private async Task RemoveFlowAsync()

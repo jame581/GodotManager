@@ -35,7 +35,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                     return Fail(error ?? "Unable to build download URL.");
                 }
 
-                AnsiConsole.MarkupLineInterpolated($"[grey]Auto URL[/]: {url}");
+                if (!settings.DryRun)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[grey]Auto URL[/]: {url}");
+                }
             }
 
             var request = new InstallRequest(
@@ -47,7 +50,13 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 settings.ArchivePath,
                 settings.InstallPath,
                 settings.Activate,
-                settings.Force);
+                settings.Force,
+                settings.DryRun);
+
+            if (settings.DryRun)
+            {
+                return await PreviewInstallAsync(request, url);
+            }
 
             var progress = new Action<double>(pct => AnsiConsole.MarkupLineInterpolated($"[grey]Progress:[/] {pct:F0}%"));
             var result = await _installer.InstallAsync(request, progress);
@@ -58,6 +67,51 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         {
             return Fail(ex.Message);
         }
+    }
+
+    private static async Task<int> PreviewInstallAsync(InstallRequest request, Uri? url)
+    {
+        AnsiConsole.MarkupLine("[yellow bold]DRY RUN - No changes will be made[/]\n");
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+
+        table.AddRow("Version", request.Version);
+        table.AddRow("Edition", request.Edition.ToString());
+        table.AddRow("Platform", request.Platform.ToString());
+        table.AddRow("Scope", request.Scope.ToString());
+        
+        if (url != null)
+        {
+            table.AddRow("Download URL", url.ToString());
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ArchivePath))
+        {
+            table.AddRow("Archive Path", request.ArchivePath);
+        }
+
+        var installPath = request.InstallPath ?? "[grey](auto-generated)[/]";
+        table.AddRow("Install Path", installPath);
+        table.AddRow("Force Overwrite", request.Force ? "Yes" : "No");
+        table.AddRow("Activate After", request.Activate ? "Yes" : "No");
+
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
+        AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
+        AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
+        AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
+        
+        if (request.Activate)
+        {
+            AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");
+            AnsiConsole.MarkupLine("[grey]5.[/] Update GODOT_HOME environment variable");
+            AnsiConsole.MarkupLine("[grey]6.[/] Write shim script");
+        }
+
+        await Task.CompletedTask;
+        return 0;
     }
 
     private static int Fail(string message)
@@ -95,6 +149,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
         [CommandOption("--force")]
         public bool Force { get; set; }
+
+        [CommandOption("--dry-run")]
+        [Description("Preview the installation without making any changes.")]
+        public bool DryRun { get; set; }
 
         public override ValidationResult Validate()
         {

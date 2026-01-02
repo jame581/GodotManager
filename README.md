@@ -6,7 +6,8 @@ A .NET 9 console/TUI tool to install, manage, and activate Godot Engine builds (
 - Install from official URLs (auto-built) or local archives; supports Linux and Windows, Standard or .NET editions.
 - Scope-aware installs: user or global (requires administrator privileges for global scope).
 - Registry of installs with activation; sets `GODOT_HOME` and writes shims (`godot` or `godot.cmd`).
-- Interactive TUI (`tui`) and CLI commands (`list`, `install`, `activate`, `remove`, `doctor`, `clean`).
+- Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `remove`, `doctor`, `clean`).
+- Dry-run mode to preview install/activate operations without making changes.
 - Cleanup command to remove installs, shims, and config.
 
 ### Prerequisites
@@ -25,6 +26,9 @@ dotnet run --list
 # Browse available versions from GitHub
 dotnet run --fetch --stable --limit 10
 
+# Preview installation (dry-run)
+dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --dry-run
+
 # Install latest 4.5.1 Windows Standard (auto URL) to user scope and activate
 dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --activate
 
@@ -33,6 +37,9 @@ dotnet run --install --version 4.5.1 --edition DotNet --platform windows --scope
 
 # Install on Linux global scope (requires sudo)
 sudo dotnet run --install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
+
+# Preview activation (dry-run)
+dotnet run --activate <id> --dry-run
 
 # Run TUI
 dotnet run --tui
@@ -45,8 +52,8 @@ dotnet run --clean --yes
 ## Commands
 - `list` — show registered installs, active marker.
 - `fetch` — browse available Godot versions from GitHub; options: `--stable`, `--filter <VERSION>`, `--limit <COUNT>`.
-- `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`.
-- `activate <id>` — switch active install.
+- `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`, `--dry-run`.
+- `activate <id>` — switch active install; options: `--dry-run`.
 - `remove <id> [--delete]` — unregister (optionally delete files).
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.

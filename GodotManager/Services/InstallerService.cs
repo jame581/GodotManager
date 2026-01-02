@@ -20,7 +20,8 @@ internal sealed record InstallRequest(
     string? ArchivePath,
     string? InstallPath,
     bool Activate,
-    bool Force);
+    bool Force,
+    bool DryRun = false);
 
 internal sealed class InstallerService
 {
@@ -47,6 +48,11 @@ internal sealed class InstallerService
         var registry = await _registry.LoadAsync(cancellationToken);
         var installRoot = request.InstallPath ?? Path.Combine(_paths.GetInstallRoot(request.Scope), BuildFolderName(request));
         var targetDir = installRoot;
+
+        if (request.DryRun)
+        {
+            return await DryRunInstallAsync(request, targetDir, registry, cancellationToken);
+        }
 
         if (Directory.Exists(targetDir) && !request.Force)
         {
@@ -88,6 +94,22 @@ internal sealed class InstallerService
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+        return entry;
+    }
+
+    private async Task<InstallEntry> DryRunInstallAsync(InstallRequest request, string targetDir, InstallRegistry registry, CancellationToken cancellationToken)
+    {
+        var entry = new InstallEntry
+        {
+            Version = request.Version,
+            Edition = request.Edition,
+            Platform = request.Platform,
+            Scope = request.Scope,
+            Path = targetDir,
+            AddedAt = DateTimeOffset.UtcNow
+        };
+
+        await Task.CompletedTask;
         return entry;
     }
 

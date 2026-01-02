@@ -19,6 +19,16 @@ internal sealed class EnvironmentService
 
     public Task ApplyActiveAsync(InstallEntry entry, CancellationToken cancellationToken = default)
     {
+        return ApplyActiveAsync(entry, dryRun: false, cancellationToken);
+    }
+
+    public Task ApplyActiveAsync(InstallEntry entry, bool dryRun, CancellationToken cancellationToken = default)
+    {
+        if (dryRun)
+        {
+            return Task.CompletedTask;
+        }
+
         if (OperatingSystem.IsWindows())
         {
             ApplyWindows(entry);

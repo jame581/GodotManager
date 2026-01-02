@@ -1,6 +1,9 @@
 using System;
+using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using GodotManager.Domain;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -28,6 +31,11 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             return -1;
         }
 
+        if (settings.DryRun)
+        {
+            return PreviewActivate(install, registry);
+        }
+
         registry.MarkActive(install.Id);
         await _registry.SaveAsync(registry);
         await _environment.ApplyActiveAsync(install);
@@ -42,9 +50,55 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         return 0;
     }
 
+    private static int PreviewActivate(InstallEntry install, InstallRegistry registry)
+    {
+        AnsiConsole.MarkupLine("[yellow bold]DRY RUN - No changes will be made[/]\n");
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+
+        table.AddRow("Install ID", install.Id.ToString("N"));
+        table.AddRow("Version", install.Version);
+        table.AddRow("Edition", install.Edition.ToString());
+        table.AddRow("Platform", install.Platform.ToString());
+        table.AddRow("Scope", install.Scope.ToString());
+        table.AddRow("Install Path", install.Path);
+        
+        var currentActive = registry.GetActive();
+        if (currentActive != null)
+        {
+            table.AddRow("Currently Active", $"{currentActive.Version} ({currentActive.Edition})");
+        }
+        else
+        {
+            table.AddRow("Currently Active", "[grey](none)[/]");
+        }
+
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
+        AnsiConsole.MarkupLine("[grey]1.[/] Mark install as active in registry");
+        AnsiConsole.MarkupLine("[grey]2.[/] Update GODOT_HOME environment variable");
+        
+        var scope = install.Scope;
+        var shimPath = OperatingSystem.IsWindows()
+            ? Path.Combine("[scope-dir]", "godot.cmd")
+            : Path.Combine("[scope-dir]", "godot");
+        
+        AnsiConsole.MarkupLineInterpolated($"[grey]3.[/] Write shim at {shimPath}");
+        AnsiConsole.MarkupLine("[grey]4.[/] Save registry changes");
+
+        return 0;
+    }
+
     internal sealed class Settings : CommandSettings
     {
         [CommandArgument(0, "<id>")]
         public Guid Id { get; set; }
+
+        [CommandOption("--dry-run")]
+        [Description("Preview the activation without making any changes.")]
+        public bool DryRun { get; set; }
     }
 }

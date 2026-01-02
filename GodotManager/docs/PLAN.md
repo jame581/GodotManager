@@ -12,8 +12,9 @@
   - **fetch** ✅: display available remote versions from GitHub releases with filtering options.
     - Options: `--stable` (show only stable releases), `--filter <VERSION>` (filter by version text), `--limit <COUNT>` (max results, default 20).
   - **install** ✅: download with progress or import local archive, verify (checksum field available), unpack zip/tar.xz, register entry.
-    - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`.
+    - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`, `--dry-run` (preview without changes).
   - **activate** ✅: update env var and shim/symlink to chosen install by id.
+    - Options: `--dry-run` (preview without changes).
   - **remove** ✅: unregister and optionally delete files with `--delete` flag.
   - **doctor** ✅: validate registry, paths, env var, shim status.
   - **clean** ✅: remove all godot-manager installs, shims, and config with `--yes` flag.
@@ -43,12 +44,13 @@
 - **tui** command launches interactive menu powered by Spectre.Console:
   - List installs: table view with active marker, version, edition, platform, path, timestamp, id.
   - Browse versions: fetch and display available Godot versions from GitHub with filtering.
-  - Install: prompts for version, edition, platform, scope, source (download auto-URL or local archive), install directory, force, activate.
-  - Activate: selection prompt to switch active install.
+  - Install: prompts for version, edition, platform, scope, source (download auto-URL or local archive), install directory, force, activate, dry-run preview.
+  - Activate: selection prompt to switch active install with dry-run preview option.
   - Remove: selection prompt with option to delete files on disk.
   - Doctor: summary of registry, environment, and shim status.
   - Quit: exit TUI.
 - Progress bars for install operations.
+- Dry-run preview for install and activate operations.
 - `TuiRunner` reuses Phase 1 services (registry, installer, environment, url builder, version fetcher).
 
 ## Data Model ✅
@@ -100,11 +102,11 @@
 - Archive extraction with progress reporting.
 - Force overwrite and activation hooks.
 - Cleanup command for full uninstall.
+- Dry-run mode for install and activate commands (preview without changes).
 
 ## Pending Features
 - **Checksum validation**: populate and verify `Checksum` field during downloads.
 - **Resume support**: partially downloaded files resume capability.
-- **Dry-run mode**: preview install/activate without making changes.
 - **Verbosity levels**: configurable logging/output detail.
 
 ## Next Steps
@@ -112,3 +114,4 @@
 - Explore resume support for interrupted downloads.
 - Add integration tests for download/install flows (mocked/fixture-based).
 - Consider caching fetched version data to reduce GitHub API calls.
+- Extend dry-run to remove command
