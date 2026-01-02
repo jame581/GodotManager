@@ -76,9 +76,24 @@ dotnet run --clean --yes
 
 ## Building & Tests
 ```bash
+# Build the project
 dotnet build
+
+# Run all tests
 dotnet test -v minimal
+
+# Run integration tests only
+dotnet test --filter "FullyQualifiedName~InstallerServiceIntegrationTests"
+
+# Run with detailed output
+dotnet test -v detailed
 ```
+
+**Test Coverage**:
+- Unit tests for path resolution and configuration
+- Integration tests for download/install flows with mocked HTTP
+- Cross-platform validation (Windows/Linux)
+- Isolated test environments with temporary directories
 
 ## Notes
 - **Global installs require elevated privileges**:

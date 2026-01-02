@@ -61,15 +61,19 @@
 
 ## Testing ✅
 - **Unit tests**: `AppPathsTests`, `CleanCommandTests` with temp directory and env var mocking.
+- **Integration tests** ✅: `InstallerServiceIntegrationTests` with mocked HTTP downloads and fixture-based archives.
+  - Tests download flow, local archive installation, activation, force overwrite, dry-run, progress reporting, and multi-install scenarios.
+  - Uses temporary directories and mock archives for complete isolation.
 - **Cross-platform validation**: tests guarded by `OperatingSystem.IsWindows()` checks.
 - **Integration**: archive extraction via SharpCompress; download logic with HttpClient.
-- Test project: `GodotManager.Tests` using xUnit.
+- Test project: `GodotManager.Tests` using xUnit and custom HTTP mocking.
 
 ## Dependencies
 - **Spectre.Console** & **Spectre.Console.Cli**: CLI parsing and TUI rendering.
 - **SharpCompress**: archive extraction (zip, tar.xz).
 - **Microsoft.Extensions.DependencyInjection**: DI container for services.
 - **System.Text.Json**: JSON persistence for registry.
+- **NSubstitute** (test only): Mocking framework for HTTP clients (note: tests use custom MockHttpMessageHandler).
 
 ## Paths & Environment ✅
 - **Config directory**:
@@ -103,6 +107,7 @@
 - Force overwrite and activation hooks.
 - Cleanup command for full uninstall.
 - Dry-run mode for install and activate commands (preview without changes).
+- Integration tests for download/install flows with mocked HTTP and fixture-based archives.
 
 ## Pending Features
 - **Checksum validation**: populate and verify `Checksum` field during downloads.
@@ -112,6 +117,6 @@
 ## Next Steps
 - Add checksum verification for downloads.
 - Explore resume support for interrupted downloads.
-- Add integration tests for download/install flows (mocked/fixture-based).
 - Consider caching fetched version data to reduce GitHub API calls.
-- Extend dry-run to remove command
+- Extend dry-run to remove command.
+- Add end-to-end CLI command tests.
