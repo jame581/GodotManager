@@ -16,14 +16,16 @@ internal sealed class TuiRunner
     private readonly EnvironmentService _environment;
     private readonly AppPaths _paths;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
+    private readonly GodotVersionFetcher _fetcher;
 
-    public TuiRunner(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths, GodotDownloadUrlBuilder urlBuilder)
+    public TuiRunner(RegistryService registry, InstallerService installer, EnvironmentService environment, AppPaths paths, GodotDownloadUrlBuilder urlBuilder, GodotVersionFetcher fetcher)
     {
         _registry = registry;
         _installer = installer;
         _environment = environment;
         _paths = paths;
         _urlBuilder = urlBuilder;
+        _fetcher = fetcher;
     }
 
     public async Task<int> RunAsync()
@@ -32,12 +34,15 @@ internal sealed class TuiRunner
         {
             var choice = AnsiConsole.Prompt(new SelectionPrompt<string>()
                 .Title("[bold]Godot Manager[/]")
-                .AddChoices("List installs", "Install", "Activate", "Remove", "Doctor", "Quit"));
+                .AddChoices("List installs", "Browse versions", "Install", "Activate", "Remove", "Doctor", "Quit"));
 
             switch (choice)
             {
                 case "List installs":
                     await ShowListAsync();
+                    break;
+                case "Browse versions":
+                    await BrowseVersionsAsync();
                     break;
                 case "Install":
                     await InstallFlowAsync();
@@ -236,6 +241,56 @@ internal sealed class TuiRunner
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shimPath}");
+        }
+    }
+
+    private async Task BrowseVersionsAsync()
+    {
+        try
+        {
+            var releases = await AnsiConsole.Status()
+                .StartAsync("Fetching available versions from GitHub...", async ctx =>
+                {
+                    return await _fetcher.FetchReleasesAsync();
+                });
+
+            if (releases.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[yellow]No releases found.[/]");
+                return;
+            }
+
+            var stableOnly = AnsiConsole.Confirm("Show only stable releases?", true);
+            var filtered = stableOnly ? releases.Where(r => r.IsStable).ToList() : releases;
+
+            var limit = Math.Min(50, filtered.Count);
+            var display = filtered.Take(limit).ToList();
+
+            var table = new Table().Border(TableBorder.Rounded);
+            table.AddColumns("Version", "Type", "Standard", "Mono/.NET", "Published");
+
+            foreach (var release in display)
+            {
+                var type = release.IsStable ? "[green]Stable[/]" : "[yellow]Preview[/]";
+                var standard = release.HasStandard ? "[green]?[/]" : "[grey]-[/]";
+                var dotnet = release.HasDotNet ? "[green]?[/]" : "[grey]-[/]";
+                var published = release.PublishedAt.ToString("yyyy-MM-dd");
+
+                table.AddRow(release.Version, type, standard, dotnet, published);
+            }
+
+            AnsiConsole.Write(table);
+            AnsiConsole.MarkupLineInterpolated($"\n[grey]Showing {display.Count} of {filtered.Count} releases.[/]");
+
+            var installNow = AnsiConsole.Confirm("Install a version from the list?", false);
+            if (installNow)
+            {
+                await InstallFlowAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to fetch releases:[/] {ex.Message}");
         }
     }
 }

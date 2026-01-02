@@ -34,17 +34,39 @@ internal sealed class DoctorCommand : AsyncCommand
             AnsiConsole.MarkupLineInterpolated($"[green]Registry[/]: {registry.Installs.Count} install(s) tracked. Active: {(active is null ? "none" : active.Version)}");
         }
 
-        var env = Environment.GetEnvironmentVariable(_paths.EnvVarName);
-        if (string.IsNullOrEmpty(env))
+        // Check environment variable in current process
+        var envInProcess = Environment.GetEnvironmentVariable(_paths.EnvVarName, EnvironmentVariableTarget.Process);
+        
+        // Check environment variable in user/machine registry
+        var scope = active?.Scope ?? InstallScope.User;
+        var registryTarget = OperatingSystem.IsWindows() && scope == InstallScope.Global
+            ? EnvironmentVariableTarget.Machine
+            : EnvironmentVariableTarget.User;
+        var envInRegistry = OperatingSystem.IsWindows() 
+            ? Environment.GetEnvironmentVariable(_paths.EnvVarName, registryTarget)
+            : null;
+
+        if (string.IsNullOrEmpty(envInProcess))
         {
-            AnsiConsole.MarkupLineInterpolated($"[yellow]{_paths.EnvVarName} not set in current session.[/]");
+            if (!string.IsNullOrEmpty(envInRegistry) && OperatingSystem.IsWindows())
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{_paths.EnvVarName} not set in current session[/] (restart terminal/shell to load: {envInRegistry})");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{_paths.EnvVarName} not set.[/]");
+            }
         }
         else
         {
-            AnsiConsole.MarkupLineInterpolated($"[green]{_paths.EnvVarName}[/] -> {env}");
+            AnsiConsole.MarkupLineInterpolated($"[green]{_paths.EnvVarName}[/] -> {envInProcess}");
+            
+            if (OperatingSystem.IsWindows() && envInRegistry != envInProcess)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[grey]  Registry value:[/] {envInRegistry ?? "(not set)"}");
+            }
         }
 
-        var scope = active?.Scope ?? InstallScope.User;
         var shimPath = OperatingSystem.IsWindows()
             ? Path.Combine(_paths.GetShimDirectory(scope), "godot.cmd")
             : Path.Combine(_paths.GetShimDirectory(scope), "godot");

@@ -9,7 +9,8 @@
 ## Phase 1 — Core CLI ✅ COMPLETE
 - Commands:
   - **list** ✅: show registered installs, mark active in table format.
-  - **fetch** ⚠️: display available remote versions for selection (currently stub).
+  - **fetch** ✅: display available remote versions from GitHub releases with filtering options.
+    - Options: `--stable` (show only stable releases), `--filter <VERSION>` (filter by version text), `--limit <COUNT>` (max results, default 20).
   - **install** ✅: download with progress or import local archive, verify (checksum field available), unpack zip/tar.xz, register entry.
     - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`.
   - **activate** ✅: update env var and shim/symlink to chosen install by id.
@@ -34,19 +35,21 @@
   - `EnvironmentService` — write shims and env vars, platform-specific logic.
   - `InstallerService` — download, extract archives (SharpCompress), register installs.
   - `GodotDownloadUrlBuilder` ✅ — auto-construct download URLs for known Godot versions/editions/platforms.
+  - `GodotVersionFetcher` ✅ — fetch available Godot releases from GitHub API with filtering.
 - **Commands**: CLI commands using Spectre.Console.Cli with typed settings classes.
 - **Infrastructure**: `TypeRegistrar` for DI integration with Spectre.Console.Cli.
 
 ## Phase 2 — TUI (Spectre.Console.CLI) ✅ COMPLETE
 - **tui** command launches interactive menu powered by Spectre.Console:
   - List installs: table view with active marker, version, edition, platform, path, timestamp, id.
-  - Install: prompts for version, edition, platform, scope (Linux only), source (download auto-URL or local archive), install directory, force, activate.
+  - Browse versions: fetch and display available Godot versions from GitHub with filtering.
+  - Install: prompts for version, edition, platform, scope, source (download auto-URL or local archive), install directory, force, activate.
   - Activate: selection prompt to switch active install.
   - Remove: selection prompt with option to delete files on disk.
   - Doctor: summary of registry, environment, and shim status.
   - Quit: exit TUI.
 - Progress bars for install operations.
-- `TuiRunner` reuses Phase 1 services (registry, installer, environment, url builder).
+- `TuiRunner` reuses Phase 1 services (registry, installer, environment, url builder, version fetcher).
 
 ## Data Model ✅
 - **InstallEntry**: `{ Id (Guid), Version (string), Edition (Standard|DotNet), Platform (Windows|Linux), Scope (User|Global), Path (string), Checksum? (string), AddedAt (DateTimeOffset), IsActive (bool, transient) }`.
@@ -86,11 +89,12 @@
   - Global scope: `EnvironmentVariableTarget.Machine` (Windows) or system-wide (Linux).
 
 ## Completed Features ✅
-- Full CLI command suite (list, install, activate, remove, doctor, clean).
-- Interactive TUI with all major workflows.
+- Full CLI command suite (list, fetch, install, activate, remove, doctor, clean).
+- Interactive TUI with all major workflows including version browsing.
 - Cross-platform support (Windows, Linux).
 - Scope-aware installs (User/Global on Windows and Linux, requires admin for Global).
 - Auto-URL construction for Godot downloads via `GodotDownloadUrlBuilder`.
+- Remote version discovery via GitHub API with `GodotVersionFetcher`.
 - Registry persistence with JSON.
 - Environment variable and shim management.
 - Archive extraction with progress reporting.
@@ -98,15 +102,13 @@
 - Cleanup command for full uninstall.
 
 ## Pending Features
-- **fetch** command: wire real remote version discovery from Godot's official sources (GitHub releases API or downloads page scraping).
 - **Checksum validation**: populate and verify `Checksum` field during downloads.
 - **Resume support**: partially downloaded files resume capability.
 - **Dry-run mode**: preview install/activate without making changes.
 - **Verbosity levels**: configurable logging/output detail.
 
 ## Next Steps
-- Implement real version fetching in `fetch` command (GitHub API or scraping).
 - Add checksum verification for downloads.
 - Explore resume support for interrupted downloads.
 - Add integration tests for download/install flows (mocked/fixture-based).
-- Document installation and usage in README (already present, verify alignment).
+- Consider caching fetched version data to reduce GitHub API calls.

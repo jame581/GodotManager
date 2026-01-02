@@ -13,6 +13,7 @@ services.AddSingleton<EnvironmentService>();
 services.AddSingleton<InstallerService>();
 services.AddSingleton<HttpClient>();
 services.AddSingleton<GodotDownloadUrlBuilder>();
+services.AddSingleton<GodotVersionFetcher>();
 
 var registrar = new TypeRegistrar(services);
 var app = new CommandApp(registrar);
@@ -21,7 +22,7 @@ app.Configure(config =>
 {
 	config.SetApplicationName("godot-manager");
 	config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
-	config.AddCommand<FetchCommand>("fetch").WithDescription("Show available remote versions (stub)");
+	config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
 	config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
 	config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
 	config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");

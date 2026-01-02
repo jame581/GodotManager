@@ -22,6 +22,9 @@ That's all :)
 # List installs
 dotnet run --list
 
+# Browse available versions from GitHub
+dotnet run --fetch --stable --limit 10
+
 # Install latest 4.5.1 Windows Standard (auto URL) to user scope and activate
 dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --activate
 
@@ -41,10 +44,10 @@ dotnet run --clean --yes
 
 ## Commands
 - `list` — show registered installs, active marker.
+- `fetch` — browse available Godot versions from GitHub; options: `--stable`, `--filter <VERSION>`, `--limit <COUNT>`.
 - `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`.
 - `activate <id>` — switch active install.
 - `remove <id> [--delete]` — unregister (optionally delete files).
-- `fetch` — placeholder for remote discovery.
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.
@@ -75,8 +78,10 @@ dotnet test -v minimal
   - Linux: run with `sudo`
   - Windows: run as Administrator
 - Global scope sets system-wide environment variables and shims accessible to all users.
-- Fetch command is currently a stub; URLs are auto-built for known patterns.
+- The `fetch` command queries GitHub API to discover available Godot versions.
+- Auto-URL construction for known Godot version patterns.
 - Environment variable overrides available: `GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`
+- **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 
 ## Author
 

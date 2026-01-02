@@ -33,6 +33,12 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         await _environment.ApplyActiveAsync(install);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {install.Version} ({install.Edition}, {install.Platform})");
+        
+        if (OperatingSystem.IsWindows())
+        {
+            AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
+        }
+        
         return 0;
     }
 
