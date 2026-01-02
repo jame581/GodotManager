@@ -3,52 +3,110 @@
 ## Scope
 - .NET 9 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
 - Maintain installs registry, download/unpack builds, set active install via env var and shim.
-- Phase 1: core CLI; Phase 2: TUI built with Spectre.Console.CLI.
+- Supports both User and Global installation scopes on Windows and Linux.
+- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅.
 
-## Phase 1 — Core CLI
-- Fetch available versions/editions/platforms from official Godot sources.
+## Phase 1 — Core CLI ✅ COMPLETE
 - Commands:
-  - list: show registered installs, mark active.
-  - fetch: display available remote versions for selection.
-  - install <version> [--dotnet|--standard] [--platform auto|win|linux] [--path <dir>] [--force]: download with progress, verify (checksum if available), unpack zip/tar.xz, register entry.
-  - activate <id>: update env var and shim/symlink to chosen install.
-  - remove <id> [--delete]: unregister and optionally delete files.
-  - doctor: validate registry, paths, env var, shim.
-- Persistence: installs.json under Linux `~/.config/godot-manager/`, Windows `%APPDATA%\GodotManager\`.
-- Env var/shim: set GODOT_HOME; Linux symlink `~/.local/bin/godot`; Windows `godot.cmd` in a user bin dir on PATH.
-- Resilience: resume-friendly downloads, clear error messages, dry-run for install/activate.
+  - **list** ✅: show registered installs, mark active in table format.
+  - **fetch** ⚠️: display available remote versions for selection (currently stub).
+  - **install** ✅: download with progress or import local archive, verify (checksum field available), unpack zip/tar.xz, register entry.
+    - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`.
+  - **activate** ✅: update env var and shim/symlink to chosen install by id.
+  - **remove** ✅: unregister and optionally delete files with `--delete` flag.
+  - **doctor** ✅: validate registry, paths, env var, shim status.
+  - **clean** ✅: remove all godot-manager installs, shims, and config with `--yes` flag.
+- **Persistence** ✅: `installs.json` under Linux `~/.config/godot-manager/`, Windows `%APPDATA%\GodotManager\`.
+- **Env var/shim** ✅:
+  - Set `GODOT_HOME` env var pointing to active install path.
+  - User scope: per-user environment variable.
+  - Global scope: system-wide environment variable (requires admin/sudo).
+  - Linux: symlink/script at `~/.local/bin/godot` (user) or `/usr/local/bin/godot` (global).
+  - Windows: `godot.cmd` batch script in `%APPDATA%\GodotManager\bin\` (user) or `C:\Program Files\GodotManager\bin\` (global).
+  - Auto-detect Godot binary names on Linux (`godot`, `Godot`, `Godot_v4`, `Godot_v3`).
+- **Resilience** ✅: download with progress reporting, clear error messages, force overwrite support.
 
-### Current CLI (baseline)
-- Commands wired: list, fetch (stub), install, activate, remove, doctor (env/registry checks).
-- Install supports `--url` or `--archive` plus `--edition`, `--platform`, `--path`, `--force`, `--activate`.
-- Registry stored at `~/.config/godot-manager/installs.json` (Linux) or `%APPDATA%\GodotManager\installs.json` (Windows).
-- Shim written to `~/.local/bin/godot` or `%APPDATA%\GodotManager\bin\godot.cmd`; env script exported as `GODOT_HOME`.
+### Architecture
+- **Domain**: `InstallEntry`, `InstallRegistry`, enums (`InstallEdition`, `InstallPlatform`, `InstallScope`).
+- **Config**: `AppPaths` — cross-platform path resolution with env var overrides (`GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`).
+- **Services**:
+  - `RegistryService` — JSON serialization/deserialization of install registry.
+  - `EnvironmentService` — write shims and env vars, platform-specific logic.
+  - `InstallerService` — download, extract archives (SharpCompress), register installs.
+  - `GodotDownloadUrlBuilder` ✅ — auto-construct download URLs for known Godot versions/editions/platforms.
+- **Commands**: CLI commands using Spectre.Console.Cli with typed settings classes.
+- **Infrastructure**: `TypeRegistrar` for DI integration with Spectre.Console.Cli.
 
-## Phase 2 — TUI (Spectre.Console.CLI)
-- Use Spectre.Console.CLI for command parsing plus Spectre.Console for TUI rendering.
-- Views/screens:
-  - Installs: list, show active, actions (activate/remove).
-  - Activate: picker to switch active install.
-  - Fetch/Install: browse remote versions/editions, start download with progress bars; confirm force overwrite.
-- Keep TUI as a layer over Phase 1 services to reuse logic.
+## Phase 2 — TUI (Spectre.Console.CLI) ✅ COMPLETE
+- **tui** command launches interactive menu powered by Spectre.Console:
+  - List installs: table view with active marker, version, edition, platform, path, timestamp, id.
+  - Install: prompts for version, edition, platform, scope (Linux only), source (download auto-URL or local archive), install directory, force, activate.
+  - Activate: selection prompt to switch active install.
+  - Remove: selection prompt with option to delete files on disk.
+  - Doctor: summary of registry, environment, and shim status.
+  - Quit: exit TUI.
+- Progress bars for install operations.
+- `TuiRunner` reuses Phase 1 services (registry, installer, environment, url builder).
 
-### Current TUI (baseline)
-- `tui` command launches interactive menu: list installs, install (URL or local archive), activate, remove, doctor summary.
-- Progress bar wraps install flow; prompts handle edition/platform/source/force/activate.
-- Activation/removal reuse registry/environment services.
+## Data Model ✅
+- **InstallEntry**: `{ Id (Guid), Version (string), Edition (Standard|DotNet), Platform (Windows|Linux), Scope (User|Global), Path (string), Checksum? (string), AddedAt (DateTimeOffset), IsActive (bool, transient) }`.
+- **InstallRegistry**: `{ Installs (List<InstallEntry>), ActiveId? (Guid) }`.
+- **InstallScope** ✅: User or Global (both platforms; requires administrator privileges for Global).
+- **Config**: AppPaths handles platform-specific defaults, supports env var overrides for testing and custom deployments.
 
-## Data Model
-- Install entry: { id, version, edition (Standard|DotNet), platform, path, checksum?, addedAt, isActive }.
-- Config: default installs root, shim target, verbosity.
+## Testing ✅
+- **Unit tests**: `AppPathsTests`, `CleanCommandTests` with temp directory and env var mocking.
+- **Cross-platform validation**: tests guarded by `OperatingSystem.IsWindows()` checks.
+- **Integration**: archive extraction via SharpCompress; download logic with HttpClient.
+- Test project: `GodotManager.Tests` using xUnit.
 
-## Testing
-- Unit: registry read/write, selection logic, path resolution.
-- Integration (guarded/mocked for CI): download/unpack fixture; env var/shim update dry-runs.
-- Cross-platform validation for archive handling and paths.
+## Dependencies
+- **Spectre.Console** & **Spectre.Console.Cli**: CLI parsing and TUI rendering.
+- **SharpCompress**: archive extraction (zip, tar.xz).
+- **Microsoft.Extensions.DependencyInjection**: DI container for services.
+- **System.Text.Json**: JSON persistence for registry.
+
+## Paths & Environment ✅
+- **Config directory**:
+  - Linux: `~/.config/godot-manager/` (override: `GODOT_MANAGER_HOME`).
+  - Windows: `%APPDATA%\GodotManager\`.
+- **Install roots**:
+  - User (Linux): `~/.local/bin/godot-manager/`.
+  - Global (Linux): `/usr/local/bin/godot-manager/` (override: `GODOT_MANAGER_GLOBAL_ROOT`).
+  - User (Windows): `%APPDATA%\GodotManager\installs\`.
+  - Global (Windows): `C:\Program Files\GodotManager\installs\` (override: `GODOT_MANAGER_GLOBAL_ROOT`).
+- **Shim directories**:
+  - User (Linux): `~/.local/bin/`.
+  - Global (Linux): `/usr/local/bin/`.
+  - User (Windows): `%APPDATA%\GodotManager\bin\`.
+  - Global (Windows): `C:\Program Files\GodotManager\bin\`.
+- **Env script** (Linux only): `~/.config/godot-manager/env.sh` sourced by shim.
+- **Environment variables**:
+  - User scope: `EnvironmentVariableTarget.User`.
+  - Global scope: `EnvironmentVariableTarget.Machine` (Windows) or system-wide (Linux).
+
+## Completed Features ✅
+- Full CLI command suite (list, install, activate, remove, doctor, clean).
+- Interactive TUI with all major workflows.
+- Cross-platform support (Windows, Linux).
+- Scope-aware installs (User/Global on Windows and Linux, requires admin for Global).
+- Auto-URL construction for Godot downloads via `GodotDownloadUrlBuilder`.
+- Registry persistence with JSON.
+- Environment variable and shim management.
+- Archive extraction with progress reporting.
+- Force overwrite and activation hooks.
+- Cleanup command for full uninstall.
+
+## Pending Features
+- **fetch** command: wire real remote version discovery from Godot's official sources (GitHub releases API or downloads page scraping).
+- **Checksum validation**: populate and verify `Checksum` field during downloads.
+- **Resume support**: partially downloaded files resume capability.
+- **Dry-run mode**: preview install/activate without making changes.
+- **Verbosity levels**: configurable logging/output detail.
 
 ## Next Steps
-- Scaffold solution structure (CLI services + domain + persistence).
-- Add version source client and registry store. ✅ registry in place; source client still pending.
-- Implement install flow end-to-end; then activation. ✅ initial flow with URL/archive + activation hook.
-- Build TUI surfaces on top of commands once Phase 1 is stable.
-- Wire real remote version fetch and checksum validation; add resume support.
+- Implement real version fetching in `fetch` command (GitHub API or scraping).
+- Add checksum verification for downloads.
+- Explore resume support for interrupted downloads.
+- Add integration tests for download/install flows (mocked/fixture-based).
+- Document installation and usage in README (already present, verify alignment).

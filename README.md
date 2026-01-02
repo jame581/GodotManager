@@ -4,7 +4,7 @@ A .NET 9 console/TUI tool to install, manage, and activate Godot Engine builds (
 
 ## Features
 - Install from official URLs (auto-built) or local archives; supports Linux and Windows, Standard or .NET editions.
-- Scope-aware installs on Linux: user (`~/.local/bin/godot-manager`) or global (`/usr/local/bin/godot-manager`).
+- Scope-aware installs: user or global (requires administrator privileges for global scope).
 - Registry of installs with activation; sets `GODOT_HOME` and writes shims (`godot` or `godot.cmd`).
 - Interactive TUI (`tui`) and CLI commands (`list`, `install`, `activate`, `remove`, `doctor`, `clean`).
 - Cleanup command to remove installs, shims, and config.
@@ -20,20 +20,23 @@ That's all :)
 ## Quickstart
 ```bash
 # List installs
- dotnet run --list
+dotnet run --list
 
-# Install latest 4.5.1 Linux Standard (auto URL) to user scope and activate
- dotnet run --install --version 4.5.1 --edition Standard --platform linux --scope User --activate
+# Install latest 4.5.1 Windows Standard (auto URL) to user scope and activate
+dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --activate
 
-# Install .NET edition for Linux from auto URL, global scope (Linux only)
- sudo dotnet run --install --version 4.5.1 --edition DotNet --platform linux --scope Global --activate
+# Install .NET edition for Windows from auto URL, global scope (requires admin)
+dotnet run --install --version 4.5.1 --edition DotNet --platform windows --scope Global --activate
+
+# Install on Linux global scope (requires sudo)
+sudo dotnet run --install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
 
 # Run TUI
- dotnet run --tui
+dotnet run --tui
 
 # Doctor and cleanup
- dotnet run --doctor
- dotnet run --clean --yes
+dotnet run --doctor
+dotnet run --clean --yes
 ```
 
 ## Commands
@@ -47,9 +50,19 @@ That's all :)
 - `clean [--yes]` — remove installs, shims, config.
 
 ## Paths
-- Config: `~/.config/godot-manager/` (Linux) or `%APPDATA%\GodotManager\` (Windows).
-- Installs (Linux): user `~/.local/bin/godot-manager/`, global `/usr/local/bin/godot-manager/`.
-- Shim: user `~/.local/bin/godot`; global `/usr/local/bin/godot` (Linux); Windows `%APPDATA%\GodotManager\bin\godot.cmd`.
+### Linux
+- **Config**: `~/.config/godot-manager/`
+- **User installs**: `~/.local/bin/godot-manager/`
+- **Global installs**: `/usr/local/bin/godot-manager/`
+- **User shim**: `~/.local/bin/godot`
+- **Global shim**: `/usr/local/bin/godot`
+
+### Windows
+- **Config**: `%APPDATA%\GodotManager\`
+- **User installs**: `%APPDATA%\GodotManager\installs\`
+- **Global installs**: `C:\Program Files\GodotManager\installs\`
+- **User shim**: `%APPDATA%\GodotManager\bin\godot.cmd`
+- **Global shim**: `C:\Program Files\GodotManager\bin\godot.cmd`
 
 ## Building & Tests
 ```bash
@@ -58,8 +71,12 @@ dotnet test -v minimal
 ```
 
 ## Notes
-- Global installs on Linux may require sudo to create directories under `/usr/local/bin`.
+- **Global installs require elevated privileges**:
+  - Linux: run with `sudo`
+  - Windows: run as Administrator
+- Global scope sets system-wide environment variables and shims accessible to all users.
 - Fetch command is currently a stub; URLs are auto-built for known patterns.
+- Environment variable overrides available: `GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`
 
 ## Author
 
