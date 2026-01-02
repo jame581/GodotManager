@@ -61,8 +61,25 @@ internal sealed class EnvironmentService
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
+        // Auto-detect Godot executable name (similar to Linux)
+        var exeCandidates = new[]
+        {
+            Path.Combine(entry.Path, "Godot.exe"),
+            Path.Combine(entry.Path, "Godot_v4.exe"),
+            Path.Combine(entry.Path, "Godot_v3.exe")
+        };
+
+        // Search for known executable names first
+        string? exe = Array.Find(exeCandidates, File.Exists);
+
+        if (exe == null)
+        {
+            // Search for any .exe file that starts with "Godot" (e.g., Godot_v4.5.1-stable_win64.exe)
+            var files = Directory.GetFiles(entry.Path, "Godot*.exe", SearchOption.TopDirectoryOnly);
+            exe = files.FirstOrDefault() ?? Path.Combine(entry.Path, "Godot.exe");
+        }
+
         var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot.cmd");
-        var exe = Path.Combine(entry.Path, "Godot.exe");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
     }
