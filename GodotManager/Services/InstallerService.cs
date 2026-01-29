@@ -74,6 +74,43 @@ internal sealed class InstallerService
 
         await ExtractAsync(archivePath, targetDir, progress, cancellationToken);
 
+        // Ensure Linux Godot binary is executable after extraction
+        if (request.Platform == InstallPlatform.Linux)
+        {
+            try
+            {
+                string? binary = null;
+                var candidates = new[]
+                {
+                    Path.Combine(targetDir, "godot"),
+                    Path.Combine(targetDir, "Godot"),
+                    Path.Combine(targetDir, "Godot_v4"),
+                    Path.Combine(targetDir, "Godot_v3")
+                };
+
+                binary = Array.Find(candidates, File.Exists);
+
+                if (binary == null)
+                {
+                    var files = Directory.EnumerateFiles(targetDir, "*", SearchOption.AllDirectories);
+                    binary = files.FirstOrDefault(f =>
+                    {
+                        var name = Path.GetFileName(f);
+                        return name.StartsWith("Godot") || name.StartsWith("godot");
+                    });
+                }
+
+                if (binary != null)
+                {
+                    UnixFilePermissions.MakeExecutable(binary);
+                }
+            }
+            catch
+            {
+                // best-effort: if we fail to set executable permission, installation still succeeds
+            }
+        }
+
         var entry = new InstallEntry
         {
             Version = request.Version,
