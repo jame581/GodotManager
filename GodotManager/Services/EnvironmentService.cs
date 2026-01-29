@@ -61,7 +61,7 @@ internal sealed class EnvironmentService
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
-        // Auto-detect Godot executable name (similar to Linux)
+        // Auto-detect Godot executable name
         var exeCandidates = new[]
         {
             Path.Combine(entry.Path, "Godot.exe"),
@@ -97,8 +97,29 @@ internal sealed class EnvironmentService
             Path.Combine(entry.Path, "Godot_v4"),
             Path.Combine(entry.Path, "Godot_v3")
         };
+        // Prefer known candidate names first, then try to find any file beginning with "Godot" or "godot"
+        string? target = Array.Find(binaryCandidates, File.Exists);
 
-        var target = Array.Find(binaryCandidates, File.Exists) ?? entry.Path;
+        if (target == null)
+        {
+            try
+            {
+                var files = Directory.EnumerateFiles(entry.Path, "*", SearchOption.TopDirectoryOnly);
+                target = files.FirstOrDefault(f =>
+                {
+                    var name = Path.GetFileName(f);
+                    return name.StartsWith("Godot") || name.StartsWith("godot");
+                });
+            }
+            catch
+            {
+                // ignore filesystem errors and fall back below
+            }
+        }
+
+        // If we still didn't find a file, fall back to the conventional "godot" file inside the path
+        target ??= Path.Combine(entry.Path, "godot");
+
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";
         File.WriteAllText(shimPath, shimContent);
         UnixFilePermissions.MakeExecutable(shimPath);
