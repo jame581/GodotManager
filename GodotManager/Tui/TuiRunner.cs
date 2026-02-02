@@ -34,7 +34,7 @@ internal sealed class TuiRunner
         {
             var choice = AnsiConsole.Prompt(new SelectionPrompt<string>()
                 .Title("[bold]Godot Manager[/]")
-                .AddChoices("List installs", "Browse versions", "Install", "Activate", "Remove", "Doctor", "Quit"));
+                .AddChoices("List installs", "Browse versions", "Install", "Activate", "Deactivate", "Remove", "Clean up", "Doctor", "Quit"));
 
             switch (choice)
             {
@@ -50,8 +50,14 @@ internal sealed class TuiRunner
                 case "Activate":
                     await ActivateFlowAsync();
                     break;
+                case "Deactivate":
+                    await DeactivateFlowAsync();
+                    break;
                 case "Remove":
                     await RemoveFlowAsync();
+                    break;
+                case "Clean up":
+                    await CleanUpFlowAsync();
                     break;
                 case "Doctor":
                     await DoctorAsync();
@@ -263,6 +269,130 @@ internal sealed class TuiRunner
         AnsiConsole.MarkupLine("[grey]4.[/] Save registry changes");
     }
 
+    private async Task DeactivateFlowAsync()
+    {
+        var registry = await _registry.LoadAsync();
+        var activeInstall = registry.GetActive();
+        
+        if (activeInstall is null)
+        {
+            AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLineInterpolated($"[yellow]Currently active:[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
+        
+        var confirm = AnsiConsole.Confirm("Deactivate this installation?", true);
+        if (!confirm)
+        {
+            return;
+        }
+
+        await _environment.RemoveActiveAsync(activeInstall);
+        registry.ClearActive();
+        await _registry.SaveAsync(registry);
+
+        AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
+        
+        if (OperatingSystem.IsWindows())
+        {
+            AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
+        }
+    }
+
+    private async Task CleanUpFlowAsync()
+    {
+        AnsiConsole.MarkupLine("[yellow bold]Clean Up - Remove all GodotManager data[/]\n");
+        AnsiConsole.MarkupLine("This will:");
+        AnsiConsole.MarkupLine("[grey]•[/] Remove all registered installations from registry");
+        AnsiConsole.MarkupLine("[grey]•[/] Delete installation files (User and Global scopes)");
+        AnsiConsole.MarkupLine("[grey]•[/] Remove shim directories and scripts");
+        AnsiConsole.MarkupLine("[grey]•[/] Delete configuration files");
+        AnsiConsole.MarkupLine("[grey]•[/] Clean up environment variables\n");
+
+        var confirm = AnsiConsole.Confirm("[red]Are you sure you want to proceed?[/]", false);
+        if (!confirm)
+        {
+            AnsiConsole.MarkupLine("[grey]Clean up cancelled.[/]");
+            return;
+        }
+
+        var doubleConfirm = AnsiConsole.Confirm("[red bold]This cannot be undone. Continue?[/]", false);
+        if (!doubleConfirm)
+        {
+            AnsiConsole.MarkupLine("[grey]Clean up cancelled.[/]");
+            return;
+        }
+
+        var registry = await _registry.LoadAsync();
+        var removedCount = 0;
+
+        // Deactivate if there's an active installation
+        var activeInstall = registry.GetActive();
+        if (activeInstall != null)
+        {
+            await _environment.RemoveActiveAsync(activeInstall);
+        }
+
+        // Remove installation directories
+        foreach (var install in registry.Installs.ToList())
+        {
+            if (Directory.Exists(install.Path))
+            {
+                try
+                {
+                    Directory.Delete(install.Path, recursive: true);
+                    AnsiConsole.MarkupLineInterpolated($"[grey]✓ Deleted:[/] {install.Path}");
+                    removedCount++;
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]✗ Failed to delete {install.Path}:[/] {ex.Message}");
+                }
+            }
+        }
+
+        // Remove shim directories
+        foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
+        {
+            var shimDir = _paths.GetShimDirectory(scope);
+            if (Directory.Exists(shimDir))
+            {
+                try
+                {
+                    Directory.Delete(shimDir, recursive: true);
+                    AnsiConsole.MarkupLineInterpolated($"[grey]✓ Deleted shim directory:[/] {shimDir}");
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]✗ Failed to delete shim directory:[/] {ex.Message}");
+                }
+            }
+        }
+
+        // Remove config directory
+        var configDir = _paths.ConfigDirectory;
+        if (Directory.Exists(configDir))
+        {
+            try
+            {
+                Directory.Delete(configDir, recursive: true);
+                AnsiConsole.MarkupLineInterpolated($"[grey]✓ Deleted config directory:[/] {configDir}");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]✗ Failed to delete config directory:[/] {ex.Message}");
+            }
+        }
+
+        AnsiConsole.MarkupLineInterpolated($"\n[green]Clean up complete.[/] Removed {removedCount} installation(s).");
+        
+        if (OperatingSystem.IsWindows())
+        {
+            AnsiConsole.MarkupLine("[grey]Note: You may need to manually remove the shim directory from your PATH environment variable.[/]");
+        }
+    }
+
     private async Task RemoveFlowAsync()
     {
         var registry = await _registry.LoadAsync();
@@ -278,11 +408,15 @@ internal sealed class TuiRunner
             .AddChoices(registry.Installs));
 
         var deleteFiles = AnsiConsole.Confirm("Delete files on disk?", false);
-        registry.Installs.Remove(choice);
+        
+        // Deactivate if this is the active installation
         if (registry.ActiveId == choice.Id)
         {
+            await _environment.RemoveActiveAsync(choice);
             registry.ActiveId = null;
         }
+        
+        registry.Installs.Remove(choice);
 
         if (deleteFiles && Directory.Exists(choice.Path))
         {
@@ -363,16 +497,24 @@ internal sealed class TuiRunner
             var display = filtered.Take(limit).ToList();
 
             var table = new Table().Border(TableBorder.Rounded);
-            table.AddColumns("Version", "Type", "Standard", "Mono/.NET", "Published");
+            table.AddColumns("Version", "Type", "Technology", "Published");
 
             foreach (var release in display)
             {
                 var type = release.IsStable ? "[green]Stable[/]" : "[yellow]Preview[/]";
-                var standard = release.HasStandard ? "[green]?[/]" : "[grey]-[/]";
-                var dotnet = release.HasDotNet ? "[green]?[/]" : "[grey]-[/]";
                 var published = release.PublishedAt.ToString("yyyy-MM-dd");
 
-                table.AddRow(release.Version, type, standard, dotnet, published);
+                // Add row for Standard edition if available
+                if (release.HasStandard)
+                {
+                    table.AddRow(release.Version, type, "Standard (GDScript)", published);
+                }
+
+                // Add row for .NET edition if available
+                if (release.HasDotNet)
+                {
+                    table.AddRow(release.Version, type, ".NET (C#)", published);
+                }
             }
 
             AnsiConsole.Write(table);
