@@ -25,6 +25,7 @@ app.Configure(config =>
 	config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
 	config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
 	config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
+	config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
 	config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");
 	config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
 	config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
