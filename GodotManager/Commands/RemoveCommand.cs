@@ -11,10 +11,12 @@ namespace GodotManager.Commands;
 internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 {
     private readonly RegistryService _registry;
+    private readonly EnvironmentService _environment;
 
-    public RemoveCommand(RegistryService registry)
+    public RemoveCommand(RegistryService registry, EnvironmentService environment)
     {
         _registry = registry;
+        _environment = environment;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
@@ -28,8 +30,11 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
         }
 
         registry.Installs.Remove(install);
+        
+        // Deactivate if this is the active installation
         if (registry.ActiveId == install.Id)
         {
+            await _environment.RemoveActiveAsync(install);
             registry.ActiveId = null;
         }
 

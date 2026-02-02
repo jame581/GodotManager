@@ -22,4 +22,13 @@ internal sealed class InstallRegistry
     {
         return ActiveId.HasValue ? Installs.FirstOrDefault(x => x.Id == ActiveId.Value) : null;
     }
+
+    public void ClearActive()
+    {
+        ActiveId = null;
+        foreach (var install in Installs)
+        {
+            install.IsActive = false;
+        }
+    }
 }

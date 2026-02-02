@@ -38,7 +38,7 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 
         registry.MarkActive(install.Id);
         await _registry.SaveAsync(registry);
-        await _environment.ApplyActiveAsync(install);
+        await _environment.ApplyActiveAsync(install, dryRun: false, settings.CreateDesktopShortcut);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {install.Version} ({install.Edition}, {install.Platform})");
         
@@ -100,5 +100,7 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         [CommandOption("--dry-run")]
         [Description("Preview the activation without making any changes.")]
         public bool DryRun { get; set; }
-    }
+        [CommandOption("--create-desktop-shortcut")]
+        [Description("Create a desktop shortcut (Windows only).")]
+        public bool CreateDesktopShortcut { get; set; }    }
 }

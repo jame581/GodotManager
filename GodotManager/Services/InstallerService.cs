@@ -1,9 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 using GodotManager.Config;
 using GodotManager.Domain;
 using SharpCompress.Archives;
@@ -46,8 +40,42 @@ internal sealed class InstallerService
         }
 
         var registry = await _registry.LoadAsync(cancellationToken);
-        var installRoot = request.InstallPath ?? Path.Combine(_paths.GetInstallRoot(request.Scope), BuildFolderName(request));
-        var targetDir = installRoot;
+        
+        // For custom install paths, use as-is. Otherwise, derive from archive name.
+        string? archiveName = null;
+        string targetDir;
+        
+        // If custom install path specified, use it directly
+        if (request.InstallPath is not null)
+        {
+            targetDir = request.InstallPath;
+        }
+        // Otherwise, we need to determine from archive - download or get from local path first
+        else if (request.ArchivePath is not null)
+        {
+            archiveName = Path.GetFileName(request.ArchivePath);
+            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? archiveName[..^4]
+                : archiveName;
+            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
+        }
+        else if (request.DownloadUri is not null)
+        {
+            // For download, we need to fetch the archive name first
+            var (tempPath, downloadedName) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
+            archiveName = downloadedName;
+            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? archiveName[..^4]
+                : archiveName;
+            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
+            
+            // Store for later use
+            request = request with { ArchivePath = tempPath };
+        }
+        else
+        {
+            throw new InvalidOperationException("Could not determine installation directory.");
+        }
 
         if (request.DryRun)
         {
@@ -61,13 +89,13 @@ internal sealed class InstallerService
 
         Directory.CreateDirectory(targetDir);
 
-        var archivePath = request.ArchivePath;
-        if (archivePath is null && request.DownloadUri is not null)
+        // Get archive path if not already set from earlier download
+        string archivePath;
+        if (request.ArchivePath is not null)
         {
-            archivePath = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
+            archivePath = request.ArchivePath;
         }
-
-        if (archivePath is null)
+        else
         {
             throw new InvalidOperationException("Archive path was not resolved.");
         }
@@ -158,11 +186,15 @@ internal sealed class InstallerService
         return $"{request.Version}-{edition}-{platform}-{scope}";
     }
 
-    private async Task<string> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
+    private async Task<(string TempPath, string ArchiveName)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
     {
         using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
+        // Extract filename from Content-Disposition header or URL
+        var archiveName = response.Content.Headers.ContentDisposition?.FileName?.Trim('"') 
+                         ?? Path.GetFileName(uri.LocalPath);
+        
         var total = response.Content.Headers.ContentLength ?? -1;
         var tempFile = Path.GetTempFileName();
 
@@ -185,7 +217,7 @@ internal sealed class InstallerService
         }
 
         progress?.Invoke(100);
-        return tempFile;
+        return (tempFile, archiveName);
     }
 
     private static async Task ExtractAsync(string archivePath, string destination, Action<double>? progress, CancellationToken cancellationToken)
