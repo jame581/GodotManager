@@ -24,6 +24,9 @@ app.Configure(config =>
 	config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
 	config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
 	config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
+	config.AddCommand<ElevatedInstallCommand>("install-elevated")
+		.WithDescription("Install with elevated privileges (internal)")
+		.IsHidden();
 	config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
 	config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
 	config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");

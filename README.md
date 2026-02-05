@@ -32,7 +32,7 @@ dotnet run --install --version 4.5.1 --edition Standard --platform windows --sco
 # Install latest 4.5.1 Windows Standard (auto URL) to user scope and activate
 dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --activate
 
-# Install .NET edition for Windows from auto URL, global scope (requires admin)
+# Install .NET edition for Windows from auto URL, global scope (UAC prompt)
 dotnet run --install --version 4.5.1 --edition DotNet --platform windows --scope Global --activate
 
 # Install on Linux global scope (requires sudo)
@@ -98,7 +98,7 @@ dotnet test -v detailed
 ## Notes
 - **Global installs require elevated privileges**:
   - Linux: run with `sudo`
-  - Windows: run as Administrator
+  - Windows: a UAC prompt will appear when global scope is selected
 - Global scope sets system-wide environment variables and shims accessible to all users.
 - The `fetch` command queries GitHub API to discover available Godot versions.
 - Auto-URL construction for known Godot version patterns.

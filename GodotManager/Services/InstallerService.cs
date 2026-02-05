@@ -1,3 +1,7 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 using GodotManager.Config;
 using GodotManager.Domain;
 using SharpCompress.Archives;
@@ -17,6 +21,18 @@ internal sealed record InstallRequest(
     bool Force,
     bool DryRun = false);
 
+internal sealed record InstallPlan(InstallRequest Request, string TargetDirectory);
+
+internal sealed record ElevatedInstallPayload(
+    string Version,
+    InstallEdition Edition,
+    InstallPlatform Platform,
+    InstallScope Scope,
+    string? ArchivePath,
+    string? InstallPath,
+    bool Activate,
+    bool Force);
+
 internal sealed class InstallerService
 {
     private readonly AppPaths _paths;
@@ -34,48 +50,10 @@ internal sealed class InstallerService
 
     public async Task<InstallEntry> InstallAsync(InstallRequest request, Action<double>? progress = null, CancellationToken cancellationToken = default)
     {
-        if (request.DownloadUri is null && string.IsNullOrWhiteSpace(request.ArchivePath))
-        {
-            throw new InvalidOperationException("Provide either a download URL or a local archive path.");
-        }
-
         var registry = await _registry.LoadAsync(cancellationToken);
-        
-        // For custom install paths, use as-is. Otherwise, derive from archive name.
-        string? archiveName = null;
-        string targetDir;
-        
-        // If custom install path specified, use it directly
-        if (request.InstallPath is not null)
-        {
-            targetDir = request.InstallPath;
-        }
-        // Otherwise, we need to determine from archive - download or get from local path first
-        else if (request.ArchivePath is not null)
-        {
-            archiveName = Path.GetFileName(request.ArchivePath);
-            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-                ? archiveName[..^4]
-                : archiveName;
-            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
-        }
-        else if (request.DownloadUri is not null)
-        {
-            // For download, we need to fetch the archive name first
-            var (tempPath, downloadedName) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
-            archiveName = downloadedName;
-            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-                ? archiveName[..^4]
-                : archiveName;
-            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
-            
-            // Store for later use
-            request = request with { ArchivePath = tempPath };
-        }
-        else
-        {
-            throw new InvalidOperationException("Could not determine installation directory.");
-        }
+        var plan = await ResolvePlanAsync(request, progress, cancellationToken);
+        request = plan.Request;
+        var targetDir = plan.TargetDirectory;
 
         if (request.DryRun)
         {
@@ -160,6 +138,136 @@ internal sealed class InstallerService
 
         await _registry.SaveAsync(registry, cancellationToken);
         return entry;
+    }
+
+    public async Task<InstallEntry> InstallWithElevationAsync(InstallRequest request, Action<double>? progress = null, CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows() || request.Scope != InstallScope.Global || WindowsElevationHelper.IsElevated())
+        {
+            return await InstallAsync(request, progress, cancellationToken);
+        }
+
+        var plan = await ResolvePlanAsync(request, progress, cancellationToken);
+        var elevatedRequest = plan.Request with { DownloadUri = null, DryRun = false, InstallPath = plan.TargetDirectory };
+        await RunElevatedInstallAsync(elevatedRequest, cancellationToken);
+
+        var registry = await _registry.LoadAsync(cancellationToken);
+        var match = registry.Installs
+            .OrderByDescending(x => x.AddedAt)
+            .FirstOrDefault(x =>
+                string.Equals(x.Version, request.Version, StringComparison.OrdinalIgnoreCase) &&
+                x.Edition == request.Edition &&
+                x.Platform == request.Platform &&
+                x.Scope == request.Scope &&
+                string.Equals(x.Path, plan.TargetDirectory, StringComparison.OrdinalIgnoreCase));
+
+        return match ?? throw new InvalidOperationException("Installation completed but registry entry could not be found.");
+    }
+
+    private async Task<InstallPlan> ResolvePlanAsync(InstallRequest request, Action<double>? progress, CancellationToken cancellationToken)
+    {
+        if (request.DownloadUri is null && string.IsNullOrWhiteSpace(request.ArchivePath))
+        {
+            throw new InvalidOperationException("Provide either a download URL or a local archive path.");
+        }
+
+        string? archiveName = null;
+        string targetDir;
+
+        if (request.InstallPath is not null)
+        {
+            targetDir = request.InstallPath;
+        }
+        else if (request.ArchivePath is not null)
+        {
+            archiveName = Path.GetFileName(request.ArchivePath);
+            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? archiveName[..^4]
+                : archiveName;
+            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
+        }
+        else if (request.DownloadUri is not null)
+        {
+            var (tempPath, downloadedName) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
+            archiveName = downloadedName;
+            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? archiveName[..^4]
+                : archiveName;
+            targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
+            request = request with { ArchivePath = tempPath };
+        }
+        else
+        {
+            throw new InvalidOperationException("Could not determine installation directory.");
+        }
+
+        return new InstallPlan(request, targetDir);
+    }
+
+    private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
+    {
+        var payload = new ElevatedInstallPayload(
+            request.Version,
+            request.Edition,
+            request.Platform,
+            request.Scope,
+            request.ArchivePath,
+            request.InstallPath,
+            request.Activate,
+            request.Force);
+
+        var json = JsonSerializer.Serialize(payload);
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+
+        var args = Environment.GetCommandLineArgs();
+        var fileName = Environment.ProcessPath ?? args.First();
+
+        var argumentBuilder = new StringBuilder();
+        if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            argumentBuilder.Append(QuoteArg(args[1]));
+            argumentBuilder.Append(' ');
+        }
+
+        argumentBuilder.Append("install-elevated --payload ");
+        argumentBuilder.Append(QuoteArg(encoded));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = argumentBuilder.ToString(),
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                throw new InvalidOperationException("Unable to start elevated installer.");
+            }
+
+            await process.WaitForExitAsync(cancellationToken);
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Elevated installer failed with exit code {process.ExitCode}.");
+            }
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            throw new InvalidOperationException("Elevation was canceled by the user.");
+        }
+    }
+
+    private static string QuoteArg(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg) || arg.Contains(' ') || arg.Contains('"'))
+        {
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+        }
+
+        return arg;
     }
 
     private async Task<InstallEntry> DryRunInstallAsync(InstallRequest request, string targetDir, InstallRegistry registry, CancellationToken cancellationToken)

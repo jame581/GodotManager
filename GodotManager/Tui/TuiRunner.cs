@@ -1,7 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
@@ -146,11 +142,16 @@ internal sealed class TuiRunner
             return;
         }
 
+        if (OperatingSystem.IsWindows() && scope == InstallScope.Global && !WindowsElevationHelper.IsElevated())
+        {
+            AnsiConsole.MarkupLine("[yellow]Administrator access is required for global installs. A UAC prompt will appear.[/]");
+        }
+
         InstallEntry? result = null;
         await AnsiConsole.Progress().StartAsync(async ctx =>
         {
             var task = ctx.AddTask("install", maxValue: 100);
-            result = await _installer.InstallAsync(request, pct => task.Value = Math.Min(100, pct));
+            result = await _installer.InstallWithElevationAsync(request, pct => task.Value = Math.Min(100, pct));
         });
 
         if (result is not null)
