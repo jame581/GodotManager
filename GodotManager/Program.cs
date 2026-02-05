@@ -33,6 +33,7 @@ app.Configure(config =>
 	config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
 	config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
 	config.AddCommand<CleanCommand>("clean").WithDescription("Remove godot-manager installs, shims, and config");
+	config.AddCommand<VersionCommand>("version").WithDescription("Show current version");
 });
 
 string[] NormalizeArgs(string[] input)

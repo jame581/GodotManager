@@ -58,6 +58,7 @@ dotnet run --clean --yes
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.
+- `version` — show the current godot-manager version.
 
 ## Paths
 ### Linux
