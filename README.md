@@ -1,6 +1,6 @@
 # godman
 
-godman (formerly Godot Manager) is a .NET 9 console/TUI tool to install, manage, and activate Godot Engine builds (Standard and .NET) on Linux and Windows.
+godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage, and activate Godot Engine builds (Standard and .NET) on Linux and Windows.
 
 ## Features
 - Install from official URLs (auto-built) or local archives; supports Linux and Windows, Standard or .NET editions.
@@ -14,7 +14,7 @@ godman (formerly Godot Manager) is a .NET 9 console/TUI tool to install, manage,
 
 Software what you need is:
 
-* [.NET 9](https://dotnet.microsoft.com/en-us/download)
+* [.NET 10](https://dotnet.microsoft.com/en-us/download)
 
 That's all :)
 
