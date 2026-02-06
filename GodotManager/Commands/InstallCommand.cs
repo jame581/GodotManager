@@ -63,8 +63,27 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 AnsiConsole.MarkupLine("[yellow]Administrator access is required for global installs. A UAC prompt will appear.[/]");
             }
 
-            var progress = new Action<double>(pct => AnsiConsole.MarkupLineInterpolated($"[grey]Progress:[/] {pct:F0}%"));
-            var result = await _installer.InstallWithElevationAsync(request, progress);
+            var result = await AnsiConsole.Progress()
+                .AutoClear(true)
+                .HideCompleted(true)
+                .StartAsync(async ctx =>
+                {
+                    var task = ctx.AddTask("Installing", maxValue: 100);
+                    var lastReported = 0d;
+                    var progress = new Action<double>(pct =>
+                    {
+                        var clamped = Math.Clamp(pct, 0d, 100d);
+                        if (clamped < lastReported)
+                        {
+                            return;
+                        }
+
+                        lastReported = clamped;
+                        task.Value = clamped;
+                    });
+
+                    return await _installer.InstallWithElevationAsync(request, progress);
+                });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
             return 0;
         }
