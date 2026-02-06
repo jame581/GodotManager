@@ -276,10 +276,10 @@ internal sealed class EnvironmentService
                 ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
                 : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
             
-            var godotManagerFolder = Path.Combine(startMenuFolder, "Programs", "GodotManager");
-            Directory.CreateDirectory(godotManagerFolder);
+            var godmanFolder = Path.Combine(startMenuFolder, "Programs", "godman");
+            Directory.CreateDirectory(godmanFolder);
             
-            var startMenuShortcut = Path.Combine(godotManagerFolder, shortcutName);
+            var startMenuShortcut = Path.Combine(godmanFolder, shortcutName);
             WindowsShortcut.Create(startMenuShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
             
             // Create Desktop shortcut if requested
@@ -312,7 +312,7 @@ internal sealed class EnvironmentService
                 ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
                 : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
             
-            var startMenuShortcut = Path.Combine(startMenuFolder, "Programs", "GodotManager", shortcutName);
+            var startMenuShortcut = Path.Combine(startMenuFolder, "Programs", "godman", shortcutName);
             if (File.Exists(startMenuShortcut))
             {
                 File.Delete(startMenuShortcut);

@@ -20,7 +20,7 @@ public class ActivateCommandTests : IDisposable
 
     public ActivateCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godot-manager-tests", Guid.NewGuid().ToString());
+        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-tests", Guid.NewGuid().ToString());
         Directory.CreateDirectory(_tempRoot);
 
         _paths = new AppPaths();

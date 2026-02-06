@@ -26,7 +26,7 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 
     public override int Execute(CommandContext context, Settings settings)
     {
-        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godot-manager installs, shims, and config. Continue?", false);
+        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godman installs, shims, and config. Continue?", false);
         if (!confirm)
         {
             AnsiConsole.MarkupLine("[yellow]Aborted.[/]");

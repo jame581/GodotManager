@@ -303,7 +303,7 @@ internal sealed class TuiRunner
 
     private async Task CleanUpFlowAsync()
     {
-        AnsiConsole.MarkupLine("[yellow bold]Clean Up - Remove all GodotManager data[/]\n");
+        AnsiConsole.MarkupLine("[yellow bold]Clean Up - Remove all godman data[/]\n");
         AnsiConsole.MarkupLine("This will:");
         AnsiConsole.MarkupLine("[grey]•[/] Remove all registered installations from registry");
         AnsiConsole.MarkupLine("[grey]•[/] Delete installation files (User and Global scopes)");

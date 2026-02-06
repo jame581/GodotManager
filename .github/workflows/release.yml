@@ -17,10 +17,10 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
-            artifact: godot-manager-windows-x64
+            artifact: godman-windows-x64
           - os: ubuntu-latest
             rid: linux-x64
-            artifact: godot-manager-linux-x64
+            artifact: godman-linux-x64
 
     steps:
       - name: Checkout
@@ -42,11 +42,19 @@ jobs:
         run: |
           Compress-Archive -Path publish/* -DestinationPath ${{ matrix.artifact }}.zip
 
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $hash = Get-FileHash -Algorithm SHA256 "${{ matrix.artifact }}.zip" | Select-Object -ExpandProperty Hash
+          "$hash  ${{ matrix.artifact }}.zip" | Out-File -FilePath "${{ matrix.artifact }}.zip.sha256" -Encoding ascii
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.zip
+          path: |
+            ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.zip.sha256
 
   release:
     needs: build
@@ -61,5 +69,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*.zip
+          files: |
+            dist/**/*.zip
+            dist/**/*.sha256
           generate_release_notes: true

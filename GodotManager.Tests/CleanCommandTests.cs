@@ -21,8 +21,8 @@ public class CleanCommandTests
         }
 
         using var temp = new TempRoot();
-        temp.WithEnv("GODOT_MANAGER_HOME", temp.Root);
-        temp.WithEnv("GODOT_MANAGER_GLOBAL_ROOT", Path.Combine(temp.Root, "global"));
+        temp.WithEnv("GODMAN_HOME", temp.Root);
+        temp.WithEnv("GODMAN_GLOBAL_ROOT", Path.Combine(temp.Root, "global"));
 
         var paths = new AppPaths();
 
@@ -54,9 +54,9 @@ public class CleanCommandTests
         }
 
         using var temp = new TempRoot();
-        temp.WithEnv("GODOT_MANAGER_HOME", temp.Root);
+        temp.WithEnv("GODMAN_HOME", temp.Root);
         var globalRoot = Path.Combine(temp.Root, "global-root");
-        temp.WithEnv("GODOT_MANAGER_GLOBAL_ROOT", globalRoot);
+        temp.WithEnv("GODMAN_GLOBAL_ROOT", globalRoot);
 
         var paths = new AppPaths();
         var globalInstall = paths.GetInstallRoot(InstallScope.Global);
@@ -76,7 +76,7 @@ public class CleanCommandTests
 
     private sealed class TempRoot : IDisposable
     {
-        public string Root { get; } = Directory.CreateTempSubdirectory("godotmgr-clean-test").FullName;
+        public string Root { get; } = Directory.CreateTempSubdirectory("godman-clean-test").FullName;
         private readonly (string key, string? value)[] _saved;
         private bool _disposed;
 
@@ -84,6 +84,8 @@ public class CleanCommandTests
         {
             _saved = new[]
             {
+                ("GODMAN_HOME", Environment.GetEnvironmentVariable("GODMAN_HOME")),
+                ("GODMAN_GLOBAL_ROOT", Environment.GetEnvironmentVariable("GODMAN_GLOBAL_ROOT")),
                 ("GODOT_MANAGER_HOME", Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME")),
                 ("GODOT_MANAGER_GLOBAL_ROOT", Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT"))
             };

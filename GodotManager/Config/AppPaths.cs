@@ -5,6 +5,15 @@ namespace GodotManager.Config;
 
 internal sealed class AppPaths
 {
+    private const string EnvHome = "GODMAN_HOME";
+    private const string EnvGlobal = "GODMAN_GLOBAL_ROOT";
+    private const string LegacyEnvHome = "GODOT_MANAGER_HOME";
+    private const string LegacyEnvGlobal = "GODOT_MANAGER_GLOBAL_ROOT";
+    private const string WindowsFolderName = "godman";
+    private const string LegacyWindowsFolderName = "GodotManager";
+    private const string LinuxFolderName = "godman";
+    private const string LegacyLinuxFolderName = "godot-manager";
+
     public string ConfigDirectory { get; }
     public string RegistryFile { get; }
     public string EnvScriptPath { get; }
@@ -17,29 +26,70 @@ internal sealed class AppPaths
 
     public AppPaths()
     {
-        var overrideBase = Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME");
-        var overrideGlobalBase = Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT");
+        var overrideBasePrimary = Environment.GetEnvironmentVariable(EnvHome);
+        var overrideBaseLegacy = Environment.GetEnvironmentVariable(LegacyEnvHome);
+        var overrideBase = overrideBasePrimary ?? overrideBaseLegacy;
+
+        var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
+        var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
+        var overrideGlobalBase = overrideGlobalPrimary ?? overrideGlobalLegacy;
+
+        var allowMigration = overrideBasePrimary == null
+            && overrideBaseLegacy == null
+            && overrideGlobalPrimary == null
+            && overrideGlobalLegacy == null;
 
         if (OperatingSystem.IsWindows())
         {
-            var appData = overrideBase ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            ConfigDirectory = System.IO.Path.Combine(appData, "GodotManager");
-            _userShimDirectory = System.IO.Path.Combine(appData, "GodotManager", "bin");
-            _userInstallRoot = System.IO.Path.Combine(appData, "GodotManager", "installs");
+            var defaultAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var defaultProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            var appData = overrideBase ?? defaultAppData;
+            var programFiles = overrideGlobalBase ?? defaultProgramFiles;
 
-            // Global scope for Windows: C:\Program Files\GodotManager
-            var programFiles = overrideGlobalBase ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            _globalInstallRoot = System.IO.Path.Combine(programFiles, "GodotManager", "installs");
-            _globalShimDirectory = System.IO.Path.Combine(programFiles, "GodotManager", "bin");
+            var userRoot = System.IO.Path.Combine(appData, WindowsFolderName);
+            var globalRoot = System.IO.Path.Combine(programFiles, WindowsFolderName);
+
+            if (allowMigration && appData == defaultAppData && programFiles == defaultProgramFiles)
+            {
+                var legacyUserRoot = System.IO.Path.Combine(defaultAppData, LegacyWindowsFolderName);
+                var legacyGlobalRoot = System.IO.Path.Combine(defaultProgramFiles, LegacyWindowsFolderName);
+                TryMigrateDirectory(legacyUserRoot, userRoot);
+                TryMigrateDirectory(legacyGlobalRoot, globalRoot);
+            }
+
+            ConfigDirectory = userRoot;
+            _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
+            _userInstallRoot = System.IO.Path.Combine(userRoot, "installs");
+
+            // Global scope for Windows: C:\Program Files\godman
+            _globalInstallRoot = System.IO.Path.Combine(globalRoot, "installs");
+            _globalShimDirectory = System.IO.Path.Combine(globalRoot, "bin");
         }
         else
         {
-            var home = overrideBase ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            ConfigDirectory = System.IO.Path.Combine(home, ".config", "godot-manager");
+            var defaultHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var home = overrideBase ?? defaultHome;
+            var globalShim = overrideGlobalBase ?? "/usr/local/bin";
+
+            var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
+            var userInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName);
+            var globalInstallRoot = System.IO.Path.Combine(globalShim, LinuxFolderName);
+
+            if (allowMigration && home == defaultHome && globalShim == "/usr/local/bin")
+            {
+                var legacyConfigRoot = System.IO.Path.Combine(defaultHome, ".config", LegacyLinuxFolderName);
+                var legacyUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LegacyLinuxFolderName);
+                var legacyGlobalInstallRoot = System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName);
+                TryMigrateDirectory(legacyConfigRoot, userConfigRoot);
+                TryMigrateDirectory(legacyUserInstallRoot, userInstallRoot);
+                TryMigrateDirectory(legacyGlobalInstallRoot, globalInstallRoot);
+            }
+
+            ConfigDirectory = userConfigRoot;
             _userShimDirectory = System.IO.Path.Combine(home, ".local", "bin");
-            _globalShimDirectory = overrideGlobalBase ?? "/usr/local/bin";
-            _userInstallRoot = System.IO.Path.Combine(home, ".local", "bin", "godot-manager");
-            _globalInstallRoot = System.IO.Path.Combine(_globalShimDirectory, "godot-manager");
+            _globalShimDirectory = globalShim;
+            _userInstallRoot = userInstallRoot;
+            _globalInstallRoot = globalInstallRoot;
         }
 
         RegistryFile = System.IO.Path.Combine(ConfigDirectory, "installs.json");
@@ -78,6 +128,23 @@ internal sealed class AppPaths
         catch
         {
             // Ignore permission errors; caller may operate in user scope.
+        }
+    }
+
+    private static void TryMigrateDirectory(string source, string destination)
+    {
+        try
+        {
+            if (!System.IO.Directory.Exists(source) || System.IO.Directory.Exists(destination))
+            {
+                return;
+            }
+
+            System.IO.Directory.Move(source, destination);
+        }
+        catch
+        {
+            // Best-effort migration; leave legacy paths intact on failure.
         }
     }
 }

@@ -14,7 +14,7 @@ internal sealed class VersionCommand : Command
             ?.InformationalVersion;
 
         var version = infoVersion ?? assembly.GetName().Version?.ToString() ?? "unknown";
-        AnsiConsole.MarkupLineInterpolated($"godot-manager {version}");
+        AnsiConsole.MarkupLineInterpolated($"godman {version}");
         return 0;
     }
 }

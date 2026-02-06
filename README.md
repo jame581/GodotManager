@@ -1,6 +1,6 @@
-# Godot Manager
+# godman
 
-A .NET 9 console/TUI tool to install, manage, and activate Godot Engine builds (Standard and .NET) on Linux and Windows.
+godman (formerly Godot Manager) is a .NET 9 console/TUI tool to install, manage, and activate Godot Engine builds (Standard and .NET) on Linux and Windows.
 
 ## Features
 - Install from official URLs (auto-built) or local archives; supports Linux and Windows, Standard or .NET editions.
@@ -58,22 +58,22 @@ dotnet run --clean --yes
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.
-- `version` — show the current godot-manager version.
+- `version` — show the current godman version.
 
 ## Paths
 ### Linux
-- **Config**: `~/.config/godot-manager/`
-- **User installs**: `~/.local/bin/godot-manager/`
-- **Global installs**: `/usr/local/bin/godot-manager/`
+- **Config**: `~/.config/godman/`
+- **User installs**: `~/.local/bin/godman/`
+- **Global installs**: `/usr/local/bin/godman/`
 - **User shim**: `~/.local/bin/godot`
 - **Global shim**: `/usr/local/bin/godot`
 
 ### Windows
-- **Config**: `%APPDATA%\GodotManager\`
-- **User installs**: `%APPDATA%\GodotManager\installs\`
-- **Global installs**: `C:\Program Files\GodotManager\installs\`
-- **User shim**: `%APPDATA%\GodotManager\bin\godot.cmd`
-- **Global shim**: `C:\Program Files\GodotManager\bin\godot.cmd`
+- **Config**: `%APPDATA%\godman\`
+- **User installs**: `%APPDATA%\godman\installs\`
+- **Global installs**: `C:\Program Files\godman\installs\`
+- **User shim**: `%APPDATA%\godman\bin\godot.cmd`
+- **Global shim**: `C:\Program Files\godman\bin\godot.cmd`
 
 ## Building & Tests
 ```bash
@@ -103,7 +103,7 @@ dotnet test -v detailed
 - Global scope sets system-wide environment variables and shims accessible to all users.
 - The `fetch` command queries GitHub API to discover available Godot versions.
 - Auto-URL construction for known Godot version patterns.
-- Environment variable overrides available: `GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`
+- Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 

@@ -19,15 +19,23 @@ public class InstallerServiceIntegrationTests : IDisposable
     private readonly AppPaths _paths;
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly string? _savedHome;
+    private readonly string? _savedGlobal;
+    private readonly string? _savedLegacyHome;
+    private readonly string? _savedLegacyGlobal;
 
     public InstallerServiceIntegrationTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godotmgr-test-" + Guid.NewGuid().ToString("N"));
+        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempRoot);
 
         // Override paths to use temp directory
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_HOME", _tempRoot);
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", Path.Combine(_tempRoot, "global"));
+        _savedHome = Environment.GetEnvironmentVariable("GODMAN_HOME");
+        _savedGlobal = Environment.GetEnvironmentVariable("GODMAN_GLOBAL_ROOT");
+        _savedLegacyHome = Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME");
+        _savedLegacyGlobal = Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT");
+        Environment.SetEnvironmentVariable("GODMAN_HOME", _tempRoot);
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", Path.Combine(_tempRoot, "global"));
 
         _paths = new AppPaths();
         _registry = new RegistryService(_paths);
@@ -48,8 +56,10 @@ public class InstallerServiceIntegrationTests : IDisposable
             // Ignore cleanup errors
         }
 
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_HOME", null);
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", null);
+        Environment.SetEnvironmentVariable("GODMAN_HOME", _savedHome);
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", _savedGlobal);
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_HOME", _savedLegacyHome);
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", _savedLegacyGlobal);
     }
 
     [Fact]

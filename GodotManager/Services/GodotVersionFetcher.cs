@@ -26,7 +26,7 @@ internal sealed class GodotVersionFetcher
     public GodotVersionFetcher(HttpClient? httpClient = null)
     {
         _httpClient = httpClient ?? new HttpClient();
-        _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GodotManager", "1.0"));
+        _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("godman", "1.0"));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
