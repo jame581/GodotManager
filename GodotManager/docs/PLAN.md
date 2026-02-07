@@ -1,7 +1,7 @@
 # Godot Installation Manager — Plan
 
 ## Scope
-- .NET 9 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
+- .NET 10 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
 - Maintain installs registry, download/unpack builds, set active install via env var and shim.
 - Supports both User and Global installation scopes on Windows and Linux.
 - Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅.
@@ -17,20 +17,20 @@
     - Options: `--dry-run` (preview without changes).
   - **remove** ✅: unregister and optionally delete files with `--delete` flag.
   - **doctor** ✅: validate registry, paths, env var, shim status.
-  - **clean** ✅: remove all godot-manager installs, shims, and config with `--yes` flag.
-- **Persistence** ✅: `installs.json` under Linux `~/.config/godot-manager/`, Windows `%APPDATA%\GodotManager\`.
+  - **clean** ✅: remove all godman installs, shims, and config with `--yes` flag.
+- **Persistence** ✅: `installs.json` under Linux `~/.config/godman/`, Windows `%APPDATA%\godman\`.
 - **Env var/shim** ✅:
   - Set `GODOT_HOME` env var pointing to active install path.
   - User scope: per-user environment variable.
   - Global scope: system-wide environment variable (requires admin/sudo).
   - Linux: symlink/script at `~/.local/bin/godot` (user) or `/usr/local/bin/godot` (global).
-  - Windows: `godot.cmd` batch script in `%APPDATA%\GodotManager\bin\` (user) or `C:\Program Files\GodotManager\bin\` (global).
+  - Windows: `godot.cmd` batch script in `%APPDATA%\godman\bin\` (user) or `C:\Program Files\godman\bin\` (global).
   - Auto-detect Godot binary names on Linux (`godot`, `Godot`, `Godot_v4`, `Godot_v3`).
 - **Resilience** ✅: download with progress reporting, clear error messages, force overwrite support.
 
 ### Architecture
 - **Domain**: `InstallEntry`, `InstallRegistry`, enums (`InstallEdition`, `InstallPlatform`, `InstallScope`).
-- **Config**: `AppPaths` — cross-platform path resolution with env var overrides (`GODOT_MANAGER_HOME`, `GODOT_MANAGER_GLOBAL_ROOT`).
+- **Config**: `AppPaths` — cross-platform path resolution with env var overrides (`GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`).
 - **Services**:
   - `RegistryService` — JSON serialization/deserialization of install registry.
   - `EnvironmentService` — write shims and env vars, platform-specific logic.
@@ -77,19 +77,19 @@
 
 ## Paths & Environment ✅
 - **Config directory**:
-  - Linux: `~/.config/godot-manager/` (override: `GODOT_MANAGER_HOME`).
-  - Windows: `%APPDATA%\GodotManager\`.
+  - Linux: `~/.config/godman/` (override: `GODMAN_HOME`).
+  - Windows: `%APPDATA%\godman\`.
 - **Install roots**:
-  - User (Linux): `~/.local/bin/godot-manager/`.
-  - Global (Linux): `/usr/local/bin/godot-manager/` (override: `GODOT_MANAGER_GLOBAL_ROOT`).
-  - User (Windows): `%APPDATA%\GodotManager\installs\`.
-  - Global (Windows): `C:\Program Files\GodotManager\installs\` (override: `GODOT_MANAGER_GLOBAL_ROOT`).
+  - User (Linux): `~/.local/bin/godman/`.
+  - Global (Linux): `/usr/local/bin/godman/` (override: `GODMAN_GLOBAL_ROOT`).
+  - User (Windows): `%APPDATA%\godman\installs\`.
+  - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`).
 - **Shim directories**:
   - User (Linux): `~/.local/bin/`.
   - Global (Linux): `/usr/local/bin/`.
-  - User (Windows): `%APPDATA%\GodotManager\bin\`.
-  - Global (Windows): `C:\Program Files\GodotManager\bin\`.
-- **Env script** (Linux only): `~/.config/godot-manager/env.sh` sourced by shim.
+  - User (Windows): `%APPDATA%\godman\bin\`.
+  - Global (Windows): `C:\Program Files\godman\bin\`.
+- **Env script** (Linux only): `~/.config/godman/env.sh` sourced by shim.
 - **Environment variables**:
   - User scope: `EnvironmentVariableTarget.User`.
   - Global scope: `EnvironmentVariableTarget.Machine` (Windows) or system-wide (Linux).
