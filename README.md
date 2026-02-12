@@ -19,34 +19,41 @@ Software what you need is:
 That's all :)
 
 ## Quickstart
+
+### Install via WinGet (Windows)
+```powershell
+winget install --id JanMesarc.GodMan
+```
+
+### Usage example
 ```bash
 # List installs
-dotnet run --list
+godman list
 
 # Browse available versions from GitHub
-dotnet run --fetch --stable --limit 10
+godman fetch --stable --limit 10
 
 # Preview installation (dry-run)
-dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --dry-run
+godman install --version 4.5.1 --edition Standard --platform windows --scope User --dry-run
 
 # Install latest 4.5.1 Windows Standard (auto URL) to user scope and activate
-dotnet run --install --version 4.5.1 --edition Standard --platform windows --scope User --activate
+godman install --version 4.5.1 --edition Standard --platform windows --scope User --activate
 
 # Install .NET edition for Windows from auto URL, global scope (UAC prompt)
-dotnet run --install --version 4.5.1 --edition DotNet --platform windows --scope Global --activate
+godman install --version 4.5.1 --edition DotNet --platform windows --scope Global --activate
 
 # Install on Linux global scope (requires sudo)
-sudo dotnet run --install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
+sudo godman install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
 
 # Preview activation (dry-run)
-dotnet run --activate <id> --dry-run
+godman activate <id> --dry-run
 
 # Run TUI
-dotnet run --tui
+godman tui
 
 # Doctor and cleanup
-dotnet run --doctor
-dotnet run --clean --yes
+godman doctor
+godman clean --yes
 ```
 
 ## Commands
