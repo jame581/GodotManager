@@ -181,18 +181,14 @@ internal sealed class InstallerService
         else if (request.ArchivePath is not null)
         {
             archiveName = Path.GetFileName(request.ArchivePath);
-            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-                ? archiveName[..^4]
-                : archiveName;
+            var folderName = BuildInstallFolderName(request, archiveName);
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
         }
         else if (request.DownloadUri is not null)
         {
             var (tempPath, downloadedName) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
             archiveName = downloadedName;
-            var folderName = archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-                ? archiveName[..^4]
-                : archiveName;
+            var folderName = BuildInstallFolderName(request, archiveName);
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
             request = request with { ArchivePath = tempPath };
         }
@@ -294,13 +290,64 @@ internal sealed class InstallerService
         return $"{request.Version}-{edition}-{platform}-{scope}";
     }
 
+    private static string BuildInstallFolderName(InstallRequest request, string? archiveName)
+    {
+        var candidate = Path.GetFileName(archiveName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return BuildFolderName(request);
+        }
+
+        var folderName = StripKnownArchiveSuffixes(candidate);
+        if (string.IsNullOrWhiteSpace(folderName))
+        {
+            return BuildFolderName(request);
+        }
+
+        return folderName;
+    }
+
+    private static string StripKnownArchiveSuffixes(string fileName)
+    {
+        var suffixes = new[]
+        {
+            ".zip",
+            ".exe",
+            ".x86_64",
+            ".apk"
+        };
+
+        var result = fileName;
+        var removedAny = true;
+
+        while (removedAny)
+        {
+            removedAny = false;
+
+            foreach (var suffix in suffixes)
+            {
+                if (!result.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                result = result[..^suffix.Length].Trim();
+                removedAny = true;
+                break;
+            }
+        }
+
+        return result;
+    }
+
     private async Task<(string TempPath, string ArchiveName)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
     {
         using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         // Extract filename from Content-Disposition header or URL
-        var archiveName = response.Content.Headers.ContentDisposition?.FileName?.Trim('"') 
+        var archiveName = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
+                         ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
                          ?? Path.GetFileName(uri.LocalPath);
         
         var total = response.Content.Headers.ContentLength ?? -1;
