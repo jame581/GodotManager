@@ -298,7 +298,12 @@ internal sealed class InstallerService
             return BuildFolderName(request);
         }
 
-        var folderName = StripKnownArchiveSuffixes(candidate);
+        var (folderName, removedSuffix) = StripKnownArchiveSuffixes(candidate);
+        if (!removedSuffix && !candidate.Contains('.'))
+        {
+            return BuildFolderName(request);
+        }
+
         if (string.IsNullOrWhiteSpace(folderName))
         {
             return BuildFolderName(request);
@@ -307,7 +312,7 @@ internal sealed class InstallerService
         return folderName;
     }
 
-    private static string StripKnownArchiveSuffixes(string fileName)
+    private static (string Value, bool RemovedSuffix) StripKnownArchiveSuffixes(string fileName)
     {
         var suffixes = new[]
         {
@@ -318,6 +323,7 @@ internal sealed class InstallerService
         };
 
         var result = fileName;
+        var removedSuffix = false;
         var removedAny = true;
 
         while (removedAny)
@@ -332,12 +338,13 @@ internal sealed class InstallerService
                 }
 
                 result = result[..^suffix.Length].Trim();
+                removedSuffix = true;
                 removedAny = true;
                 break;
             }
         }
 
-        return result;
+        return (result, removedSuffix);
     }
 
     private async Task<(string TempPath, string ArchiveName)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
