@@ -1,5 +1,10 @@
 # godman
 
+[![CI Status](https://github.com/jame581/GodotManager/actions/workflows/ci.yml/badge.svg)](https://github.com/jame581/GodotManager/actions/workflows/ci.yml)
+[![Build Status](https://github.com/jame581/GodotManager/actions/workflows/release.yml/badge.svg)](https://github.com/jame581/GodotManager/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/badge/GitHub-Release-blue?logo=github)](https://github.com/jame581/GodotManager/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jame581/GodotManager/blob/main/LICENSE)
+
 godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage, and activate Godot Engine builds (Standard and .NET) on Linux and Windows.
 
 ## Features
