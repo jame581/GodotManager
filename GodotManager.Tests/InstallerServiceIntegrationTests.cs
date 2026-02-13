@@ -329,6 +329,128 @@ public class InstallerServiceIntegrationTests : IDisposable
         File.Delete(mockArchive2);
     }
 
+    [Fact]
+    public async Task InstallAsync_WithQueryDownloadUrlWithoutFilename_UsesDeterministicFolderName()
+    {
+        // Arrange
+        var mockArchive = CreateMockGodotArchive();
+        var mockHttpClient = CreateMockHttpClient(mockArchive);
+        var installer = new InstallerService(_paths, _registry, _environment, mockHttpClient);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var request = new InstallRequest(
+            Version: "4.5.2",
+            Edition: InstallEdition.Standard,
+            Platform: platform,
+            Scope: InstallScope.User,
+            DownloadUri: new Uri("https://github.com/godotengine/godot-builds/releases/download/4.5-stable/download?platform=windows"),
+            ArchivePath: null,
+            InstallPath: null,
+            Activate: false,
+            Force: false,
+            DryRun: false);
+
+        // Act
+        var result = await installer.InstallAsync(request);
+
+        // Assert
+        var expectedFolder = platform == InstallPlatform.Windows
+            ? "4.5.2-standard-windows-user"
+            : "4.5.2-standard-linux-user";
+        var expectedPath = Path.Combine(_paths.GetInstallRoot(InstallScope.User), expectedFolder);
+
+        Assert.Equal(expectedPath, result.Path);
+        Assert.True(Directory.Exists(result.Path));
+
+        // Cleanup
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithDownloadedArchiveName_UsesArchiveBasedFolderName()
+    {
+        // Arrange
+        var mockArchive = CreateMockGodotArchive();
+        var mockHttpClient = CreateMockHttpClient(mockArchive, "Godot_v4.5.2-stable_linux.x86_64.zip");
+        var installer = new InstallerService(_paths, _registry, _environment, mockHttpClient);
+
+        var request = new InstallRequest(
+            Version: "4.5.2",
+            Edition: InstallEdition.Standard,
+            Platform: InstallPlatform.Linux,
+            Scope: InstallScope.User,
+            DownloadUri: new Uri("http://test.com/download?platform=linux"),
+            ArchivePath: null,
+            InstallPath: null,
+            Activate: false,
+            Force: false,
+            DryRun: false);
+
+        // Act
+        var result = await installer.InstallAsync(request);
+
+        // Assert
+        var expectedPath = Path.Combine(_paths.GetInstallRoot(InstallScope.User), "Godot_v4.5.2-stable_linux");
+        Assert.Equal(expectedPath, result.Path);
+        Assert.True(Directory.Exists(result.Path));
+
+        // Cleanup
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_MultipleQueryEndpointDownloads_DoNotOverwriteRegistryEntries()
+    {
+        // Arrange
+        var mockArchive1 = CreateMockGodotArchive();
+        var mockArchive2 = CreateMockGodotArchive();
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+        var requestUri = new Uri("https://example.com/download?platform=windows");
+
+        var installer1 = new InstallerService(_paths, _registry, _environment, CreateMockHttpClient(mockArchive1));
+        var installer2 = new InstallerService(_paths, _registry, _environment, CreateMockHttpClient(mockArchive2));
+
+        var request1 = new InstallRequest(
+            Version: "4.5.0",
+            Edition: InstallEdition.Standard,
+            Platform: platform,
+            Scope: InstallScope.User,
+            DownloadUri: requestUri,
+            ArchivePath: null,
+            InstallPath: null,
+            Activate: false,
+            Force: false,
+            DryRun: false);
+
+        var request2 = new InstallRequest(
+            Version: "4.5.1",
+            Edition: InstallEdition.DotNet,
+            Platform: platform,
+            Scope: InstallScope.User,
+            DownloadUri: requestUri,
+            ArchivePath: null,
+            InstallPath: null,
+            Activate: false,
+            Force: false,
+            DryRun: false);
+
+        // Act
+        var result1 = await installer1.InstallAsync(request1);
+        var result2 = await installer2.InstallAsync(request2);
+
+        // Assert
+        Assert.NotEqual(result1.Path, result2.Path);
+
+        var registry = await _registry.LoadAsync();
+        Assert.Equal(2, registry.Installs.Count);
+        Assert.Contains(registry.Installs, i => i.Version == "4.5.0");
+        Assert.Contains(registry.Installs, i => i.Version == "4.5.1");
+
+        // Cleanup
+        File.Delete(mockArchive1);
+        File.Delete(mockArchive2);
+    }
+
     private static string CreateMockGodotArchive()
     {
         var tempFile = Path.GetTempFileName();
@@ -361,9 +483,9 @@ public class InstallerServiceIntegrationTests : IDisposable
         return zipPath;
     }
 
-    private static HttpClient CreateMockHttpClient(string archivePath)
+    private static HttpClient CreateMockHttpClient(string archivePath, string? downloadedFileName = null)
     {
-        var handler = new MockHttpMessageHandler(archivePath);
+        var handler = new MockHttpMessageHandler(archivePath, downloadedFileName);
         return new HttpClient(handler);
     }
 }
@@ -372,10 +494,12 @@ public class InstallerServiceIntegrationTests : IDisposable
 internal class MockHttpMessageHandler : HttpMessageHandler
 {
     private readonly string _archivePath;
+    private readonly string? _downloadedFileName;
 
-    public MockHttpMessageHandler(string archivePath)
+    public MockHttpMessageHandler(string archivePath, string? downloadedFileName)
     {
         _archivePath = archivePath;
+        _downloadedFileName = downloadedFileName;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -386,6 +510,15 @@ internal class MockHttpMessageHandler : HttpMessageHandler
             Content = new ByteArrayContent(fileBytes)
         };
         response.Content.Headers.ContentLength = fileBytes.Length;
+
+        if (!string.IsNullOrWhiteSpace(_downloadedFileName))
+        {
+            response.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+            {
+                FileName = _downloadedFileName
+            };
+        }
+
         return response;
     }
 }

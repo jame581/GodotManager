@@ -10,6 +10,7 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 ## Features
 - Install from official URLs (auto-built) or local archives; supports Linux and Windows, Standard or .NET editions.
 - Scope-aware installs: user or global (requires administrator privileges for global scope).
+- Each install is extracted into its own subfolder under the install root, based on downloaded archive name (with deterministic fallback when source URL has no archive filename).
 - Registry of installs with activation; sets `GODOT_HOME` and writes shims (`godot` or `godot.cmd`).
 - Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `remove`, `doctor`, `clean`).
 - Dry-run mode to preview install/activate operations without making changes.
