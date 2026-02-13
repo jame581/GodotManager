@@ -1,10 +1,8 @@
-using System;
-using System.Text;
-using System.Text.Json;
-using GodotManager.Domain;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.Text;
+using System.Text.Json;
 
 namespace GodotManager.Commands;
 

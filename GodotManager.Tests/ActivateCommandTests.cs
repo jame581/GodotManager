@@ -1,11 +1,11 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -35,7 +35,7 @@ public class ActivateCommandTests : IDisposable
         // Arrange
         var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
-        
+
         // Create fake executable
         var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
         File.WriteAllText(Path.Combine(installPath, exeName), "fake");
@@ -49,7 +49,7 @@ public class ActivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath
         };
-        
+
         registry.Installs.Add(entry);
         await _registry.SaveAsync(registry);
 
@@ -60,7 +60,7 @@ public class ActivateCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result);
-        
+
         var updatedRegistry = await _registry.LoadAsync();
         Assert.Equal(entry.Id, updatedRegistry.ActiveId);
         var updatedEntry = updatedRegistry.Installs.First(e => e.Id == entry.Id);
@@ -99,7 +99,7 @@ public class ActivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath
         };
-        
+
         registry.Installs.Add(entry);
         await _registry.SaveAsync(registry);
 
@@ -110,7 +110,7 @@ public class ActivateCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result);
-        
+
         var updatedRegistry = await _registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.False(entry.IsActive);
@@ -124,7 +124,7 @@ public class ActivateCommandTests : IDisposable
         var installPath2 = Path.Combine(_tempRoot, "Godot_v4.4.0-stable_win64.exe");
         Directory.CreateDirectory(installPath1);
         Directory.CreateDirectory(installPath2);
-        
+
         var exeName1 = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
         var exeName2 = OperatingSystem.IsWindows() ? "Godot_v4.4.0-stable_win64.exe" : "Godot_v4.4.0-stable_linux.x86_64";
         File.WriteAllText(Path.Combine(installPath1, exeName1), "fake");
@@ -139,7 +139,7 @@ public class ActivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath1
         };
-        
+
         var entry2 = new InstallEntry
         {
             Version = "4.4.0",
@@ -148,7 +148,7 @@ public class ActivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath2
         };
-        
+
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
         registry.MarkActive(entry1.Id);
@@ -161,7 +161,7 @@ public class ActivateCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result);
-        
+
         var updatedRegistry = await _registry.LoadAsync();
         Assert.Equal(entry2.Id, updatedRegistry.ActiveId);
         var updatedEntry1 = updatedRegistry.Installs.First(e => e.Id == entry1.Id);

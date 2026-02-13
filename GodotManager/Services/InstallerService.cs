@@ -1,11 +1,11 @@
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
 using GodotManager.Config;
 using GodotManager.Domain;
 using SharpCompress.Archives;
 using SharpCompress.Common;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 
 namespace GodotManager.Services;
 
@@ -356,7 +356,7 @@ internal sealed class InstallerService
         var archiveName = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
                          ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
                          ?? Path.GetFileName(uri.LocalPath);
-        
+
         var total = response.Content.Headers.ContentLength ?? -1;
         var tempFile = Path.GetTempFileName();
 

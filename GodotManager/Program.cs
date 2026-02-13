@@ -20,34 +20,34 @@ var app = new CommandApp(registrar);
 
 app.Configure(config =>
 {
-	config.SetApplicationName("godman");
-	config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
-	config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
-	config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
-	config.AddCommand<ElevatedInstallCommand>("install-elevated")
-		.WithDescription("Install with elevated privileges (internal)")
-		.IsHidden();
-	config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
-	config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
-	config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");
-	config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
-	config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
-	config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, and config");
+    config.SetApplicationName("godman");
+    config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
+    config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
+    config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
+    config.AddCommand<ElevatedInstallCommand>("install-elevated")
+        .WithDescription("Install with elevated privileges (internal)")
+        .IsHidden();
+    config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
+    config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
+    config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");
+    config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
+    config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
+    config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, and config");
 });
 
-	//var normalizedArgs = CliArgsNormalizer.Normalize(args);
+//var normalizedArgs = CliArgsNormalizer.Normalize(args);
 
 try
 {
-	return app.Run(args);
+    return app.Run(args);
 }
 catch (CommandRuntimeException ex)
 {
-	AnsiConsole.MarkupLineInterpolated($"[red]{ex.Message}[/]");
-	return -1;
+    AnsiConsole.MarkupLineInterpolated($"[red]{ex.Message}[/]");
+    return -1;
 }
 catch (System.Exception ex)
 {
-	AnsiConsole.WriteException(ex, ExceptionFormats.ShortenEverything | ExceptionFormats.ShowLinks);
-	return -1;
+    AnsiConsole.WriteException(ex, ExceptionFormats.ShortenEverything | ExceptionFormats.ShowLinks);
+    return -1;
 }

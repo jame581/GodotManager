@@ -89,15 +89,15 @@ internal sealed class TuiRunner
         var version = AnsiConsole.Prompt(new TextPrompt<string>("Version:"));
         var edition = AnsiConsole.Prompt(new SelectionPrompt<InstallEdition>().Title("Edition:").AddChoices(InstallEdition.Standard, InstallEdition.DotNet));
         var platform = AnsiConsole.Prompt(new SelectionPrompt<InstallPlatform>().Title("Platform:").AddChoices(InstallPlatform.Windows, InstallPlatform.Linux)
-            .UseConverter(p => p.ToString())) ;
-        
+            .UseConverter(p => p.ToString()));
+
         var scope = AnsiConsole.Prompt(new SelectionPrompt<InstallScope>()
             .Title("Scope:")
             .AddChoices(InstallScope.User, InstallScope.Global)
-            .UseConverter(s => s == InstallScope.Global 
-                ? "Global (requires admin/sudo)" 
+            .UseConverter(s => s == InstallScope.Global
+                ? "Global (requires admin/sudo)"
                 : "User"));
-        
+
         var useLocal = AnsiConsole.Confirm("Use a local archive instead of downloading?", false);
 
         string? url = null;
@@ -172,7 +172,7 @@ internal sealed class TuiRunner
         table.AddRow("Edition", request.Edition.ToString());
         table.AddRow("Platform", request.Platform.ToString());
         table.AddRow("Scope", request.Scope.ToString());
-        
+
         if (url != null)
         {
             table.AddRow("Download URL", url.ToString());
@@ -193,7 +193,7 @@ internal sealed class TuiRunner
         AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
         AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
         AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
-        
+
         if (request.Activate)
         {
             AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");
@@ -229,7 +229,7 @@ internal sealed class TuiRunner
         await _environment.ApplyActiveAsync(choice);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {choice.Version} ({choice.Edition}, {choice.Platform})");
-        
+
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
@@ -250,7 +250,7 @@ internal sealed class TuiRunner
         table.AddRow("Platform", install.Platform.ToString());
         table.AddRow("Scope", install.Scope.ToString());
         table.AddRow("Install Path", install.Path);
-        
+
         var currentActive = registry.GetActive();
         if (currentActive != null)
         {
@@ -274,7 +274,7 @@ internal sealed class TuiRunner
     {
         var registry = await _registry.LoadAsync();
         var activeInstall = registry.GetActive();
-        
+
         if (activeInstall is null)
         {
             AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
@@ -282,7 +282,7 @@ internal sealed class TuiRunner
         }
 
         AnsiConsole.MarkupLineInterpolated($"[yellow]Currently active:[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
-        
+
         var confirm = AnsiConsole.Confirm("Deactivate this installation?", true);
         if (!confirm)
         {
@@ -294,7 +294,7 @@ internal sealed class TuiRunner
         await _registry.SaveAsync(registry);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
-        
+
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
@@ -387,7 +387,7 @@ internal sealed class TuiRunner
         }
 
         AnsiConsole.MarkupLineInterpolated($"\n[green]Clean up complete.[/] Removed {removedCount} installation(s).");
-        
+
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Note: You may need to manually remove the shim directory from your PATH environment variable.[/]");
@@ -409,14 +409,14 @@ internal sealed class TuiRunner
             .AddChoices(registry.Installs));
 
         var deleteFiles = AnsiConsole.Confirm("Delete files on disk?", false);
-        
+
         // Deactivate if this is the active installation
         if (registry.ActiveId == choice.Id)
         {
             await _environment.RemoveActiveAsync(choice);
             registry.ActiveId = null;
         }
-        
+
         registry.Installs.Remove(choice);
 
         if (deleteFiles && Directory.Exists(choice.Path))

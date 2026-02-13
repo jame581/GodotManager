@@ -1,6 +1,6 @@
-using System.Runtime.InteropServices;
 using GodotManager.Config;
 using GodotManager.Domain;
+using System.Runtime.InteropServices;
 
 namespace GodotManager.Services;
 
@@ -58,20 +58,20 @@ internal sealed class EnvironmentService
 
     private void ApplyWindows(InstallEntry entry, bool createDesktopShortcut)
     {
-        var target = entry.Scope == InstallScope.Global 
-            ? EnvironmentVariableTarget.Machine 
+        var target = entry.Scope == InstallScope.Global
+            ? EnvironmentVariableTarget.Machine
             : EnvironmentVariableTarget.User;
-        
+
         // Set in registry for persistence
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, target);
-        
+
         // Also set in current process so doctor command shows it immediately
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.Process);
-        
+
         // Add shim directory to PATH
         var shimDir = _paths.GetShimDirectory(entry.Scope);
         AddToPath(shimDir, target);
-        
+
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
@@ -81,9 +81,9 @@ internal sealed class EnvironmentService
         var expectedExe = folderName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? folderName
             : folderName + ".exe";
-        
+
         var exe = Path.Combine(entry.Path, expectedExe);
-        
+
         // Fallback: search for any Godot executable if expected name not found
         if (!File.Exists(exe))
         {
@@ -101,8 +101,8 @@ internal sealed class EnvironmentService
 
     private void RemoveWindows(InstallEntry? entry)
     {
-        var target = entry?.Scope == InstallScope.Global 
-            ? EnvironmentVariableTarget.Machine 
+        var target = entry?.Scope == InstallScope.Global
+            ? EnvironmentVariableTarget.Machine
             : EnvironmentVariableTarget.User;
 
         // Remove GODOT_HOME environment variable
@@ -143,11 +143,11 @@ internal sealed class EnvironmentService
         File.WriteAllText(_paths.EnvScriptPath, exportLine + Environment.NewLine);
 
         var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot");
-        
+
         // Derive binary name from installation folder name
         var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var target = Path.Combine(entry.Path, folderName);
-        
+
         // Fallback: search for any Godot binary if expected name not found
         if (!File.Exists(target))
         {
@@ -207,20 +207,20 @@ internal sealed class EnvironmentService
         try
         {
             var currentPath = Environment.GetEnvironmentVariable("PATH", target) ?? string.Empty;
-            
+
             // Check if directory is already in PATH
             var paths = currentPath.Split(';', StringSplitOptions.RemoveEmptyEntries);
-            var alreadyInPath = paths.Any(p => 
+            var alreadyInPath = paths.Any(p =>
                 string.Equals(p.Trim(), directory, StringComparison.OrdinalIgnoreCase));
-            
+
             if (!alreadyInPath)
             {
-                var newPath = string.IsNullOrEmpty(currentPath) 
-                    ? directory 
+                var newPath = string.IsNullOrEmpty(currentPath)
+                    ? directory
                     : $"{currentPath};{directory}";
-                
+
                 Environment.SetEnvironmentVariable("PATH", newPath, target);
-                
+
                 // Also update current process PATH
                 var processPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process) ?? string.Empty;
                 if (!processPath.Contains(directory, StringComparison.OrdinalIgnoreCase))
@@ -241,16 +241,16 @@ internal sealed class EnvironmentService
         {
             var currentPath = Environment.GetEnvironmentVariable("PATH", target) ?? string.Empty;
             var paths = currentPath.Split(';', StringSplitOptions.RemoveEmptyEntries);
-            var newPaths = paths.Where(p => 
+            var newPaths = paths.Where(p =>
                 !string.Equals(p.Trim(), directory, StringComparison.OrdinalIgnoreCase));
-            
+
             var newPath = string.Join(';', newPaths);
             Environment.SetEnvironmentVariable("PATH", newPath, target);
-            
+
             // Also update current process PATH
             var processPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process) ?? string.Empty;
             var processPaths = processPath.Split(';', StringSplitOptions.RemoveEmptyEntries);
-            var newProcessPaths = processPaths.Where(p => 
+            var newProcessPaths = processPaths.Where(p =>
                 !string.Equals(p.Trim(), directory, StringComparison.OrdinalIgnoreCase));
             Environment.SetEnvironmentVariable("PATH", string.Join(';', newProcessPaths), EnvironmentVariableTarget.Process);
         }
@@ -270,18 +270,18 @@ internal sealed class EnvironmentService
         try
         {
             var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-            
+
             // Create Start Menu shortcut
             var startMenuFolder = entry.Scope == InstallScope.Global
                 ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
                 : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-            
+
             var godmanFolder = Path.Combine(startMenuFolder, "Programs", "godman");
             Directory.CreateDirectory(godmanFolder);
-            
+
             var startMenuShortcut = Path.Combine(godmanFolder, shortcutName);
             WindowsShortcut.Create(startMenuShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
-            
+
             // Create Desktop shortcut if requested
             if (createDesktopShortcut)
             {
@@ -306,18 +306,18 @@ internal sealed class EnvironmentService
         try
         {
             var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-            
+
             // Delete Start Menu shortcut
             var startMenuFolder = entry.Scope == InstallScope.Global
                 ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
                 : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-            
+
             var startMenuShortcut = Path.Combine(startMenuFolder, "Programs", "godman", shortcutName);
             if (File.Exists(startMenuShortcut))
             {
                 File.Delete(startMenuShortcut);
             }
-            
+
             // Delete Desktop shortcut
             var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
@@ -345,7 +345,7 @@ internal sealed class EnvironmentService
             // This is best effort - new processes will pick up the change
             const int HWND_BROADCAST = 0xffff;
             const int WM_SETTINGCHANGE = 0x1a;
-            
+
             WindowsEnvironmentNotifier.SendMessageTimeout(
                 new IntPtr(HWND_BROADCAST),
                 WM_SETTINGCHANGE,
@@ -406,14 +406,14 @@ internal static class WindowsShortcut
         }
 
         var shell = (IShellLinkW)new ShellLink();
-        
+
         shell.SetPath(targetPath);
         shell.SetWorkingDirectory(workingDirectory);
         shell.SetDescription(description);
-        
+
         var persistFile = (IPersistFile)shell;
         persistFile.Save(shortcutPath, true);
-        
+
         Marshal.ReleaseComObject(persistFile);
         Marshal.ReleaseComObject(shell);
     }

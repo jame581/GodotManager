@@ -1,9 +1,9 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using System;
+using System.IO;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -25,7 +25,7 @@ public class EnvironmentServiceTests
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        
+
         // Create a fake Godot executable
         var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
         var exePath = Path.Combine(tempDir, exeName);
@@ -49,9 +49,9 @@ public class EnvironmentServiceTests
             var shimDir = _paths.GetShimDirectory(InstallScope.User);
             var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
             var shimPath = Path.Combine(shimDir, shimName);
-            
+
             Assert.True(File.Exists(shimPath), $"Shim file should exist at {shimPath}");
-            
+
             if (OperatingSystem.IsWindows())
             {
                 var shimContent = await File.ReadAllTextAsync(shimPath);
@@ -74,7 +74,7 @@ public class EnvironmentServiceTests
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        
+
         var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
         var exePath = Path.Combine(tempDir, exeName);
         File.WriteAllText(exePath, "fake executable");
@@ -92,11 +92,11 @@ public class EnvironmentServiceTests
         {
             // Setup: Create shim first
             await _service.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
-            
+
             var shimDir = _paths.GetShimDirectory(InstallScope.User);
             var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
             var shimPath = Path.Combine(shimDir, shimName);
-            
+
             Assert.True(File.Exists(shimPath), "Shim should exist before removal");
 
             // Act
@@ -140,7 +140,7 @@ public class EnvironmentServiceTests
             var shimDir = _paths.GetShimDirectory(InstallScope.User);
             var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
             var shimPath = Path.Combine(shimDir, shimName);
-            
+
             // In dry-run mode, shim should not be created
             // This test might need adjustment based on actual implementation
         }
@@ -165,7 +165,7 @@ public class EnvironmentServiceTests
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        
+
         var exeName = "Godot_v4.5.1-stable_win64.exe";
         var exePath = Path.Combine(tempDir, exeName);
         File.WriteAllText(exePath, "fake executable");
@@ -188,7 +188,7 @@ public class EnvironmentServiceTests
             var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
             var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
-            
+
             // Note: Actual shortcut creation might fail in test environment, so this is best-effort
             // Assert.True(File.Exists(desktopShortcut), "Desktop shortcut should be created");
         }

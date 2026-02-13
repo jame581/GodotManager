@@ -1,10 +1,8 @@
-using System;
-using System.ComponentModel;
-using System.Threading.Tasks;
 using GodotManager.Domain;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.ComponentModel;
 
 namespace GodotManager.Commands;
 
@@ -105,7 +103,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         table.AddRow("Edition", request.Edition.ToString());
         table.AddRow("Platform", request.Platform.ToString());
         table.AddRow("Scope", request.Scope.ToString());
-        
+
         if (url != null)
         {
             table.AddRow("Download URL", url.ToString());
@@ -126,7 +124,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
         AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
         AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
-        
+
         if (request.Activate)
         {
             AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");

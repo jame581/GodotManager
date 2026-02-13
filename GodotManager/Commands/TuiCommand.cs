@@ -1,9 +1,8 @@
-using System.Threading.Tasks;
-using GodotManager.Tui;
-using GodotManager.Services;
 using GodotManager.Config;
-using Spectre.Console.Cli;
+using GodotManager.Services;
+using GodotManager.Tui;
 using Spectre.Console;
+using Spectre.Console.Cli;
 
 namespace GodotManager.Commands;
 

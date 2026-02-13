@@ -1,10 +1,7 @@
-using System;
-using System.ComponentModel;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.ComponentModel;
 
 namespace GodotManager.Commands;
 

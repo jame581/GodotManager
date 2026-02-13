@@ -1,5 +1,5 @@
-using System.Linq;
 using GodotManager.Infrastructure;
+using System.Linq;
 using Xunit;
 
 namespace GodotManager.Tests;

@@ -1,9 +1,8 @@
-using System;
-using System.IO;
 using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
-using Spectre.Console.Cli;
+using System;
+using System.IO;
 using Xunit;
 
 #nullable enable

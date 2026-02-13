@@ -1,5 +1,5 @@
-using System;
 using GodotManager.Domain;
+using System;
 using Xunit;
 
 namespace GodotManager.Tests;

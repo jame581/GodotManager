@@ -1,7 +1,7 @@
-using System;
-using System.IO;
 using GodotManager.Config;
 using GodotManager.Domain;
+using System;
+using System.IO;
 using Xunit;
 
 namespace GodotManager.Tests;

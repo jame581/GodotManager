@@ -1,12 +1,8 @@
-using System;
-using System.ComponentModel;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Domain;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.ComponentModel;
 
 namespace GodotManager.Commands;
 
@@ -41,12 +37,12 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         await _environment.ApplyActiveAsync(install, dryRun: false, settings.CreateDesktopShortcut);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {install.Version} ({install.Edition}, {install.Platform})");
-        
+
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
         }
-        
+
         return 0;
     }
 
@@ -64,7 +60,7 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         table.AddRow("Platform", install.Platform.ToString());
         table.AddRow("Scope", install.Scope.ToString());
         table.AddRow("Install Path", install.Path);
-        
+
         var currentActive = registry.GetActive();
         if (currentActive != null)
         {
@@ -80,12 +76,12 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
         AnsiConsole.MarkupLine("[grey]1.[/] Mark install as active in registry");
         AnsiConsole.MarkupLine("[grey]2.[/] Update GODOT_HOME environment variable");
-        
+
         var scope = install.Scope;
         var shimPath = OperatingSystem.IsWindows()
             ? Path.Combine("[scope-dir]", "godot.cmd")
             : Path.Combine("[scope-dir]", "godot");
-        
+
         AnsiConsole.MarkupLineInterpolated($"[grey]3.[/] Write shim at {shimPath}");
         AnsiConsole.MarkupLine("[grey]4.[/] Save registry changes");
 
@@ -102,5 +98,6 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         public bool DryRun { get; set; }
         [CommandOption("--create-desktop-shortcut")]
         [Description("Create a desktop shortcut (Windows only).")]
-        public bool CreateDesktopShortcut { get; set; }    }
+        public bool CreateDesktopShortcut { get; set; }
+    }
 }

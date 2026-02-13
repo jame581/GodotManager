@@ -1,11 +1,10 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
 using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
-using Spectre.Console.Cli;
+using System;
+using System.IO;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -35,7 +34,7 @@ public class DeactivateCommandTests : IDisposable
         // Arrange
         var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
-        
+
         var registry = new InstallRegistry();
         var entry = new InstallEntry
         {
@@ -45,7 +44,7 @@ public class DeactivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath
         };
-        
+
         registry.Installs.Add(entry);
         registry.MarkActive(entry.Id);
         await _registry.SaveAsync(registry);
@@ -55,7 +54,7 @@ public class DeactivateCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result);
-        
+
         var updatedRegistry = await _registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.All(updatedRegistry.Installs, install => Assert.False(install.IsActive));
@@ -74,7 +73,7 @@ public class DeactivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = Path.Combine(_tempRoot, "test")
         };
-        
+
         registry.Installs.Add(entry);
         // Don't mark as active
         await _registry.SaveAsync(registry);
@@ -92,7 +91,7 @@ public class DeactivateCommandTests : IDisposable
         // Arrange
         var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
-        
+
         var registry = new InstallRegistry();
         var entry1 = new InstallEntry
         {
@@ -102,7 +101,7 @@ public class DeactivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = installPath
         };
-        
+
         var entry2 = new InstallEntry
         {
             Version = "4.4.0",
@@ -111,7 +110,7 @@ public class DeactivateCommandTests : IDisposable
             Scope = InstallScope.User,
             Path = Path.Combine(_tempRoot, "test2")
         };
-        
+
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
         registry.MarkActive(entry1.Id);

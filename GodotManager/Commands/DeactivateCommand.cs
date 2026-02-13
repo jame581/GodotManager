@@ -1,5 +1,3 @@
-using System;
-using System.Threading.Tasks;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -21,7 +19,7 @@ internal sealed class DeactivateCommand : AsyncCommand
     {
         var registry = await _registry.LoadAsync();
         var activeInstall = registry.GetActive();
-        
+
         if (activeInstall is null)
         {
             AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
@@ -33,7 +31,7 @@ internal sealed class DeactivateCommand : AsyncCommand
         await _registry.SaveAsync(registry);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
-        
+
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");

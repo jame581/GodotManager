@@ -1,7 +1,3 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -30,7 +26,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
         }
 
         registry.Installs.Remove(install);
-        
+
         // Deactivate if this is the active installation
         if (registry.ActiveId == install.Id)
         {

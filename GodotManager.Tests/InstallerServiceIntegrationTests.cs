@@ -1,3 +1,6 @@
+using GodotManager.Config;
+using GodotManager.Domain;
+using GodotManager.Services;
 using System;
 using System.IO;
 using System.IO.Compression;
@@ -6,9 +9,6 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using GodotManager.Config;
-using GodotManager.Domain;
-using GodotManager.Services;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -170,7 +170,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         var shimPath = OperatingSystem.IsWindows()
             ? Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot.cmd")
             : Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot");
-        
+
         Assert.True(File.Exists(shimPath));
 
         // Cleanup
@@ -455,10 +455,10 @@ public class InstallerServiceIntegrationTests : IDisposable
     {
         var tempFile = Path.GetTempFileName();
         var zipPath = Path.ChangeExtension(tempFile, ".zip");
-        
+
         // Delete the temp file before moving
         File.Delete(tempFile);
-        
+
         // Create the zip with the new name
         using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
         {

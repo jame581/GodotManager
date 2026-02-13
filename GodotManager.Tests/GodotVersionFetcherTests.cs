@@ -1,8 +1,6 @@
-using System;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
 using GodotManager.Services;
+using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace GodotManager.Tests;

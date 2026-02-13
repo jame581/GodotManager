@@ -1,10 +1,6 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 using GodotManager.Config;
-using GodotManager.Services;
 using GodotManager.Domain;
+using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -37,13 +33,13 @@ internal sealed class DoctorCommand : AsyncCommand
 
         // Check environment variable in current process
         var envInProcess = Environment.GetEnvironmentVariable(_paths.EnvVarName, EnvironmentVariableTarget.Process);
-        
+
         // Check environment variable in user/machine registry
         var scope = active?.Scope ?? InstallScope.User;
         var registryTarget = OperatingSystem.IsWindows() && scope == InstallScope.Global
             ? EnvironmentVariableTarget.Machine
             : EnvironmentVariableTarget.User;
-        var envInRegistry = OperatingSystem.IsWindows() 
+        var envInRegistry = OperatingSystem.IsWindows()
             ? Environment.GetEnvironmentVariable(_paths.EnvVarName, registryTarget)
             : null;
 
@@ -61,7 +57,7 @@ internal sealed class DoctorCommand : AsyncCommand
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[green]{_paths.EnvVarName}[/] -> {envInProcess}");
-            
+
             if (OperatingSystem.IsWindows() && envInRegistry != envInProcess)
             {
                 AnsiConsole.MarkupLineInterpolated($"[grey]  Registry value:[/] {envInRegistry ?? "(not set)"}");
@@ -88,7 +84,7 @@ internal sealed class DoctorCommand : AsyncCommand
             var pathVar = Environment.GetEnvironmentVariable("PATH", registryTarget) ?? string.Empty;
             var inPath = pathVar.Split(';', StringSplitOptions.RemoveEmptyEntries)
                 .Any(p => string.Equals(p.Trim(), shimDir, StringComparison.OrdinalIgnoreCase));
-            
+
             if (inPath)
             {
                 AnsiConsole.MarkupLineInterpolated($"[green]Shim directory in PATH[/]: {shimDir}");

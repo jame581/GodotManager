@@ -1,13 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
-using GodotManager.Domain;
 
 namespace GodotManager.Services;
 
@@ -96,13 +89,13 @@ internal sealed class GodotVersionFetcher
                              .Replace("-dev", "");
 
         // Check if assets indicate Standard and/or .NET availability
-        var hasStandard = release.Assets?.Any(a => 
-            a.Name.Contains("win64.exe.zip") || 
+        var hasStandard = release.Assets?.Any(a =>
+            a.Name.Contains("win64.exe.zip") ||
             a.Name.Contains("linux.x86_64.zip") ||
             a.Name.Contains("linux_x86_64.zip")) ?? false;
 
-        var hasDotNet = release.Assets?.Any(a => 
-            a.Name.Contains("mono") || 
+        var hasDotNet = release.Assets?.Any(a =>
+            a.Name.Contains("mono") ||
             a.Name.Contains("dotnet")) ?? false;
 
         // Only include if we have actual downloadable assets
