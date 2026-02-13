@@ -36,30 +36,7 @@ app.Configure(config =>
 	config.AddCommand<VersionCommand>("version").WithDescription("Show current version");
 });
 
-string[] NormalizeArgs(string[] input)
-{
-	if (input.Length == 0)
-	{
-		return input;
-	}
-
-	var first = input[0];
-	if (first == "-v")
-	{
-		return new[] { "version" }.Concat(input.Skip(1)).ToArray();
-	}
-
-	if (first.StartsWith("--") && first.Length > 2)
-	{
-		// Allow shorthand like `dotnet run --list` instead of `dotnet run -- list`.
-		var command = first.TrimStart('-');
-		return new[] { command }.Concat(input.Skip(1)).ToArray();
-	}
-
-	return input;
-}
-
-var normalizedArgs = NormalizeArgs(args);
+	var normalizedArgs = CliArgsNormalizer.Normalize(args);
 
 try
 {
