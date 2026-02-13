@@ -5,6 +5,7 @@ using GodotManager.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.Reflection;
 
 var services = new ServiceCollection();
 services.AddSingleton<AppPaths>();
@@ -21,6 +22,8 @@ var app = new CommandApp(registrar);
 app.Configure(config =>
 {
     config.SetApplicationName("godman");
+    config.SetApplicationVersion(Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
+
     config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
     config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
     config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
@@ -33,9 +36,9 @@ app.Configure(config =>
     config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
     config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
     config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, and config");
+
 });
 
-//var normalizedArgs = CliArgsNormalizer.Normalize(args);
 
 try
 {
