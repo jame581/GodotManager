@@ -44,6 +44,11 @@ string[] NormalizeArgs(string[] input)
 	}
 
 	var first = input[0];
+	if (first == "-v")
+	{
+		return new[] { "version" }.Concat(input.Skip(1)).ToArray();
+	}
+
 	if (first.StartsWith("--") && first.Length > 2)
 	{
 		// Allow shorthand like `dotnet run --list` instead of `dotnet run -- list`.
