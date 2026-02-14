@@ -142,7 +142,7 @@ public class EnvironmentServiceTests
             var shimPath = Path.Combine(shimDir, shimName);
 
             // In dry-run mode, shim should not be created
-            // This test might need adjustment based on actual implementation
+            Assert.False(File.Exists(shimPath), "Shim file should not exist in dry-run mode");
         }
         finally
         {
