@@ -1,7 +1,13 @@
+using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
 using Spectre.Console;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Security;
+using System.Text;
+using System.Text.Json;
 
 namespace GodotManager.Tui;
 
@@ -224,9 +230,58 @@ internal sealed class TuiRunner
             return;
         }
 
+        var currentActive = registry.GetActive();
+
+        if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated())
+        {
+            var needsElevation = choice.Scope == InstallScope.Global
+                || (currentActive != null && currentActive.Scope == InstallScope.Global);
+
+            if (needsElevation)
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
+                var exitCode = await RunElevatedActivateAsync(choice.Id, createDesktopShortcut: false);
+                if (exitCode == 0)
+                {
+                    // Reload registry since the elevated process updated it
+                    registry = await _registry.LoadAsync();
+                    AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {choice.Version} ({choice.Edition}, {choice.Platform})");
+                    AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
+                }
+                return;
+            }
+        }
+
+        // Clean up previous activation to avoid stale shims/PATH entries
+        if (currentActive != null && currentActive.Id != choice.Id)
+        {
+            try
+            {
+                await _environment.RemoveActiveAsync(currentActive);
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+        }
+
+        try
+        {
+            await _environment.ApplyActiveAsync(choice);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] Access denied while updating environment for this scope.");
+            return;
+        }
+        catch (SecurityException)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] This scope requires elevated privileges.");
+            return;
+        }
+
         registry.MarkActive(choice.Id);
         await _registry.SaveAsync(registry);
-        await _environment.ApplyActiveAsync(choice);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {choice.Version} ({choice.Edition}, {choice.Platform})");
 
@@ -268,6 +323,68 @@ internal sealed class TuiRunner
         AnsiConsole.MarkupLine("[grey]2.[/] Update GODOT_HOME environment variable");
         AnsiConsole.MarkupLine("[grey]3.[/] Write shim script");
         AnsiConsole.MarkupLine("[grey]4.[/] Save registry changes");
+    }
+
+    private static async Task<int> RunElevatedActivateAsync(Guid id, bool createDesktopShortcut)
+    {
+        var payload = new ElevatedActivatePayload(id, createDesktopShortcut);
+        var json = JsonSerializer.Serialize(payload);
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+
+        var args = Environment.GetCommandLineArgs();
+        var fileName = Environment.ProcessPath ?? args.First();
+
+        var argumentBuilder = new StringBuilder();
+        if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            argumentBuilder.Append(QuoteArg(args[1]));
+            argumentBuilder.Append(' ');
+        }
+
+        argumentBuilder.Append("activate-elevated --payload ");
+        argumentBuilder.Append(QuoteArg(encoded));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = argumentBuilder.ToString(),
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                AnsiConsole.MarkupLine("[red]Activation failed:[/] Unable to start elevated activation process.");
+                return -1;
+            }
+
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] Elevated activation failed with exit code {process.ExitCode}.");
+                return -1;
+            }
+
+            return 0;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] Elevation was canceled by the user.");
+            return -1;
+        }
+    }
+
+    private static string QuoteArg(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg) || arg.Contains(' ') || arg.Contains('"'))
+        {
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+        }
+
+        return arg;
     }
 
     private async Task DeactivateFlowAsync()
