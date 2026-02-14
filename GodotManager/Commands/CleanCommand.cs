@@ -1,8 +1,12 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 
 namespace GodotManager.Commands;
 
@@ -31,13 +35,91 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             return 0;
         }
 
-        CleanupDirectory(_paths.ConfigDirectory, "config");
-        CleanupDirectory(_paths.GetInstallRoot(InstallScope.User), "user installs");
-        CleanupDirectory(_paths.GetShimDirectory(InstallScope.User), "user shims");
-        CleanupDirectory(_paths.GetInstallRoot(InstallScope.Global), "global installs");
-        CleanupDirectory(_paths.GetShimDirectory(InstallScope.Global), "global shims");
+        if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated() && HasGlobalCleanupTargets(_paths))
+        {
+            AnsiConsole.MarkupLine("[yellow]Administrator access is required to clean global installs/shims. A UAC prompt will appear.[/]");
+            return RunElevatedCleanup();
+        }
 
+        CleanupAll(_paths);
         return 0;
+    }
+
+    internal static void CleanupAll(AppPaths paths)
+    {
+        CleanupDirectory(paths.ConfigDirectory, "config");
+        CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
+        CleanupDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
+        CleanupDirectory(paths.GetInstallRoot(InstallScope.Global), "global installs");
+        CleanupDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
+    }
+
+    private static bool HasGlobalCleanupTargets(AppPaths paths)
+    {
+        return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
+            || Directory.Exists(paths.GetShimDirectory(InstallScope.Global));
+    }
+
+    private static int RunElevatedCleanup()
+    {
+        var payload = new ElevatedCleanPayload();
+        var json = JsonSerializer.Serialize(payload);
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+
+        var args = Environment.GetCommandLineArgs();
+        var fileName = Environment.ProcessPath ?? args.First();
+
+        var argumentBuilder = new StringBuilder();
+        if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            argumentBuilder.Append(QuoteArg(args[1]));
+            argumentBuilder.Append(' ');
+        }
+
+        argumentBuilder.Append("clean-elevated --payload ");
+        argumentBuilder.Append(QuoteArg(encoded));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = argumentBuilder.ToString(),
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                AnsiConsole.MarkupLine("[red]Clean failed:[/] Unable to start elevated clean process.");
+                return -1;
+            }
+
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Clean failed:[/] Elevated clean failed with exit code {process.ExitCode}.");
+                return -1;
+            }
+
+            return 0;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            AnsiConsole.MarkupLine("[red]Clean failed:[/] Elevation was canceled by the user.");
+            return -1;
+        }
+    }
+
+    private static string QuoteArg(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg) || arg.Contains(' ') || arg.Contains('"'))
+        {
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+        }
+
+        return arg;
     }
 
     private static void CleanupDirectory(string path, string label)

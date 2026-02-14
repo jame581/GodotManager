@@ -3,7 +3,10 @@ using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Security;
+using System.Text;
+using System.Text.Json;
 
 namespace GodotManager.Commands;
 
@@ -35,9 +38,8 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 
         if (OperatingSystem.IsWindows() && install.Scope == InstallScope.Global && !WindowsElevationHelper.IsElevated())
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] Administrator privileges are required to activate a Global install on Windows.");
-            AnsiConsole.MarkupLine("[grey]Re-run this command from an elevated terminal (Run as Administrator).[/]");
-            return -1;
+            AnsiConsole.MarkupLine("[yellow]Administrator access is required for global activation. A UAC prompt will appear.[/]");
+            return await RunElevatedActivateAsync(settings.Id, settings.CreateDesktopShortcut);
         }
 
         try
@@ -66,6 +68,68 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         }
 
         return 0;
+    }
+
+    private static async Task<int> RunElevatedActivateAsync(Guid id, bool createDesktopShortcut)
+    {
+        var payload = new ElevatedActivatePayload(id, createDesktopShortcut);
+        var json = JsonSerializer.Serialize(payload);
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+
+        var args = Environment.GetCommandLineArgs();
+        var fileName = Environment.ProcessPath ?? args.First();
+
+        var argumentBuilder = new StringBuilder();
+        if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            argumentBuilder.Append(QuoteArg(args[1]));
+            argumentBuilder.Append(' ');
+        }
+
+        argumentBuilder.Append("activate-elevated --payload ");
+        argumentBuilder.Append(QuoteArg(encoded));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = argumentBuilder.ToString(),
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                AnsiConsole.MarkupLine("[red]Activation failed:[/] Unable to start elevated activation process.");
+                return -1;
+            }
+
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] Elevated activation failed with exit code {process.ExitCode}.");
+                return -1;
+            }
+
+            return 0;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] Elevation was canceled by the user.");
+            return -1;
+        }
+    }
+
+    private static string QuoteArg(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg) || arg.Contains(' ') || arg.Contains('"'))
+        {
+            return "\"" + arg.Replace("\"", "\\\"") + "\"";
+        }
+
+        return arg;
     }
 
     private static int PreviewActivate(InstallEntry install, InstallRegistry registry)

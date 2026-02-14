@@ -113,6 +113,8 @@ dotnet test -v detailed
 - **Global installs require elevated privileges**:
   - Linux: run with `sudo`
   - Windows: a UAC prompt will appear when global scope is selected
+- **Global activation also requires elevated privileges** (because it updates system-wide environment variables/shims); on Windows, `activate` now shows a UAC prompt automatically.
+- **Global cleanup requires elevated privileges**; on Windows, `clean` shows a UAC prompt automatically when global paths are being removed.
 - Global scope sets system-wide environment variables and shims accessible to all users.
 - The `fetch` command queries GitHub API to discover available Godot versions.
 - Auto-URL construction for known Godot version patterns.
