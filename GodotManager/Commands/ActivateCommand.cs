@@ -3,6 +3,7 @@ using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.ComponentModel;
+using System.Security;
 
 namespace GodotManager.Commands;
 
@@ -32,9 +33,30 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             return PreviewActivate(install, registry);
         }
 
+        if (OperatingSystem.IsWindows() && install.Scope == InstallScope.Global && !WindowsElevationHelper.IsElevated())
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] Administrator privileges are required to activate a Global install on Windows.");
+            AnsiConsole.MarkupLine("[grey]Re-run this command from an elevated terminal (Run as Administrator).[/]");
+            return -1;
+        }
+
+        try
+        {
+            await _environment.ApplyActiveAsync(install, dryRun: false, settings.CreateDesktopShortcut);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] Access denied while updating environment for this scope.");
+            return -1;
+        }
+        catch (SecurityException)
+        {
+            AnsiConsole.MarkupLine("[red]Activation failed:[/] This scope requires elevated privileges.");
+            return -1;
+        }
+
         registry.MarkActive(install.Id);
         await _registry.SaveAsync(registry);
-        await _environment.ApplyActiveAsync(install, dryRun: false, settings.CreateDesktopShortcut);
 
         AnsiConsole.MarkupLineInterpolated($"[green]Activated[/] {install.Version} ({install.Edition}, {install.Platform})");
 
