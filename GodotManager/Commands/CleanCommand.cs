@@ -84,11 +84,15 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             FileName = fileName,
             Arguments = argumentBuilder.ToString(),
             UseShellExecute = true,
-            Verb = "runas"
+            Verb = "runas",
+            WorkingDirectory = Path.GetDirectoryName(fileName) ?? Environment.CurrentDirectory
         };
 
         try
         {
+            // Remove Mark of the Web so SmartScreen won't silently block runas
+            WindowsElevationHelper.TryRemoveZoneIdentifier(fileName);
+
             using var process = Process.Start(psi);
             if (process == null)
             {
@@ -107,7 +111,9 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            AnsiConsole.MarkupLine("[red]Clean failed:[/] Elevation was canceled by the user.");
+            AnsiConsole.MarkupLine("[red]Clean failed:[/] Elevation was canceled or blocked.");
+            AnsiConsole.MarkupLine("[grey]Tip: If you downloaded this executable, right-click it → Properties → Unblock, or run:[/]");
+            AnsiConsole.MarkupLineInterpolated($"[grey]  Unblock-File '{fileName}'[/]");
             return -1;
         }
     }

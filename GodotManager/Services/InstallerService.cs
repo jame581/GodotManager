@@ -233,11 +233,15 @@ internal sealed class InstallerService
             FileName = fileName,
             Arguments = argumentBuilder.ToString(),
             UseShellExecute = true,
-            Verb = "runas"
+            Verb = "runas",
+            WorkingDirectory = Path.GetDirectoryName(fileName) ?? Environment.CurrentDirectory
         };
 
         try
         {
+            // Remove Mark of the Web so SmartScreen won't silently block runas
+            WindowsElevationHelper.TryRemoveZoneIdentifier(fileName);
+
             using var process = Process.Start(psi);
             if (process == null)
             {
@@ -252,7 +256,10 @@ internal sealed class InstallerService
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            throw new InvalidOperationException("Elevation was canceled by the user.");
+            throw new InvalidOperationException(
+                "Elevation was canceled or blocked. If you downloaded this executable, " +
+                "right-click it → Properties → Unblock, or run: Unblock-File '" + fileName + "'",
+                ex);
         }
     }
 
