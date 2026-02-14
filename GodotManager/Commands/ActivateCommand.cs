@@ -36,10 +36,33 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             return PreviewActivate(install, registry);
         }
 
-        if (OperatingSystem.IsWindows() && install.Scope == InstallScope.Global && !WindowsElevationHelper.IsElevated())
+        var currentActive = registry.GetActive();
+
+        if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated())
         {
-            AnsiConsole.MarkupLine("[yellow]Administrator access is required for global activation. A UAC prompt will appear.[/]");
-            return await RunElevatedActivateAsync(settings.Id, settings.CreateDesktopShortcut);
+            // Need elevation if activating a global install OR switching away from a global install
+            // (cleaning up a global shim/PATH entry requires administrator access)
+            var needsElevation = install.Scope == InstallScope.Global
+                || (currentActive != null && currentActive.Scope == InstallScope.Global);
+
+            if (needsElevation)
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
+                return await RunElevatedActivateAsync(settings.Id, settings.CreateDesktopShortcut);
+            }
+        }
+
+        // Clean up previous activation to avoid stale shims/PATH entries
+        if (currentActive != null && currentActive.Id != install.Id)
+        {
+            try
+            {
+                await _environment.RemoveActiveAsync(currentActive);
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
         }
 
         try

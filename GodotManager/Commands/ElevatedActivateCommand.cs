@@ -56,6 +56,21 @@ internal sealed class ElevatedActivateCommand : AsyncCommand<ElevatedActivateCom
 
         try
         {
+            // Clean up previous activation to avoid stale shims/PATH entries
+            // (especially important when switching between global and user scopes)
+            var currentActive = registry.GetActive();
+            if (currentActive != null && currentActive.Id != install.Id)
+            {
+                try
+                {
+                    await _environment.RemoveActiveAsync(currentActive);
+                }
+                catch
+                {
+                    // Best effort cleanup
+                }
+            }
+
             await _environment.ApplyActiveAsync(install, dryRun: false, payload.CreateDesktopShortcut);
             registry.MarkActive(install.Id);
             await _registry.SaveAsync(registry);
