@@ -56,7 +56,7 @@ internal sealed class GodotDownloadUrlBuilder
         var slug = edition switch
         {
             InstallEdition.Standard => "win64.exe.zip",
-            InstallEdition.DotNet => "win64.mono.zip",
+            InstallEdition.DotNet => "mono_win64.zip",
             _ => null
         };
 
