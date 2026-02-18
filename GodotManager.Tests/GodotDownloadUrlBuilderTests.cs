@@ -22,7 +22,7 @@ public class GodotDownloadUrlBuilderTests
 
     [Theory]
     [InlineData("4.5.1", InstallEdition.Standard, "win64.exe.zip")]
-    [InlineData("4.5.1", InstallEdition.DotNet, "win64.mono.zip")]
+    [InlineData("4.5.1", InstallEdition.DotNet, "mono_win64.zip")]
     public void TryBuildUri_Windows_UsesOfficialEndpoint(string version, InstallEdition edition, string slug)
     {
         var ok = _builder.TryBuildUri(version, edition, InstallPlatform.Windows, out var uri, out var error);
