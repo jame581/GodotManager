@@ -195,6 +195,42 @@ public class RemoveCommandTests : IDisposable
         Assert.Single(updatedRegistry.Installs);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithDryRun_DoesNotModifyRegistry()
+    {
+        // Arrange
+        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        Directory.CreateDirectory(installPath);
+        File.WriteAllText(Path.Combine(installPath, "test.txt"), "test");
+
+        var registry = new InstallRegistry();
+        var entry = new InstallEntry
+        {
+            Version = "4.5.1",
+            Edition = InstallEdition.Standard,
+            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            Scope = InstallScope.User,
+            Path = installPath
+        };
+
+        registry.Installs.Add(entry);
+        registry.MarkActive(entry.Id);
+        await _registry.SaveAsync(registry);
+
+        var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = true, DryRun = true };
+
+        // Act
+        var result = await _command.ExecuteAsync(null!, settings);
+
+        // Assert
+        Assert.Equal(0, result);
+
+        var updatedRegistry = await _registry.LoadAsync();
+        Assert.Single(updatedRegistry.Installs);
+        Assert.Equal(entry.Id, updatedRegistry.ActiveId);
+        Assert.True(Directory.Exists(installPath), "Files should not be deleted during dry run");
+    }
+
     public void Dispose()
     {
         try

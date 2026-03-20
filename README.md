@@ -68,7 +68,7 @@ godman clean --yes
 - `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`, `--dry-run`.
 - `activate <id>` — switch active install; options: `--dry-run`.
 - `deactivate` — deactivate the current active install (clears `GODOT_HOME`, removes shims).
-- `remove <id> [--delete]` — unregister (optionally delete files).
+- `remove <id> [--delete] [--dry-run]` — unregister (optionally delete files); `--dry-run` previews without changes.
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.

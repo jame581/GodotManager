@@ -15,7 +15,7 @@
     - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`, `--dry-run` (preview without changes).
   - **activate** ✅: update env var and shim/symlink to chosen install by id.
     - Options: `--dry-run` (preview without changes).
-  - **remove** ✅: unregister and optionally delete files with `--delete` flag.
+  - **remove** ✅: unregister and optionally delete files with `--delete` flag. Supports `--dry-run` preview.
   - **doctor** ✅: validate registry, paths, env var, shim status.
   - **clean** ✅: remove all godman installs, shims, and config with `--yes` flag.
 - **Persistence** ✅: `installs.json` under Linux `~/.config/godman/`, Windows `%APPDATA%\godman\`.
@@ -118,5 +118,5 @@
 - Add checksum verification for downloads.
 - Explore resume support for interrupted downloads.
 - Consider caching fetched version data to reduce GitHub API calls.
-- Extend dry-run to remove command.
+- ~~Extend dry-run to remove command.~~ ✅ Done.
 - Add end-to-end CLI command tests.

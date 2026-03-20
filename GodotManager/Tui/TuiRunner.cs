@@ -532,6 +532,13 @@ internal sealed class TuiRunner
             .AddChoices(registry.Installs));
 
         var deleteFiles = AnsiConsole.Confirm("Delete files on disk?", false);
+        var dryRun = AnsiConsole.Confirm("Preview only (dry-run)?", false);
+
+        if (dryRun)
+        {
+            PreviewRemove(choice, registry, deleteFiles);
+            return;
+        }
 
         // Deactivate if this is the active installation
         if (registry.ActiveId == choice.Id)
@@ -557,6 +564,40 @@ internal sealed class TuiRunner
 
         await _registry.SaveAsync(registry);
         AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {choice.Version} ({choice.Edition}, {choice.Platform})");
+    }
+
+    private static void PreviewRemove(InstallEntry install, InstallRegistry registry, bool deleteFiles)
+    {
+        AnsiConsole.MarkupLine("\n[yellow bold]DRY RUN - No changes will be made[/]\n");
+
+        var table = new Table().Border(TableBorder.Rounded);
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+
+        table.AddRow("Id", install.Id.ToString("N"));
+        table.AddRow("Version", install.Version);
+        table.AddRow("Edition", install.Edition.ToString());
+        table.AddRow("Platform", install.Platform.ToString());
+        table.AddRow("Scope", install.Scope.ToString());
+        table.AddRow("Path", install.Path);
+        table.AddRow("Delete Files", deleteFiles ? "Yes" : "No");
+
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
+        AnsiConsole.MarkupLine("[grey]1.[/] Unregister from installs.json");
+
+        var step = 2;
+        if (registry.ActiveId == install.Id)
+        {
+            AnsiConsole.MarkupLine($"[grey]{step}.[/] Deactivate (clear GODOT_HOME, remove shims)");
+            step++;
+        }
+
+        if (deleteFiles)
+        {
+            AnsiConsole.MarkupLine($"[grey]{step}.[/] Delete files at {Markup.Escape(install.Path)}");
+        }
     }
 
     private async Task DoctorAsync()
