@@ -12,7 +12,7 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 - Scope-aware installs: user or global (requires administrator privileges for global scope).
 - Each install is extracted into its own subfolder under the install root, based on downloaded archive name (with deterministic fallback when source URL has no archive filename).
 - Registry of installs with activation; sets `GODOT_HOME` and writes shims (`godot` or `godot.cmd`).
-- Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `remove`, `doctor`, `clean`).
+- Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`).
 - Dry-run mode to preview install/activate operations without making changes.
 - Cleanup command to remove installs, shims, and config.
 
@@ -67,6 +67,7 @@ godman clean --yes
 - `fetch` — browse available Godot versions from GitHub; options: `--stable`, `--filter <VERSION>`, `--limit <COUNT>`.
 - `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`, `--dry-run`.
 - `activate <id>` — switch active install; options: `--dry-run`.
+- `deactivate` — deactivate the current active install (clears `GODOT_HOME`, removes shims).
 - `remove <id> [--delete]` — unregister (optionally delete files).
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.

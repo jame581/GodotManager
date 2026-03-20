@@ -11,7 +11,7 @@ These instructions apply to all files in this repository.
 - `godman` is a `.NET 10` CLI/TUI tool for installing and managing Godot Engine builds.
 - Platforms: Windows and Linux.
 - Install scopes: `User` and `Global`.
-- Primary commands: `list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`, `tui`.
+- Primary commands: `list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`, `tui`, `version`.
 - CLI framework: `Spectre.Console.Cli`; DI via `Microsoft.Extensions.DependencyInjection`.
 
 ## Architecture and Boundaries
