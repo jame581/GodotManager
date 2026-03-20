@@ -4,6 +4,7 @@ using SharpCompress.Archives;
 using SharpCompress.Common;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -21,7 +22,7 @@ internal sealed record InstallRequest(
     bool Force,
     bool DryRun = false);
 
-internal sealed record InstallPlan(InstallRequest Request, string TargetDirectory);
+internal sealed record InstallPlan(InstallRequest Request, string TargetDirectory, string? Checksum = null);
 
 internal sealed record ElevatedInstallPayload(
     string Version,
@@ -54,6 +55,7 @@ internal sealed class InstallerService
         var plan = await ResolvePlanAsync(request, progress, cancellationToken);
         request = plan.Request;
         var targetDir = plan.TargetDirectory;
+        var checksum = plan.Checksum;
 
         if (request.DryRun)
         {
@@ -124,6 +126,7 @@ internal sealed class InstallerService
             Platform = request.Platform,
             Scope = request.Scope,
             Path = targetDir,
+            Checksum = checksum,
             AddedAt = DateTimeOffset.UtcNow
         };
 
@@ -172,22 +175,32 @@ internal sealed class InstallerService
         }
 
         string? archiveName = null;
+        string? checksum = null;
         string targetDir;
 
         if (request.InstallPath is not null)
         {
             targetDir = request.InstallPath;
+            if (request.ArchivePath is not null && File.Exists(request.ArchivePath))
+            {
+                checksum = await ComputeChecksumAsync(request.ArchivePath, cancellationToken);
+            }
         }
         else if (request.ArchivePath is not null)
         {
             archiveName = Path.GetFileName(request.ArchivePath);
             var folderName = BuildInstallFolderName(request, archiveName);
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
+            if (File.Exists(request.ArchivePath))
+            {
+                checksum = await ComputeChecksumAsync(request.ArchivePath, cancellationToken);
+            }
         }
         else if (request.DownloadUri is not null)
         {
-            var (tempPath, downloadedName) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
+            var (tempPath, downloadedName, downloadChecksum) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
             archiveName = downloadedName;
+            checksum = downloadChecksum;
             var folderName = BuildInstallFolderName(request, archiveName);
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
             request = request with { ArchivePath = tempPath };
@@ -197,7 +210,7 @@ internal sealed class InstallerService
             throw new InvalidOperationException("Could not determine installation directory.");
         }
 
-        return new InstallPlan(request, targetDir);
+        return new InstallPlan(request, targetDir, checksum);
     }
 
     private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
@@ -354,7 +367,7 @@ internal sealed class InstallerService
         return (result, removedSuffix);
     }
 
-    private async Task<(string TempPath, string ArchiveName)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
+    private async Task<(string TempPath, string ArchiveName, string Checksum)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
     {
         using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -367,6 +380,7 @@ internal sealed class InstallerService
         var total = response.Content.Headers.ContentLength ?? -1;
         var tempFile = Path.GetTempFileName();
 
+        using var sha256 = SHA256.Create();
         await using var network = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var file = File.Create(tempFile);
         var buffer = new byte[81920];
@@ -376,6 +390,7 @@ internal sealed class InstallerService
         while ((r = await network.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
         {
             await file.WriteAsync(buffer.AsMemory(0, r), cancellationToken);
+            sha256.TransformBlock(buffer, 0, r, null, 0);
             read += r;
 
             if (total > 0)
@@ -385,8 +400,19 @@ internal sealed class InstallerService
             }
         }
 
+        sha256.TransformFinalBlock([], 0, 0);
+        var checksum = Convert.ToHexStringLower(sha256.Hash!);
+
         progress?.Invoke(100);
-        return (tempFile, archiveName);
+        return (tempFile, archiveName, checksum);
+    }
+
+    internal static async Task<string> ComputeChecksumAsync(string filePath, CancellationToken cancellationToken = default)
+    {
+        using var sha256 = SHA256.Create();
+        await using var stream = File.OpenRead(filePath);
+        var hash = await sha256.ComputeHashAsync(stream, cancellationToken);
+        return Convert.ToHexStringLower(hash);
     }
 
     private static async Task ExtractAsync(string archivePath, string destination, Action<double>? progress, CancellationToken cancellationToken)

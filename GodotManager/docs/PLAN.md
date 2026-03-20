@@ -111,12 +111,12 @@
 - Integration tests for download/install flows with mocked HTTP and fixture-based archives.
 
 ## Pending Features
-- **Checksum validation**: populate and verify `Checksum` field during downloads.
+- ~~**Checksum validation**: populate and verify `Checksum` field during downloads.~~ ✅ Done (SHA256 computed during download and local archive import, stored in registry, shown in `list`).
 - **Resume support**: partially downloaded files resume capability.
 - **Verbosity levels**: configurable logging/output detail.
 
 ## Next Steps
-- Add checksum verification for downloads.
+- ~~Add checksum verification for downloads.~~ ✅ Done.
 - Explore resume support for interrupted downloads.
 - ~~Consider caching fetched version data to reduce GitHub API calls.~~ ✅ Done (24h TTL, `--no-cache` flag, offline fallback).
 - ~~Extend dry-run to remove command.~~ ✅ Done.

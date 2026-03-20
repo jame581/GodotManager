@@ -24,12 +24,13 @@ internal sealed class ListCommand : AsyncCommand
         }
 
         var table = new Table().Border(TableBorder.Rounded);
-        table.AddColumns("Active", "Id", "Version", "Edition", "Platform", "Path", "Added");
+        table.AddColumns("Active", "Id", "Version", "Edition", "Platform", "Path", "SHA256", "Added");
 
         foreach (var install in registry.Installs.OrderByDescending(x => x.AddedAt))
         {
             var active = install.IsActive ? "[green]*[/]" : string.Empty;
-            table.AddRow(active, install.Id.ToString("N"), install.Version, install.Edition.ToString(), install.Platform.ToString(), install.Path, install.AddedAt.ToString("u"));
+            var checksum = install.Checksum is not null ? install.Checksum[..Math.Min(12, install.Checksum.Length)] : "[grey]-[/]";
+            table.AddRow(active, install.Id.ToString("N"), install.Version, install.Edition.ToString(), install.Platform.ToString(), install.Path, checksum, install.AddedAt.ToString("u"));
         }
 
         AnsiConsole.Write(table);

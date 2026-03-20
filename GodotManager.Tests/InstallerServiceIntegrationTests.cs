@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -91,10 +92,15 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.Equal(InstallEdition.Standard, result.Edition);
         Assert.True(Directory.Exists(result.Path));
 
+        // Verify checksum was computed from download
+        Assert.NotNull(result.Checksum);
+        Assert.Equal(64, result.Checksum.Length); // SHA256 hex string
+
         // Verify registry
         var registry = await _registry.LoadAsync();
         Assert.Single(registry.Installs);
         Assert.Equal(result.Id, registry.Installs[0].Id);
+        Assert.Equal(result.Checksum, registry.Installs[0].Checksum);
 
         // Cleanup
         File.Delete(mockArchive);
@@ -127,6 +133,14 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.Equal("4.5.1", result.Version);
         Assert.Equal(InstallEdition.DotNet, result.Edition);
         Assert.True(Directory.Exists(result.Path));
+
+        // Verify checksum was computed from local archive
+        Assert.NotNull(result.Checksum);
+        Assert.Equal(64, result.Checksum.Length);
+
+        // Verify checksum matches independently computed hash
+        var expectedHash = ComputeSha256(mockArchive);
+        Assert.Equal(expectedHash, result.Checksum);
 
         // Verify extracted files exist
         var files = Directory.GetFiles(result.Path, "*", SearchOption.AllDirectories);
@@ -449,6 +463,14 @@ public class InstallerServiceIntegrationTests : IDisposable
         // Cleanup
         File.Delete(mockArchive1);
         File.Delete(mockArchive2);
+    }
+
+    private static string ComputeSha256(string filePath)
+    {
+        using var sha256 = SHA256.Create();
+        using var stream = File.OpenRead(filePath);
+        var hash = sha256.ComputeHash(stream);
+        return Convert.ToHexStringLower(hash);
     }
 
     private static string CreateMockGodotArchive()
