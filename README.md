@@ -64,7 +64,7 @@ godman clean --yes
 
 ## Commands
 - `list` — show registered installs, active marker.
-- `fetch` — browse available Godot versions from GitHub; options: `--stable`, `--filter <VERSION>`, `--limit <COUNT>`.
+- `fetch` — browse available Godot versions from GitHub; options: `--stable`, `--filter <VERSION>`, `--limit <COUNT>`, `--no-cache`.
 - `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`, `--dry-run`.
 - `activate <id>` — switch active install; options: `--dry-run`.
 - `deactivate` — deactivate the current active install (clears `GODOT_HOME`, removes shims).
