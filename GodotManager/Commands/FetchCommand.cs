@@ -18,10 +18,14 @@ internal sealed class FetchCommand : AsyncCommand<FetchCommand.Settings>
     {
         try
         {
+            var statusMessage = settings.NoCache
+                ? "Fetching available versions from GitHub..."
+                : "Loading available versions...";
+
             var releases = await AnsiConsole.Status()
-                .StartAsync("Fetching available versions from GitHub...", async ctx =>
+                .StartAsync(statusMessage, async ctx =>
                 {
-                    return await _fetcher.FetchReleasesAsync();
+                    return await _fetcher.FetchReleasesAsync(skipCache: settings.NoCache);
                 });
 
             if (releases.Count == 0)
@@ -66,6 +70,14 @@ internal sealed class FetchCommand : AsyncCommand<FetchCommand.Settings>
             AnsiConsole.Write(table);
             AnsiConsole.MarkupLineInterpolated($"\n[grey]Showing {finalList.Count} of {releases.Count} total releases.[/]");
 
+            var cacheAge = _fetcher.GetCacheAge();
+            if (cacheAge.HasValue)
+            {
+                var age = DateTimeOffset.UtcNow - cacheAge.Value;
+                var ageText = age.TotalHours < 1 ? $"{age.Minutes}m ago" : $"{age.TotalHours:F0}h ago";
+                AnsiConsole.MarkupLineInterpolated($"[grey]Cache updated {ageText}. Use --no-cache to force refresh.[/]");
+            }
+
             if (!settings.StableOnly)
             {
                 AnsiConsole.MarkupLine("[grey]Tip: Use --stable to show only stable releases.[/]");
@@ -94,5 +106,9 @@ internal sealed class FetchCommand : AsyncCommand<FetchCommand.Settings>
         [Description("Maximum number of releases to display. Default: 20.")]
         [DefaultValue(20)]
         public int Limit { get; set; } = 20;
+
+        [CommandOption("--no-cache")]
+        [Description("Skip cache and fetch fresh data from GitHub.")]
+        public bool NoCache { get; set; }
     }
 }

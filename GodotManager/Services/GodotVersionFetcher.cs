@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,16 +15,82 @@ internal sealed record GodotRelease(
 internal sealed class GodotVersionFetcher
 {
     private readonly HttpClient _httpClient;
+    private readonly string _cacheFilePath;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(24);
     private const string GitHubApiUrl = "https://api.github.com/repos/godotengine/godot/releases";
 
-    public GodotVersionFetcher(HttpClient? httpClient = null)
+    private static readonly JsonSerializerOptions CacheJsonOptions = new()
     {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    public GodotVersionFetcher(AppPaths paths, HttpClient? httpClient = null)
+    {
+        _cacheFilePath = Path.Combine(paths.ConfigDirectory, "releases-cache.json");
         _httpClient = httpClient ?? new HttpClient();
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("godman", "1.0"));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
-    public async Task<List<GodotRelease>> FetchReleasesAsync(CancellationToken cancellationToken = default)
+    public async Task<List<GodotRelease>> FetchReleasesAsync(bool skipCache = false, CancellationToken cancellationToken = default)
+    {
+        if (!skipCache)
+        {
+            var cached = await TryLoadCacheAsync(cancellationToken);
+            if (cached != null)
+            {
+                return cached;
+            }
+        }
+
+        var releases = await FetchFromGitHubAsync(cancellationToken);
+        await SaveCacheAsync(releases, cancellationToken);
+        return releases;
+    }
+
+    public DateTimeOffset? GetCacheAge()
+    {
+        if (!File.Exists(_cacheFilePath))
+            return null;
+
+        return File.GetLastWriteTimeUtc(_cacheFilePath);
+    }
+
+    private async Task<List<GodotRelease>?> TryLoadCacheAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_cacheFilePath))
+            return null;
+
+        var lastWrite = File.GetLastWriteTimeUtc(_cacheFilePath);
+        if (DateTimeOffset.UtcNow - lastWrite > CacheTtl)
+            return null;
+
+        try
+        {
+            await using var stream = File.OpenRead(_cacheFilePath);
+            return await JsonSerializer.DeserializeAsync<List<GodotRelease>>(stream, CacheJsonOptions, cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task SaveCacheAsync(List<GodotRelease> releases, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = File.Create(_cacheFilePath);
+            await JsonSerializer.SerializeAsync(stream, releases, CacheJsonOptions, cancellationToken);
+        }
+        catch
+        {
+            // Best effort — caching is not critical
+        }
+    }
+
+    private async Task<List<GodotRelease>> FetchFromGitHubAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -66,6 +133,22 @@ internal sealed class GodotVersionFetcher
         }
         catch (HttpRequestException ex)
         {
+            // On network failure, try stale cache as fallback
+            if (File.Exists(_cacheFilePath))
+            {
+                try
+                {
+                    await using var stream = File.OpenRead(_cacheFilePath);
+                    var stale = await JsonSerializer.DeserializeAsync<List<GodotRelease>>(stream, CacheJsonOptions, cancellationToken);
+                    if (stale != null)
+                        return stale;
+                }
+                catch
+                {
+                    // Fall through to original exception
+                }
+            }
+
             throw new InvalidOperationException($"Failed to fetch releases from GitHub: {ex.Message}", ex);
         }
     }

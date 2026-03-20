@@ -10,7 +10,8 @@
 - Commands:
   - **list** ✅: show registered installs, mark active in table format.
   - **fetch** ✅: display available remote versions from GitHub releases with filtering options.
-    - Options: `--stable` (show only stable releases), `--filter <VERSION>` (filter by version text), `--limit <COUNT>` (max results, default 20).
+    - Options: `--stable` (show only stable releases), `--filter <VERSION>` (filter by version text), `--limit <COUNT>` (max results, default 20), `--no-cache` (skip cache, fetch fresh from GitHub).
+    - Caches fetched releases to `releases-cache.json` with 24h TTL. Falls back to stale cache on network failure.
   - **install** ✅: download with progress or import local archive, verify (checksum field available), unpack zip/tar.xz, register entry.
     - Options: `--version` (required), `--edition` (Standard|DotNet), `--platform` (Windows|Linux), `--scope` (User|Global, requires admin on Windows), `--url` or `--archive`, `--path`, `--force`, `--activate`, `--dry-run` (preview without changes).
   - **activate** ✅: update env var and shim/symlink to chosen install by id.
@@ -117,6 +118,6 @@
 ## Next Steps
 - Add checksum verification for downloads.
 - Explore resume support for interrupted downloads.
-- Consider caching fetched version data to reduce GitHub API calls.
+- ~~Consider caching fetched version data to reduce GitHub API calls.~~ ✅ Done (24h TTL, `--no-cache` flag, offline fallback).
 - ~~Extend dry-run to remove command.~~ ✅ Done.
 - Add end-to-end CLI command tests.
