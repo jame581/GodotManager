@@ -120,4 +120,4 @@
 - Explore resume support for interrupted downloads.
 - ~~Consider caching fetched version data to reduce GitHub API calls.~~ ✅ Done (24h TTL, `--no-cache` flag, offline fallback).
 - ~~Extend dry-run to remove command.~~ ✅ Done.
-- Add end-to-end CLI command tests.
+- ~~Add end-to-end CLI command tests.~~ ✅ Done (23 E2E tests via Spectre.Console.Testing CommandAppTester).
