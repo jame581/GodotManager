@@ -1,14 +1,12 @@
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
-using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -16,60 +14,25 @@ namespace GodotManager.Tests;
 
 public class InstallerServiceIntegrationTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
-    private readonly EnvironmentService _environment;
-    private readonly string? _savedHome;
-    private readonly string? _savedGlobal;
-    private readonly string? _savedLegacyHome;
-    private readonly string? _savedLegacyGlobal;
+    private readonly GodmanTestFixture _fixture;
 
     public InstallerServiceIntegrationTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempRoot);
-
-        // Override paths to use temp directory
-        _savedHome = Environment.GetEnvironmentVariable("GODMAN_HOME");
-        _savedGlobal = Environment.GetEnvironmentVariable("GODMAN_GLOBAL_ROOT");
-        _savedLegacyHome = Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME");
-        _savedLegacyGlobal = Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT");
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _tempRoot);
-        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", Path.Combine(_tempRoot, "global"));
-
-        _paths = new AppPaths();
-        _registry = new RegistryService(_paths);
-        _environment = new EnvironmentService(_paths);
+        _fixture = new GodmanTestFixture();
     }
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, recursive: true);
-            }
-        }
-        catch
-        {
-            // Ignore cleanup errors
-        }
-
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _savedHome);
-        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", _savedGlobal);
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_HOME", _savedLegacyHome);
-        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", _savedLegacyGlobal);
+        _fixture.Dispose();
     }
 
     [Fact]
     public async Task InstallAsync_WithMockedDownload_ExtractsAndRegisters()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var mockHttpClient = CreateMockHttpClient(mockArchive);
-        var installer = new InstallerService(_paths, _registry, _environment, mockHttpClient);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
 
         var request = new InstallRequest(
             Version: "4.5.1",
@@ -97,7 +60,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.Equal(64, result.Checksum.Length); // SHA256 hex string
 
         // Verify registry
-        var registry = await _registry.LoadAsync();
+        var registry = await _fixture.Registry.LoadAsync();
         Assert.Single(registry.Installs);
         Assert.Equal(result.Id, registry.Installs[0].Id);
         Assert.Equal(result.Checksum, registry.Installs[0].Checksum);
@@ -110,8 +73,8 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithLocalArchive_ExtractsAndRegisters()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
         var request = new InstallRequest(
             Version: "4.5.1",
@@ -154,8 +117,8 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithActivate_SetsActiveAndCreatesShim()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
         var request = new InstallRequest(
             Version: "4.5.1",
@@ -176,14 +139,14 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.NotNull(result);
 
         // Verify active in registry
-        var registry = await _registry.LoadAsync();
+        var registry = await _fixture.Registry.LoadAsync();
         Assert.Equal(result.Id, registry.ActiveId);
         Assert.True(registry.GetActive()?.IsActive);
 
         // Verify shim exists
         var shimPath = OperatingSystem.IsWindows()
-            ? Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot.cmd")
-            : Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot");
+            ? Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot.cmd")
+            : Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
 
         Assert.True(File.Exists(shimPath));
 
@@ -195,10 +158,10 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithForce_OverwritesExistingDirectory()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
-        var customPath = Path.Combine(_tempRoot, "custom-install");
+        var customPath = Path.Combine(_fixture.TempRoot, "custom-install");
         Directory.CreateDirectory(customPath);
         File.WriteAllText(Path.Combine(customPath, "existing.txt"), "old content");
 
@@ -230,8 +193,8 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithDryRun_DoesNotCreateFiles()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
         var request = new InstallRequest(
             Version: "4.5.1",
@@ -253,7 +216,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.False(Directory.Exists(result.Path)); // Directory should NOT exist in dry-run
 
         // Verify registry was NOT modified
-        var registry = await _registry.LoadAsync();
+        var registry = await _fixture.Registry.LoadAsync();
         Assert.Empty(registry.Installs);
 
         // Cleanup
@@ -264,8 +227,8 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_ProgressCallback_ReportsProgress()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
         var progressValues = new System.Collections.Generic.List<double>();
         var request = new InstallRequest(
@@ -299,9 +262,9 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_MultipleInstalls_MaintainsRegistry()
     {
         // Arrange
-        var mockArchive1 = CreateMockGodotArchive();
-        var mockArchive2 = CreateMockGodotArchive();
-        var installer = new InstallerService(_paths, _registry, _environment);
+        var mockArchive1 = MockArchiveFactory.CreateMockGodotArchive();
+        var mockArchive2 = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
 
         var request1 = new InstallRequest(
             Version: "4.5.0",
@@ -332,7 +295,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         var result2 = await installer.InstallAsync(request2);
 
         // Assert
-        var registry = await _registry.LoadAsync();
+        var registry = await _fixture.Registry.LoadAsync();
         Assert.Equal(2, registry.Installs.Count);
         Assert.Equal(result2.Id, registry.ActiveId);
         Assert.Contains(registry.Installs, i => i.Version == "4.5.0");
@@ -347,9 +310,9 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithQueryDownloadUrlWithoutFilename_UsesDeterministicFolderName()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var mockHttpClient = CreateMockHttpClient(mockArchive);
-        var installer = new InstallerService(_paths, _registry, _environment, mockHttpClient);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
         var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
 
         var request = new InstallRequest(
@@ -371,7 +334,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         var expectedFolder = platform == InstallPlatform.Windows
             ? "4.5.2-standard-windows-user"
             : "4.5.2-standard-linux-user";
-        var expectedPath = Path.Combine(_paths.GetInstallRoot(InstallScope.User), expectedFolder);
+        var expectedPath = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), expectedFolder);
 
         Assert.Equal(expectedPath, result.Path);
         Assert.True(Directory.Exists(result.Path));
@@ -384,9 +347,9 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_WithDownloadedArchiveName_UsesArchiveBasedFolderName()
     {
         // Arrange
-        var mockArchive = CreateMockGodotArchive();
-        var mockHttpClient = CreateMockHttpClient(mockArchive, "Godot_v4.5.2-stable_linux.x86_64.zip");
-        var installer = new InstallerService(_paths, _registry, _environment, mockHttpClient);
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive, "Godot_v4.5.2-stable_linux.x86_64.zip"));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
 
         var request = new InstallRequest(
             Version: "4.5.2",
@@ -404,7 +367,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         var result = await installer.InstallAsync(request);
 
         // Assert
-        var expectedPath = Path.Combine(_paths.GetInstallRoot(InstallScope.User), "Godot_v4.5.2-stable_linux");
+        var expectedPath = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "Godot_v4.5.2-stable_linux");
         Assert.Equal(expectedPath, result.Path);
         Assert.True(Directory.Exists(result.Path));
 
@@ -416,13 +379,13 @@ public class InstallerServiceIntegrationTests : IDisposable
     public async Task InstallAsync_MultipleQueryEndpointDownloads_DoNotOverwriteRegistryEntries()
     {
         // Arrange
-        var mockArchive1 = CreateMockGodotArchive();
-        var mockArchive2 = CreateMockGodotArchive();
+        var mockArchive1 = MockArchiveFactory.CreateMockGodotArchive();
+        var mockArchive2 = MockArchiveFactory.CreateMockGodotArchive();
         var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
         var requestUri = new Uri("https://example.com/download?platform=windows");
 
-        var installer1 = new InstallerService(_paths, _registry, _environment, CreateMockHttpClient(mockArchive1));
-        var installer2 = new InstallerService(_paths, _registry, _environment, CreateMockHttpClient(mockArchive2));
+        var installer1 = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(new MockFileHttpHandler(mockArchive1)));
+        var installer2 = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(new MockFileHttpHandler(mockArchive2)));
 
         var request1 = new InstallRequest(
             Version: "4.5.0",
@@ -455,7 +418,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         // Assert
         Assert.NotEqual(result1.Path, result2.Path);
 
-        var registry = await _registry.LoadAsync();
+        var registry = await _fixture.Registry.LoadAsync();
         Assert.Equal(2, registry.Installs.Count);
         Assert.Contains(registry.Installs, i => i.Version == "4.5.0");
         Assert.Contains(registry.Installs, i => i.Version == "4.5.1");
@@ -471,76 +434,5 @@ public class InstallerServiceIntegrationTests : IDisposable
         using var stream = File.OpenRead(filePath);
         var hash = sha256.ComputeHash(stream);
         return Convert.ToHexStringLower(hash);
-    }
-
-    private static string CreateMockGodotArchive()
-    {
-        var tempFile = Path.GetTempFileName();
-        var zipPath = Path.ChangeExtension(tempFile, ".zip");
-
-        // Delete the temp file before moving
-        File.Delete(tempFile);
-
-        // Create the zip with the new name
-        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
-        {
-            // Create mock Godot executable
-            var exeName = OperatingSystem.IsWindows() ? "Godot.exe" : "godot";
-            var entry = archive.CreateEntry(exeName);
-            using (var stream = entry.Open())
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.WriteLine("Mock Godot binary");
-            }
-
-            // Add some additional files to simulate real archive
-            var readmeEntry = archive.CreateEntry("README.txt");
-            using (var stream = readmeEntry.Open())
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.WriteLine("Mock Godot Engine");
-            }
-        }
-
-        return zipPath;
-    }
-
-    private static HttpClient CreateMockHttpClient(string archivePath, string? downloadedFileName = null)
-    {
-        var handler = new MockHttpMessageHandler(archivePath, downloadedFileName);
-        return new HttpClient(handler);
-    }
-}
-
-// Mock HTTP handler for testing
-internal class MockHttpMessageHandler : HttpMessageHandler
-{
-    private readonly string _archivePath;
-    private readonly string? _downloadedFileName;
-
-    public MockHttpMessageHandler(string archivePath, string? downloadedFileName)
-    {
-        _archivePath = archivePath;
-        _downloadedFileName = downloadedFileName;
-    }
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        var fileBytes = await File.ReadAllBytesAsync(_archivePath, cancellationToken);
-        var response = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new ByteArrayContent(fileBytes)
-        };
-        response.Content.Headers.ContentLength = fileBytes.Length;
-
-        if (!string.IsNullOrWhiteSpace(_downloadedFileName))
-        {
-            response.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
-            {
-                FileName = _downloadedFileName
-            };
-        }
-
-        return response;
     }
 }

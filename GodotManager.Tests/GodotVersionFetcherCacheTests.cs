@@ -1,11 +1,8 @@
-using GodotManager.Config;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
-using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -13,9 +10,7 @@ namespace GodotManager.Tests;
 
 public class GodotVersionFetcherCacheTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly string? _savedHome;
+    private readonly GodmanTestFixture _fixture;
 
     private const string GitHubReleaseJson = """
         [{
@@ -32,37 +27,22 @@ public class GodotVersionFetcherCacheTests : IDisposable
 
     public GodotVersionFetcherCacheTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-cache-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempRoot);
-
-        _savedHome = Environment.GetEnvironmentVariable("GODMAN_HOME");
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _tempRoot);
-
-        _paths = new AppPaths();
+        _fixture = new GodmanTestFixture();
     }
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _savedHome);
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-                Directory.Delete(_tempRoot, recursive: true);
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        _fixture.Dispose();
     }
 
     [Fact]
     public async Task FetchReleasesAsync_FirstCall_FetchesFromGitHubAndCachesResult()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
-        var cacheFile = Path.Combine(_paths.ConfigDirectory, "releases-cache.json");
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
+        var cacheFile = Path.Combine(_fixture.Paths.ConfigDirectory, "releases-cache.json");
 
         // Act
         var releases = await fetcher.FetchReleasesAsync();
@@ -80,9 +60,9 @@ public class GodotVersionFetcherCacheTests : IDisposable
     public async Task FetchReleasesAsync_SecondCall_UsesCachedData()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
 
         // Act
         var firstResult = await fetcher.FetchReleasesAsync();
@@ -101,9 +81,9 @@ public class GodotVersionFetcherCacheTests : IDisposable
     public async Task FetchReleasesAsync_WithSkipCache_AlwaysFetchesFromGitHub()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
 
         // Act - first call populates cache
         await fetcher.FetchReleasesAsync();
@@ -122,16 +102,16 @@ public class GodotVersionFetcherCacheTests : IDisposable
     public async Task FetchReleasesAsync_WithExpiredCache_FetchesFromGitHub()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
 
         // Populate cache via a first fetch
         await fetcher.FetchReleasesAsync();
         var callsAfterFirst = handler.CallCount;
 
         // Expire the cache by setting LastWriteTime to 25 hours ago
-        var cacheFile = Path.Combine(_paths.ConfigDirectory, "releases-cache.json");
+        var cacheFile = Path.Combine(_fixture.Paths.ConfigDirectory, "releases-cache.json");
         File.SetLastWriteTimeUtc(cacheFile, DateTime.UtcNow.AddHours(-25));
 
         // Act - this should detect expired cache and fetch from HTTP
@@ -147,9 +127,9 @@ public class GodotVersionFetcherCacheTests : IDisposable
     public void GetCacheAge_WithNoCache_ReturnsNull()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
 
         // Act
         var cacheAge = fetcher.GetCacheAge();
@@ -162,9 +142,9 @@ public class GodotVersionFetcherCacheTests : IDisposable
     public async Task GetCacheAge_WithCache_ReturnsTimestamp()
     {
         // Arrange
-        var handler = new TrackingHttpMessageHandler(GitHubReleaseJson);
+        var handler = new TrackingJsonHttpHandler(GitHubReleaseJson);
         var httpClient = new HttpClient(handler);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
 
         // Populate cache
         await fetcher.FetchReleasesAsync();
@@ -176,33 +156,5 @@ public class GodotVersionFetcherCacheTests : IDisposable
         Assert.NotNull(cacheAge);
         var elapsed = DateTimeOffset.UtcNow - cacheAge.Value;
         Assert.True(elapsed.TotalSeconds < 30, "Cache timestamp should be very recent");
-    }
-}
-
-/// <summary>
-/// Mock HTTP handler that returns a fixed JSON response and tracks the number of calls made.
-/// </summary>
-internal class TrackingHttpMessageHandler : HttpMessageHandler
-{
-    private readonly string _responseJson;
-    private int _callCount;
-
-    public int CallCount => _callCount;
-
-    public TrackingHttpMessageHandler(string responseJson)
-    {
-        _responseJson = responseJson;
-    }
-
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        Interlocked.Increment(ref _callCount);
-
-        var response = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(_responseJson, System.Text.Encoding.UTF8, "application/json")
-        };
-
-        return Task.FromResult(response);
     }
 }

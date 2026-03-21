@@ -2,6 +2,7 @@ using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using System.Linq;
@@ -14,28 +15,20 @@ namespace GodotManager.Tests;
 
 public class ActivateCommandTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
-    private readonly EnvironmentService _environment;
+    private readonly GodmanTestFixture _fixture;
     private readonly ActivateCommand _command;
 
     public ActivateCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-tests", Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempRoot);
-
-        _paths = new AppPaths();
-        _registry = new RegistryService(_paths);
-        _environment = new EnvironmentService(_paths);
-        _command = new ActivateCommand(_registry, _environment);
+        _fixture = new GodmanTestFixture();
+        _command = new ActivateCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
     public async Task ExecuteAsync_ActivatesInstall()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         // Create fake executable
@@ -43,17 +36,10 @@ public class ActivateCommandTests : IDisposable
         File.WriteAllText(Path.Combine(installPath, exeName), "fake");
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new ActivateCommand.Settings { Id = entry.Id };
 
@@ -63,7 +49,7 @@ public class ActivateCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry.Id, updatedRegistry.ActiveId);
         var updatedEntry = updatedRegistry.Installs.First(e => e.Id == entry.Id);
         Assert.True(updatedEntry.IsActive);
@@ -74,7 +60,7 @@ public class ActivateCommandTests : IDisposable
     {
         // Arrange
         var registry = new InstallRegistry();
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new ActivateCommand.Settings { Id = Guid.NewGuid() };
 
@@ -89,21 +75,14 @@ public class ActivateCommandTests : IDisposable
     public async Task ExecuteAsync_WithDryRun_DoesNotModifyRegistry()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new ActivateCommand.Settings { Id = entry.Id, DryRun = true };
 
@@ -113,7 +92,7 @@ public class ActivateCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.False(entry.IsActive);
     }
@@ -122,8 +101,8 @@ public class ActivateCommandTests : IDisposable
     public async Task ExecuteAsync_SwitchesActiveInstall()
     {
         // Arrange
-        var installPath1 = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
-        var installPath2 = Path.Combine(_tempRoot, "Godot_v4.4.0-stable_win64.exe");
+        var installPath1 = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath2 = Path.Combine(_fixture.TempRoot, "Godot_v4.4.0-stable_win64.exe");
         Directory.CreateDirectory(installPath1);
         Directory.CreateDirectory(installPath2);
 
@@ -133,28 +112,13 @@ public class ActivateCommandTests : IDisposable
         File.WriteAllText(Path.Combine(installPath2, exeName2), "fake");
 
         var registry = new InstallRegistry();
-        var entry1 = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath1
-        };
-
-        var entry2 = new InstallEntry
-        {
-            Version = "4.4.0",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath2
-        };
+        var entry1 = InstallEntryFactory.Create(version: "4.5.1", path: installPath1);
+        var entry2 = InstallEntryFactory.Create(version: "4.4.0", path: installPath2);
 
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
         registry.MarkActive(entry1.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new ActivateCommand.Settings { Id = entry2.Id };
 
@@ -164,7 +128,7 @@ public class ActivateCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry2.Id, updatedRegistry.ActiveId);
         var updatedEntry1 = updatedRegistry.Installs.First(e => e.Id == entry1.Id);
         var updatedEntry2 = updatedRegistry.Installs.First(e => e.Id == entry2.Id);
@@ -176,8 +140,8 @@ public class ActivateCommandTests : IDisposable
     public async Task ExecuteAsync_SwitchingInstalls_CleansPreviousShim()
     {
         // Arrange
-        var installPath1 = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
-        var installPath2 = Path.Combine(_tempRoot, "Godot_v4.4.0-stable_win64.exe");
+        var installPath1 = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath2 = Path.Combine(_fixture.TempRoot, "Godot_v4.4.0-stable_win64.exe");
         Directory.CreateDirectory(installPath1);
         Directory.CreateDirectory(installPath2);
 
@@ -187,33 +151,18 @@ public class ActivateCommandTests : IDisposable
         File.WriteAllText(Path.Combine(installPath2, exeName2), "fake");
 
         var registry = new InstallRegistry();
-        var entry1 = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath1
-        };
-
-        var entry2 = new InstallEntry
-        {
-            Version = "4.4.0",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath2
-        };
+        var entry1 = InstallEntryFactory.Create(version: "4.5.1", path: installPath1);
+        var entry2 = InstallEntryFactory.Create(version: "4.4.0", path: installPath2);
 
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // First activate entry1 - this creates a shim
         var settings1 = new ActivateCommand.Settings { Id = entry1.Id };
         await _command.ExecuteAsync(null!, settings1);
 
-        var shimDir = _paths.GetShimDirectory(InstallScope.User);
+        var shimDir = _fixture.Paths.GetShimDirectory(InstallScope.User);
         var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
         var shimPath = Path.Combine(shimDir, shimName);
         Assert.True(File.Exists(shimPath), "Shim should exist after first activation");
@@ -293,16 +242,6 @@ public class ActivateCommandTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        _fixture.Dispose();
     }
 }

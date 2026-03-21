@@ -1,7 +1,7 @@
 using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
-using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -11,43 +11,28 @@ namespace GodotManager.Tests;
 
 public class DeactivateCommandTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
-    private readonly EnvironmentService _environment;
+    private readonly GodmanTestFixture _fixture;
     private readonly DeactivateCommand _command;
 
     public DeactivateCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-tests", Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempRoot);
-
-        _paths = new AppPaths();
-        _registry = new RegistryService(_paths);
-        _environment = new EnvironmentService(_paths);
-        _command = new DeactivateCommand(_registry, _environment);
+        _fixture = new GodmanTestFixture();
+        _command = new DeactivateCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
     public async Task ExecuteAsync_WithActiveInstall_Deactivates()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
         registry.MarkActive(entry.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         var result = await _command.ExecuteAsync(null!);
@@ -55,7 +40,7 @@ public class DeactivateCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.All(updatedRegistry.Installs, install => Assert.False(install.IsActive));
     }
@@ -65,18 +50,11 @@ public class DeactivateCommandTests : IDisposable
     {
         // Arrange
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = Path.Combine(_tempRoot, "test")
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: Path.Combine(_fixture.TempRoot, "test"));
 
         registry.Installs.Add(entry);
         // Don't mark as active
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         var result = await _command.ExecuteAsync(null!);
@@ -89,38 +67,23 @@ public class DeactivateCommandTests : IDisposable
     public async Task ExecuteAsync_ClearsActiveInstallFromRegistry()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry1 = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
-
-        var entry2 = new InstallEntry
-        {
-            Version = "4.4.0",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = Path.Combine(_tempRoot, "test2")
-        };
+        var entry1 = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
+        var entry2 = InstallEntryFactory.Create(version: "4.4.0", path: Path.Combine(_fixture.TempRoot, "test2"));
 
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
         registry.MarkActive(entry1.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         await _command.ExecuteAsync(null!);
 
         // Assert
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.Equal(2, updatedRegistry.Installs.Count);
         Assert.All(updatedRegistry.Installs, install => Assert.False(install.IsActive));
@@ -128,16 +91,6 @@ public class DeactivateCommandTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        _fixture.Dispose();
     }
 }

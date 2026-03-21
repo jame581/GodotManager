@@ -1,7 +1,6 @@
 using GodotManager.Commands;
-using GodotManager.Config;
 using GodotManager.Domain;
-using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -11,19 +10,13 @@ namespace GodotManager.Tests;
 
 public class DoctorCommandTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
+    private readonly GodmanTestFixture _fixture;
     private readonly DoctorCommand _command;
 
     public DoctorCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-tests", Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempRoot);
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _tempRoot);
-        _paths = new AppPaths();
-        _registry = new RegistryService(_paths);
-        _command = new DoctorCommand(_registry, _paths);
+        _fixture = new GodmanTestFixture();
+        _command = new DoctorCommand(_fixture.Registry, _fixture.Paths);
     }
 
     [Fact]
@@ -31,7 +24,7 @@ public class DoctorCommandTests : IDisposable
     {
         // Arrange
         var registry = new InstallRegistry();
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         var result = await _command.ExecuteAsync(null!);
@@ -44,22 +37,18 @@ public class DoctorCommandTests : IDisposable
     public async Task ExecuteAsync_WithActiveInstall_ReturnsZero()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1",
+            edition: InstallEdition.Standard,
+            path: installPath);
 
         registry.Installs.Add(entry);
         registry.MarkActive(entry.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         var result = await _command.ExecuteAsync(null!);
@@ -72,21 +61,17 @@ public class DoctorCommandTests : IDisposable
     public async Task ExecuteAsync_WithNoActiveInstall_ReturnsZero()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1",
+            edition: InstallEdition.Standard,
+            path: installPath);
 
         registry.Installs.Add(entry);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         // Act
         var result = await _command.ExecuteAsync(null!);
@@ -97,18 +82,6 @@ public class DoctorCommandTests : IDisposable
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable("GODMAN_HOME", null);
-
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        _fixture.Dispose();
     }
 }

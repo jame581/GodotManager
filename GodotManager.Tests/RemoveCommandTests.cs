@@ -2,6 +2,7 @@ using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -11,42 +12,27 @@ namespace GodotManager.Tests;
 
 public class RemoveCommandTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
-    private readonly EnvironmentService _environment;
+    private readonly GodmanTestFixture _fixture;
     private readonly RemoveCommand _command;
 
     public RemoveCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-tests", Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempRoot);
-
-        _paths = new AppPaths();
-        _registry = new RegistryService(_paths);
-        _environment = new EnvironmentService(_paths);
-        _command = new RemoveCommand(_registry, _environment);
+        _fixture = new GodmanTestFixture();
+        _command = new RemoveCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
     public async Task ExecuteAsync_RemovesInstallFromRegistry()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = false };
 
@@ -56,7 +42,7 @@ public class RemoveCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Empty(updatedRegistry.Installs);
         Assert.True(Directory.Exists(installPath), "Files should not be deleted without --delete flag");
     }
@@ -65,22 +51,15 @@ public class RemoveCommandTests : IDisposable
     public async Task ExecuteAsync_WithDeleteFiles_RemovesDirectory()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
         File.WriteAllText(Path.Combine(installPath, "test.txt"), "test");
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = true };
 
@@ -96,7 +75,7 @@ public class RemoveCommandTests : IDisposable
     public async Task ExecuteAsync_RemovingActiveInstall_Deactivates()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
 
         // Create fake executable for deactivation
@@ -104,18 +83,11 @@ public class RemoveCommandTests : IDisposable
         File.WriteAllText(Path.Combine(installPath, exeName), "fake");
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
         registry.MarkActive(entry.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = false };
 
@@ -125,7 +97,7 @@ public class RemoveCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
         Assert.Empty(updatedRegistry.Installs);
     }
@@ -135,7 +107,7 @@ public class RemoveCommandTests : IDisposable
     {
         // Arrange
         var registry = new InstallRegistry();
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = Guid.NewGuid(), DeleteFiles = false };
 
@@ -150,8 +122,8 @@ public class RemoveCommandTests : IDisposable
     public async Task ExecuteAsync_RemovingNonActiveInstall_KeepsActive()
     {
         // Arrange
-        var installPath1 = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
-        var installPath2 = Path.Combine(_tempRoot, "Godot_v4.4.0-stable_win64.exe");
+        var installPath1 = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath2 = Path.Combine(_fixture.TempRoot, "Godot_v4.4.0-stable_win64.exe");
         Directory.CreateDirectory(installPath1);
         Directory.CreateDirectory(installPath2);
 
@@ -159,28 +131,14 @@ public class RemoveCommandTests : IDisposable
         File.WriteAllText(Path.Combine(installPath1, exeName1), "fake");
 
         var registry = new InstallRegistry();
-        var entry1 = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath1
-        };
+        var entry1 = InstallEntryFactory.Create(version: "4.5.1", path: installPath1);
 
-        var entry2 = new InstallEntry
-        {
-            Version = "4.4.0",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath2
-        };
+        var entry2 = InstallEntryFactory.Create(version: "4.4.0", path: installPath2);
 
         registry.Installs.Add(entry1);
         registry.Installs.Add(entry2);
         registry.MarkActive(entry1.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = entry2.Id, DeleteFiles = false };
 
@@ -190,7 +148,7 @@ public class RemoveCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry1.Id, updatedRegistry.ActiveId);
         Assert.Single(updatedRegistry.Installs);
     }
@@ -199,23 +157,16 @@ public class RemoveCommandTests : IDisposable
     public async Task ExecuteAsync_WithDryRun_DoesNotModifyRegistry()
     {
         // Arrange
-        var installPath = Path.Combine(_tempRoot, "Godot_v4.5.1-stable_win64.exe");
+        var installPath = Path.Combine(_fixture.TempRoot, "Godot_v4.5.1-stable_win64.exe");
         Directory.CreateDirectory(installPath);
         File.WriteAllText(Path.Combine(installPath, "test.txt"), "test");
 
         var registry = new InstallRegistry();
-        var entry = new InstallEntry
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Path = installPath
-        };
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
 
         registry.Installs.Add(entry);
         registry.MarkActive(entry.Id);
-        await _registry.SaveAsync(registry);
+        await _fixture.Registry.SaveAsync(registry);
 
         var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = true, DryRun = true };
 
@@ -225,7 +176,7 @@ public class RemoveCommandTests : IDisposable
         // Assert
         Assert.Equal(0, result);
 
-        var updatedRegistry = await _registry.LoadAsync();
+        var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Single(updatedRegistry.Installs);
         Assert.Equal(entry.Id, updatedRegistry.ActiveId);
         Assert.True(Directory.Exists(installPath), "Files should not be deleted during dry run");
@@ -233,16 +184,6 @@ public class RemoveCommandTests : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        _fixture.Dispose();
     }
 }

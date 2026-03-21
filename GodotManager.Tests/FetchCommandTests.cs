@@ -1,11 +1,8 @@
 using GodotManager.Commands;
-using GodotManager.Config;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
 using System;
-using System.IO;
-using System.Net;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -13,10 +10,7 @@ namespace GodotManager.Tests;
 
 public class FetchCommandTests : IDisposable
 {
-    private readonly string _tempRoot;
-    private readonly AppPaths _paths;
-    private readonly string? _savedHome;
-    private readonly string? _savedGlobal;
+    private readonly GodmanTestFixture _fixture;
 
     private const string MockReleasesJson = """
         [
@@ -60,33 +54,12 @@ public class FetchCommandTests : IDisposable
 
     public FetchCommandTests()
     {
-        _tempRoot = Path.Combine(Path.GetTempPath(), "godman-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_tempRoot);
-
-        _savedHome = Environment.GetEnvironmentVariable("GODMAN_HOME");
-        _savedGlobal = Environment.GetEnvironmentVariable("GODMAN_GLOBAL_ROOT");
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _tempRoot);
-        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", Path.Combine(_tempRoot, "global"));
-
-        _paths = new AppPaths();
+        _fixture = new GodmanTestFixture();
     }
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable("GODMAN_HOME", _savedHome);
-        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", _savedGlobal);
-
-        try
-        {
-            if (Directory.Exists(_tempRoot))
-            {
-                Directory.Delete(_tempRoot, recursive: true);
-            }
-        }
-        catch
-        {
-            // Ignore cleanup errors
-        }
+        _fixture.Dispose();
     }
 
     [Fact]
@@ -94,7 +67,7 @@ public class FetchCommandTests : IDisposable
     {
         // Arrange
         var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
         var command = new FetchCommand(fetcher);
         var settings = new FetchCommand.Settings { Limit = 20 };
 
@@ -110,7 +83,7 @@ public class FetchCommandTests : IDisposable
     {
         // Arrange
         var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
         var command = new FetchCommand(fetcher);
         var settings = new FetchCommand.Settings { StableOnly = true, Limit = 20 };
 
@@ -126,7 +99,7 @@ public class FetchCommandTests : IDisposable
     {
         // Arrange
         var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
         var command = new FetchCommand(fetcher);
         var settings = new FetchCommand.Settings { VersionFilter = "4.5", Limit = 20 };
 
@@ -142,7 +115,7 @@ public class FetchCommandTests : IDisposable
     {
         // Arrange
         var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
         var command = new FetchCommand(fetcher);
         var settings = new FetchCommand.Settings { NoCache = true, Limit = 20 };
 
@@ -158,7 +131,7 @@ public class FetchCommandTests : IDisposable
     {
         // Arrange
         var httpClient = CreateMockHttpClient(EmptyReleasesJson);
-        var fetcher = new GodotVersionFetcher(_paths, httpClient);
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
         var command = new FetchCommand(fetcher);
         var settings = new FetchCommand.Settings { Limit = 20 };
 
@@ -171,27 +144,7 @@ public class FetchCommandTests : IDisposable
 
     private static HttpClient CreateMockHttpClient(string jsonResponse)
     {
-        var handler = new MockJsonHttpMessageHandler(jsonResponse);
+        var handler = new MockJsonHttpHandler(jsonResponse);
         return new HttpClient(handler);
-    }
-}
-
-internal class MockJsonHttpMessageHandler : HttpMessageHandler
-{
-    private readonly string _jsonResponse;
-
-    public MockJsonHttpMessageHandler(string jsonResponse)
-    {
-        _jsonResponse = jsonResponse;
-    }
-
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        var response = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(_jsonResponse, System.Text.Encoding.UTF8, "application/json")
-        };
-
-        return Task.FromResult(response);
     }
 }
