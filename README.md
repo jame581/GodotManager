@@ -18,17 +18,33 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 
 ### Prerequisites
 
-Software what you need is:
+**Pre-built releases** are self-contained — no runtime needed. Just download and run.
 
-* [.NET 10](https://dotnet.microsoft.com/en-us/download)
-
-That's all :)
+**Building from source** requires:
+* [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download)
 
 ## Quickstart
 
 ### Install via WinGet (Windows)
 ```powershell
 winget install --id JanMesarc.GodMan
+```
+
+### Install on Linux (one-liner)
+```bash
+curl -fsSL https://raw.githubusercontent.com/jame581/GodotManager/main/install.sh | bash
+```
+
+### Install on Linux (manual)
+Download the latest `.tar.gz` from [Releases](https://github.com/jame581/GodotManager/releases/latest) and extract:
+```bash
+mkdir -p ~/.local/bin
+tar -xzf godman-linux-x64-*.tar.gz -C ~/.local/bin
+chmod +x ~/.local/bin/godman
+
+# Add to PATH if not already there
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ### Usage example

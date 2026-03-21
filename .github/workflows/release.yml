@@ -58,18 +58,31 @@ jobs:
       - name: Publish
         run: dotnet publish GodotManager/GodotManager.csproj -c Release -r ${{ matrix.rid }} --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:Version=${{ env.VERSION }} /p:AssemblyVersion=${{ env.VERSION }}.0 /p:FileVersion=${{ env.VERSION }}.0 /p:InformationalVersion=${{ env.VERSION }} -o publish
 
-      - name: Package
+      - name: Package (zip for Windows)
+        if: matrix.rid == 'win-x64'
         shell: pwsh
         run: |
           $assetName = "${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}"
           Compress-Archive -Path publish/* -DestinationPath "${assetName}.zip"
 
-      - name: Generate checksum
+      - name: Package (tar.gz for Linux)
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          assetName="${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}"
+          tar -czf "${assetName}.tar.gz" -C publish .
+
+      - name: Generate checksums
         shell: pwsh
         run: |
           $assetName = "${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}"
-          $hash = Get-FileHash -Algorithm SHA256 "${assetName}.zip" | Select-Object -ExpandProperty Hash
-          "$hash  ${assetName}.zip" | Out-File -FilePath "${assetName}.zip.sha256" -Encoding ascii
+          foreach ($ext in @(".zip", ".tar.gz")) {
+            $file = "${assetName}${ext}"
+            if (Test-Path $file) {
+              $hash = Get-FileHash -Algorithm SHA256 $file | Select-Object -ExpandProperty Hash
+              "$hash  ${file}" | Out-File -FilePath "${file}.sha256" -Encoding ascii
+            }
+          }
 
       - name: Prepare Winget metadata
         if: matrix.asset == 'windows-x64'
@@ -101,6 +114,8 @@ jobs:
           path: |
             ${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}.zip
             ${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}.zip.sha256
+            ${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}.tar.gz
+            ${{ env.APP_NAME }}-${{ matrix.asset }}-${{ env.VERSION }}.tar.gz.sha256
 
       - name: Upload Winget metadata
         if: matrix.asset == 'windows-x64'
@@ -134,6 +149,7 @@ jobs:
         with:
           files: |
             dist/**/*.zip
+            dist/**/*.tar.gz
             dist/**/*.sha256
             ${{ env.WINGET_FILES }}
           generate_release_notes: true
