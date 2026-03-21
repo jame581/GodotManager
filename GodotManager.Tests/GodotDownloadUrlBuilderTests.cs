@@ -9,8 +9,8 @@ public class GodotDownloadUrlBuilderTests
     private readonly GodotDownloadUrlBuilder _builder = new();
 
     [Theory]
-    [InlineData("4.5.1", InstallEdition.Standard, InstallPlatform.Linux, "https://godot-releases.nbg1.your-objectstorage.com/4.5.1-stable/Godot_v4.5.1-stable_linux.x86_64.zip")]
-    [InlineData("4.5.1", InstallEdition.DotNet, InstallPlatform.Linux, "https://godot-releases.nbg1.your-objectstorage.com/4.5.1-stable/Godot_v4.5.1-stable_mono_linux_x86_64.zip")]
+    [InlineData("4.5.1", InstallEdition.Standard, InstallPlatform.Linux, "https://downloads.godotengine.org/?version=4.5.1&flavor=stable&slug=linux.x86_64.zip&platform=linux.64")]
+    [InlineData("4.5.1", InstallEdition.DotNet, InstallPlatform.Linux, "https://downloads.godotengine.org/?version=4.5.1&flavor=stable&slug=mono_linux_x86_64.zip&platform=linux.64")]
     public void TryBuildUri_Linux_ReturnsExpected(string version, InstallEdition edition, InstallPlatform platform, string expected)
     {
         var ok = _builder.TryBuildUri(version, edition, platform, out var uri, out var error);

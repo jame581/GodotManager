@@ -31,20 +31,20 @@ internal sealed class GodotDownloadUrlBuilder
         uri = null;
         error = null;
 
-        var file = edition switch
+        var slug = edition switch
         {
-            InstallEdition.Standard => $"Godot_v{version}-stable_linux.x86_64.zip",
-            InstallEdition.DotNet => $"Godot_v{version}-stable_mono_linux_x86_64.zip",
+            InstallEdition.Standard => "linux.x86_64.zip",
+            InstallEdition.DotNet => "mono_linux_x86_64.zip",
             _ => null
         };
 
-        if (file is null)
+        if (slug is null)
         {
             error = "Unsupported edition.";
             return false;
         }
 
-        var candidate = $"{ObjectStorageBase}/{versionSegment}/{file}";
+        var candidate = $"{OfficialDownloadsBase}?version={version}&flavor=stable&slug={slug}&platform=linux.64";
         return TryCreate(candidate, out uri, out error);
     }
 
