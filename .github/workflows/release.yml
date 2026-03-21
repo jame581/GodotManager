@@ -165,5 +165,6 @@ jobs:
         uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: ${{ vars.WINGET_ID }}
+          installers-regex: \.zip$
           release-tag: ${{ github.ref_name }}
           token: ${{ secrets.WINGET_TOKEN }}
