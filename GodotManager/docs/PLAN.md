@@ -121,3 +121,128 @@
 - ~~Consider caching fetched version data to reduce GitHub API calls.~~ ✅ Done (24h TTL, `--no-cache` flag, offline fallback).
 - ~~Extend dry-run to remove command.~~ ✅ Done.
 - ~~Add end-to-end CLI command tests.~~ ✅ Done (23 E2E tests via Spectre.Console.Testing CommandAppTester).
+
+## Phase 3 — Steam Detection
+
+Detect Godot Engine installations managed by Steam and integrate them into godman.
+
+### Background
+- **Steam App ID**: 404790 (Standard edition only — Mono/.NET is NOT on Steam)
+- Steam installs in `steamapps/common/Godot Engine/` under library folders
+- Detect via `libraryfolders.vdf` (Valve Data Format) + `appmanifest_404790.acf`
+
+### Detection Algorithm
+1. Locate Steam: registry `HKLM\SOFTWARE\Wow6432Node\Valve\Steam\InstallPath` (Windows) or `~/.steam/steam` (Linux)
+2. Parse `config/libraryfolders.vdf` to find all library folders
+3. Check each library for `steamapps/appmanifest_404790.acf`
+4. If found, locate Godot executable in `steamapps/common/Godot Engine/`
+
+### Implementation
+- **New service**: `SteamDetectorService` — discover Steam Godot installs
+- **New enum value**: `InstallSource` (Manual, Steam) on `InstallEntry`
+- **Modified commands**: `list` and `doctor` show Steam installs; `activate` can activate them
+- **VDF parser**: minimal parser for `libraryfolders.vdf` key-value format
+
+### Paths
+| Platform | Steam Root | Library Config |
+|----------|-----------|----------------|
+| Windows | `C:\Program Files (x86)\Steam\` (from registry) | `config\libraryfolders.vdf` |
+| Linux | `~/.steam/steam/` or `~/.local/share/Steam/` | `config/libraryfolders.vdf` |
+
+## Phase 4 — TUI Rework (Lazygit-Style)
+
+Replace the current menu-driven TUI with a persistent, panel-based interface using **Terminal.Gui** (gui.cs).
+
+### Why Terminal.Gui over Spectre.Console
+- Spectre.Console cannot combine Live Display with interactive input
+- Terminal.Gui is designed for persistent multi-panel layouts with keyboard navigation
+- Mature framework (10K+ GitHub stars), supports .NET Standard 2.0+
+
+### Proposed Layout
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Godot Manager v1.0.2                                   [?]  │
+├──────────────────┬──────────────────────────────────────────┤
+│  INSTALLS        │  DETAILS                                 │
+│  ──────────────  │  ────────────────────────────────────────│
+│  * 4.5.1 (std)   │  Version:  4.5.1                         │
+│    4.4.0 (mono)  │  Edition:  Standard                      │
+│    4.3.0 (std)   │  Platform: Linux                         │
+│  🎮 4.6.1 (steam)│  Path:     ~/.local/bin/godman/4.5.1     │
+│                  │  SHA256:   abc123def456...                │
+│                  │  Status:   ACTIVE                        │
+│                  │                                          │
+│                  │  [a]ctivate [r]emove [d]eactivate        │
+├──────────────────┴──────────────────────────────────────────┤
+│ [1]List [2]Browse [3]Install [4]Doctor  q:Quit  ?:Help      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Keyboard Navigation
+- **Arrow keys / j,k**: Navigate install list
+- **Tab / Shift+Tab**: Switch panels
+- **1-4**: Jump to views (List, Browse, Install, Doctor)
+- **a**: Activate selected  |  **r**: Remove  |  **d**: Deactivate
+- **i**: Install new version  |  **f**: Fetch/browse versions
+- **?**: Help overlay  |  **q**: Quit
+
+### Implementation Phases
+1. Add `Terminal.Gui` 1.19.0 dependency
+2. Create `TuiWindowManager` — main window with panel layout
+3. Build `InstallsListView` (left panel) and `DetailsView` (right panel)
+4. Add keyboard handlers, focus management, modal dialogs
+5. Integrate Browse view with async version fetching + progress bars
+6. Keep existing Spectre.Console CLI commands unchanged
+
+## Phase 5 — Linux Distribution Packaging
+
+### Fedora (COPR)
+1. Create RPM spec file packaging self-contained linux-x64 binary
+2. Publish to COPR repository (`dnf copr enable jame581/godman && dnf install godman`)
+3. Runtime deps (already on Fedora): glibc, libgcc, openssl-libs, libstdc++, libicu
+
+### Arch Linux (AUR)
+- Create PKGBUILD that downloads GitHub release binary
+- Minimal effort, community-maintained after submission
+
+### Installation Script
+- Shell installer for any Linux distro: `curl -fsSL https://...install.sh | bash`
+- Downloads latest release, extracts to `~/.local/bin/`, adds to PATH
+
+### Priority
+1. **GitHub Releases** (current) — works now, add Fedora install docs to README
+2. **COPR RPM** — professional Fedora integration (`dnf install`)
+3. **AUR** — Arch Linux community
+4. **Homebrew tap** — macOS/WSL users
+
+## Phase 6 — Automated WinGet Publishing
+
+### Current State
+- Release workflow already generates `winget-metadata.json` with installer URL, SHA256, version
+- Package ID: `JanMesarc.GodMan` (already configured via `vars.WINGET_ID`)
+- Missing: automated PR submission to microsoft/winget-pkgs
+
+### Approach: vedantmgoyal9/winget-releaser Action
+```yaml
+# .github/workflows/winget-publish.yml
+name: Publish to WinGet
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@latest
+        with:
+          identifier: JanMesarc.GodMan
+          token: ${{ secrets.WINGET_TOKEN }}
+          fork-user: jame581
+```
+
+### Setup Steps
+1. Create GitHub PAT with `public_repo` scope → store as `WINGET_TOKEN` secret
+2. Fork `microsoft/winget-pkgs` to your account
+3. Ensure initial version exists in winget-pkgs (manual first submission if needed)
+4. Add workflow file — subsequent releases auto-submit PRs
