@@ -4,7 +4,7 @@
 - .NET 10 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
 - Maintain installs registry, download/unpack builds, set active install via env var and shim.
 - Supports both User and Global installation scopes on Windows and Linux.
-- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅.
+- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅; Phase 5: Linux packaging (partial) ✅; Phase 6: WinGet publishing ✅.
 
 ## Phase 1 — Core CLI ✅ COMPLETE
 - Commands:
@@ -194,55 +194,39 @@ Replace the current menu-driven TUI with a persistent, panel-based interface usi
 5. Integrate Browse view with async version fetching + progress bars
 6. Keep existing Spectre.Console CLI commands unchanged
 
-## Phase 5 — Linux Distribution Packaging
+## Phase 5 — Linux Distribution Packaging ✅ PARTIAL
 
-### Fedora (COPR)
-1. Create RPM spec file packaging self-contained linux-x64 binary
-2. Publish to COPR repository (`dnf copr enable jame581/godman && dnf install godman`)
+### Fedora (COPR) ✅
+1. ✅ RPM spec file created (`packaging/rpm/godman.spec`) — packages self-contained linux-x64 binary
+2. Publish to COPR repository (`dnf copr enable jame581/godman && dnf install godman`) — pending COPR account setup
 3. Runtime deps (already on Fedora): glibc, libgcc, openssl-libs, libstdc++, libicu
 
 ### Arch Linux (AUR)
 - Create PKGBUILD that downloads GitHub release binary
 - Minimal effort, community-maintained after submission
 
-### Installation Script
-- Shell installer for any Linux distro: `curl -fsSL https://...install.sh | bash`
+### Installation Script ✅
+- ✅ Shell installer created (`install.sh`): `curl -fsSL https://...install.sh | bash`
 - Downloads latest release, extracts to `~/.local/bin/`, adds to PATH
+- README updated with install instructions
 
 ### Priority
-1. **GitHub Releases** (current) — works now, add Fedora install docs to README
-2. **COPR RPM** — professional Fedora integration (`dnf install`)
+1. **GitHub Releases** ✅ — works now, README updated with install docs
+2. **COPR RPM** ✅ spec ready — needs COPR account setup and publishing
 3. **AUR** — Arch Linux community
 4. **Homebrew tap** — macOS/WSL users
 
-## Phase 6 — Automated WinGet Publishing
+## Phase 6 — Automated WinGet Publishing ✅ COMPLETE
 
-### Current State
-- Release workflow already generates `winget-metadata.json` with installer URL, SHA256, version
-- Package ID: `JanMesarc.GodMan` (already configured via `vars.WINGET_ID`)
-- Missing: automated PR submission to microsoft/winget-pkgs
+### Implementation
+- ✅ `publish-winget` job added to `.github/workflows/release.yml` (integrated, not a separate workflow)
+- ✅ Uses `vedantmgoyal9/winget-releaser@v2` action with `installers-regex: \.zip$` (matches zip assets, not exe/msi)
+- ✅ Package ID: `JanMesarc.GodMan` (via `vars.WINGET_ID`)
+- ✅ Only publishes stable releases (skips pre-release tags like `v1.0.0-beta1`)
+- ✅ Token configured via `secrets.WINGET_TOKEN`
 
-### Approach: vedantmgoyal9/winget-releaser Action
-```yaml
-# .github/workflows/winget-publish.yml
-name: Publish to WinGet
-on:
-  release:
-    types: [published]
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: vedantmgoyal9/winget-releaser@latest
-        with:
-          identifier: JanMesarc.GodMan
-          token: ${{ secrets.WINGET_TOKEN }}
-          fork-user: jame581
-```
-
-### Setup Steps
-1. Create GitHub PAT with `public_repo` scope → store as `WINGET_TOKEN` secret
-2. Fork `microsoft/winget-pkgs` to your account
-3. Ensure initial version exists in winget-pkgs (manual first submission if needed)
-4. Add workflow file — subsequent releases auto-submit PRs
+### Setup Steps (completed)
+1. ✅ GitHub PAT with `public_repo` scope stored as `WINGET_TOKEN` secret
+2. ✅ Fork `microsoft/winget-pkgs` to account
+3. ✅ Initial version exists in winget-pkgs
+4. ✅ Workflow integrated into release pipeline — subsequent releases auto-submit PRs
