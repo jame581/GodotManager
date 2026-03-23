@@ -71,7 +71,7 @@ internal sealed class AppPaths
             var globalShim = overrideGlobalBase ?? "/usr/local/bin";
 
             var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
-            var userInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName);
+            var userInstallRoot = System.IO.Path.Combine(home, ".local", "share", LinuxFolderName, "installs");
             var globalInstallRoot = System.IO.Path.Combine(globalShim, LinuxFolderName);
 
             if (allowMigration && home == defaultHome && globalShim == "/usr/local/bin")
@@ -80,8 +80,13 @@ internal sealed class AppPaths
                 var legacyUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LegacyLinuxFolderName);
                 var legacyGlobalInstallRoot = System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName);
                 TryMigrateDirectory(legacyConfigRoot, userConfigRoot);
-                TryMigrateDirectory(legacyUserInstallRoot, userInstallRoot);
                 TryMigrateDirectory(legacyGlobalInstallRoot, globalInstallRoot);
+
+                // Migrate from old ~/.local/bin/godman/ install root (only if it's a directory, not the binary)
+                if (System.IO.Directory.Exists(legacyUserInstallRoot))
+                {
+                    TryMigrateDirectory(legacyUserInstallRoot, userInstallRoot);
+                }
             }
 
             ConfigDirectory = userConfigRoot;

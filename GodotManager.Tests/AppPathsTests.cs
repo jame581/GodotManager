@@ -19,7 +19,7 @@ public class AppPathsTests
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var paths = new AppPaths();
 
-        Assert.Equal(Path.Combine(home, ".local", "bin", "godman"), paths.GetInstallRoot(InstallScope.User));
+        Assert.Equal(Path.Combine(home, ".local", "share", "godman", "installs"), paths.GetInstallRoot(InstallScope.User));
         Assert.Equal("/usr/local/bin/godman", paths.GetInstallRoot(InstallScope.Global));
         Assert.Equal(Path.Combine(home, ".local", "bin"), paths.GetShimDirectory(InstallScope.User));
         Assert.Equal("/usr/local/bin", paths.GetShimDirectory(InstallScope.Global));

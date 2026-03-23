@@ -81,7 +81,7 @@
   - Linux: `~/.config/godman/` (override: `GODMAN_HOME`).
   - Windows: `%APPDATA%\godman\`.
 - **Install roots**:
-  - User (Linux): `~/.local/bin/godman/`.
+  - User (Linux): `~/.local/share/godman/installs/`.
   - Global (Linux): `/usr/local/bin/godman/` (override: `GODMAN_GLOBAL_ROOT`).
   - User (Windows): `%APPDATA%\godman\installs\`.
   - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`).
