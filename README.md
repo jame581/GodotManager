@@ -41,11 +41,14 @@ Download the latest `.tar.gz` from [Releases](https://github.com/jame581/GodotMa
 mkdir -p ~/.local/bin
 tar -xzf godman-linux-x64-*.tar.gz -C ~/.local/bin
 chmod +x ~/.local/bin/godman
-
-# Add to PATH if not already there
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
 ```
+
+> **Note:** If `~/.local/bin` is not in your PATH, add it:
+> ```bash
+> echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+> source ~/.bashrc
+> ```
+> The one-liner installer above does this automatically.
 
 ### Usage example
 ```bash
@@ -88,7 +91,7 @@ godman clean --yes
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.
-- `version` — show the current godman version.
+- `--version` — show the current godman version.
 
 ## Paths
 ### Linux
