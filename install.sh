@@ -52,14 +52,36 @@ chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
 info "Installed godman $VERSION to $INSTALL_DIR/$BINARY_NAME"
 
-# Check if install dir is in PATH
+# Add install dir to PATH if not already present
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
-  echo ""
-  info "Add $INSTALL_DIR to your PATH:"
-  echo ""
-  echo "  # Add to ~/.bashrc or ~/.zshrc:"
-  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-  echo ""
+  EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+
+  # Determine which shell config file to update
+  SHELL_RC=""
+  if [ -n "${ZSH_VERSION:-}" ] || [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+    SHELL_RC="$HOME/.zshrc"
+  elif [ -n "${BASH_VERSION:-}" ] || [ "$(basename "${SHELL:-}")" = "bash" ]; then
+    SHELL_RC="$HOME/.bashrc"
+  fi
+
+  if [ -n "$SHELL_RC" ]; then
+    # Only add if not already in the file
+    if ! grep -qF "$INSTALL_DIR" "$SHELL_RC" 2>/dev/null; then
+      echo "" >> "$SHELL_RC"
+      echo "# Added by godman installer" >> "$SHELL_RC"
+      echo "$EXPORT_LINE" >> "$SHELL_RC"
+      info "Added $INSTALL_DIR to PATH in $SHELL_RC"
+    fi
+    echo ""
+    info "Restart your shell or run: source $SHELL_RC"
+    echo ""
+  else
+    echo ""
+    info "Could not detect shell config. Add $INSTALL_DIR to your PATH manually:"
+    echo ""
+    echo "  $EXPORT_LINE"
+    echo ""
+  fi
 fi
 
 info "Done! Run 'godman --help' to get started."
