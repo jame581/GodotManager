@@ -49,9 +49,9 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
     {
         CleanupDirectory(paths.ConfigDirectory, "config");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
-        CleanupDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
+        CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.Global), "global installs");
-        CleanupDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
+        CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 
     private static bool HasGlobalCleanupTargets(AppPaths paths)
@@ -126,6 +126,43 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
 
         return arg;
+    }
+
+    private static void CleanupShimDirectory(string shimDir, string label)
+    {
+        if (!Directory.Exists(shimDir))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: {shimDir} (missing)");
+            return;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            // On Windows the shim directory is godman-owned (e.g. %APPDATA%\godman\bin),
+            // safe to remove entirely.
+            CleanupDirectory(shimDir, label);
+            return;
+        }
+
+        // On Linux the shim directory may be shared (e.g. ~/.local/bin or /usr/local/bin).
+        // Only remove our shim file, not the entire directory.
+        var shimFile = Path.Combine(shimDir, "godot");
+        if (File.Exists(shimFile))
+        {
+            try
+            {
+                File.Delete(shimFile);
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {label}: {shimFile}");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] {label} shim at {shimFile}: {ex.Message}");
+            }
+        }
+        else
+        {
+            AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: no shim found in {shimDir}");
+        }
     }
 
     private static void CleanupDirectory(string path, string label)

@@ -35,13 +35,51 @@ public class CleanCommandTests
         File.WriteAllText(Path.Combine(userInstall, "dummy"), "x");
         File.WriteAllText(Path.Combine(config, "cfg"), "x");
 
+        // Place a godot shim in the shim directory
+        File.WriteAllText(Path.Combine(userShim, "godot"), "shim");
+
         var cmd = new CleanCommand(paths);
         var result = cmd.Execute(null!, new CleanCommand.Settings { Yes = true });
 
         Assert.Equal(0, result);
         Assert.False(Directory.Exists(userInstall));
-        Assert.False(Directory.Exists(userShim));
         Assert.False(Directory.Exists(config));
+
+        // On Linux, shim directory should still exist (it's shared, e.g. ~/.local/bin),
+        // but the godot shim file inside should be removed.
+        Assert.False(File.Exists(Path.Combine(userShim, "godot")));
+    }
+
+    [Fact]
+    public void Clean_OnLinux_OnlyRemovesShimFile_NotEntireDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // This test targets Linux behavior where shim dir is shared.
+        }
+
+        using var temp = new TempRoot();
+        temp.WithEnv("GODMAN_HOME", temp.Root);
+        temp.WithEnv("GODMAN_GLOBAL_ROOT", Path.Combine(temp.Root, "global"));
+
+        var paths = new AppPaths();
+        var userShim = paths.GetShimDirectory(InstallScope.User);
+
+        Directory.CreateDirectory(userShim);
+
+        // Place the godot shim and an unrelated binary in the same directory
+        File.WriteAllText(Path.Combine(userShim, "godot"), "shim");
+        File.WriteAllText(Path.Combine(userShim, "other-tool"), "keep me");
+
+        var cmd = new CleanCommand(paths);
+        cmd.Execute(null!, new CleanCommand.Settings { Yes = true });
+
+        // The godot shim should be removed
+        Assert.False(File.Exists(Path.Combine(userShim, "godot")));
+
+        // The unrelated binary and directory must survive
+        Assert.True(Directory.Exists(userShim), "Shim directory should not be deleted on Linux");
+        Assert.True(File.Exists(Path.Combine(userShim, "other-tool")), "Other files in shim directory must not be deleted");
     }
 
     [Fact]
@@ -64,13 +102,15 @@ public class CleanCommandTests
         Directory.CreateDirectory(globalInstall);
         Directory.CreateDirectory(globalShim);
         File.WriteAllText(Path.Combine(globalInstall, "dummy"), "x");
+        File.WriteAllText(Path.Combine(globalShim, "godot"), "shim");
 
         var cmd = new CleanCommand(paths);
         var result = cmd.Execute(null!, new CleanCommand.Settings { Yes = true });
 
         Assert.Equal(0, result);
         Assert.False(Directory.Exists(globalInstall));
-        Assert.False(Directory.Exists(globalShim));
+        // On Linux, only the shim file is removed, not the directory
+        Assert.False(File.Exists(Path.Combine(globalShim, "godot")));
     }
 
     private sealed class TempRoot : IDisposable

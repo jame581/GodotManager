@@ -476,12 +476,15 @@ internal sealed class TuiRunner
             }
         }
 
-        // Remove shim directories
+        // Remove shim files/directories
         foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
         {
             var shimDir = _paths.GetShimDirectory(scope);
-            if (Directory.Exists(shimDir))
+            if (!Directory.Exists(shimDir)) continue;
+
+            if (OperatingSystem.IsWindows())
             {
+                // On Windows the shim directory is godman-owned, safe to remove entirely
                 try
                 {
                     Directory.Delete(shimDir, recursive: true);
@@ -490,6 +493,24 @@ internal sealed class TuiRunner
                 catch (Exception ex)
                 {
                     AnsiConsole.MarkupLineInterpolated($"[yellow]✗ Failed to delete shim directory:[/] {ex.Message}");
+                }
+            }
+            else
+            {
+                // On Linux the shim directory may be shared (e.g. ~/.local/bin),
+                // only remove our shim file
+                var shimFile = Path.Combine(shimDir, "godot");
+                if (File.Exists(shimFile))
+                {
+                    try
+                    {
+                        File.Delete(shimFile);
+                        AnsiConsole.MarkupLineInterpolated($"[grey]✓ Deleted shim:[/] {shimFile}");
+                    }
+                    catch (Exception ex)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[yellow]✗ Failed to delete shim:[/] {ex.Message}");
+                    }
                 }
             }
         }
