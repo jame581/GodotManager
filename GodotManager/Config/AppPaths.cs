@@ -177,6 +177,12 @@ internal sealed class AppPaths
                 return;
             }
 
+            var parentDir = System.IO.Path.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                System.IO.Directory.CreateDirectory(parentDir);
+            }
+
             System.IO.Directory.Move(source, destination);
         }
         catch
