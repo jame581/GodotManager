@@ -60,9 +60,9 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             {
                 await _environment.RemoveActiveAsync(currentActive);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort cleanup
+                DiagnosticContext.WarnAlways($"Failed to clean up previous activation ({currentActive.Version}): {ex.Message}");
             }
         }
 
@@ -194,7 +194,7 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         return 0;
     }
 
-    internal sealed class Settings : CommandSettings
+    internal sealed class Settings : GlobalSettings
     {
         [CommandArgument(0, "<id>")]
         public Guid Id { get; set; }

@@ -7,7 +7,10 @@ using Spectre.Console;
 using Spectre.Console.Cli;
 using System.Reflection;
 
+var diagnostics = new DiagnosticContext();
+
 var services = new ServiceCollection();
+services.AddSingleton(diagnostics);
 services.AddSingleton<AppPaths>();
 services.AddSingleton<RegistryService>();
 services.AddSingleton<EnvironmentService>();
@@ -21,6 +24,7 @@ var app = new CommandApp(registrar);
 
 app.Configure(config =>
 {
+    config.SetInterceptor(new VerboseInterceptor(diagnostics));
     config.SetApplicationName("godman");
     config.SetApplicationVersion(Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
 

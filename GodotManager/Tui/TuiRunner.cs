@@ -260,9 +260,9 @@ internal sealed class TuiRunner
             {
                 await _environment.RemoveActiveAsync(currentActive);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort cleanup
+                DiagnosticContext.WarnAlways($"Failed to clean up previous activation ({currentActive.Version}): {ex.Message}");
             }
         }
 

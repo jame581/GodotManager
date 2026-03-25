@@ -1,5 +1,6 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using System.Runtime.InteropServices;
 
 namespace GodotManager.Services;
@@ -7,10 +8,12 @@ namespace GodotManager.Services;
 internal sealed class EnvironmentService
 {
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public EnvironmentService(AppPaths paths)
+    public EnvironmentService(AppPaths paths, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     public Task ApplyActiveAsync(InstallEntry entry, CancellationToken cancellationToken = default)
@@ -121,9 +124,9 @@ internal sealed class EnvironmentService
             {
                 File.Delete(shimPath);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort
+                _diagnostics?.Warn($"Failed to delete shim at {shimPath}: {ex.Message}");
             }
         }
 
@@ -164,15 +167,15 @@ internal sealed class EnvironmentService
                 });
                 target = found ?? target;
             }
-            catch
+            catch (Exception ex)
             {
-                // ignore filesystem errors and use expected target
+                _diagnostics?.Warn($"Could not enumerate files in {entry.Path}: {ex.Message}");
             }
         }
 
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";
         File.WriteAllText(shimPath, shimContent);
-        UnixFilePermissions.MakeExecutable(shimPath);
+        UnixFilePermissions.MakeExecutable(shimPath, _diagnostics);
     }
 
     private void RemoveUnix(InstallEntry? entry)
@@ -184,9 +187,9 @@ internal sealed class EnvironmentService
             {
                 File.Delete(_paths.EnvScriptPath);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort
+                _diagnostics?.Warn($"Failed to delete env script at {_paths.EnvScriptPath}: {ex.Message}");
             }
         }
 
@@ -198,14 +201,14 @@ internal sealed class EnvironmentService
             {
                 File.Delete(shimPath);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort
+                _diagnostics?.Warn($"Failed to delete shim at {shimPath}: {ex.Message}");
             }
         }
     }
 
-    private static void AddToPath(string directory, EnvironmentVariableTarget target)
+    private void AddToPath(string directory, EnvironmentVariableTarget target)
     {
         try
         {
@@ -232,13 +235,13 @@ internal sealed class EnvironmentService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // PATH update is best-effort; if it fails, shim will still be created
+            _diagnostics?.Warn($"Failed to update PATH: {ex.Message}");
         }
     }
 
-    private static void RemoveFromPath(string directory, EnvironmentVariableTarget target)
+    private void RemoveFromPath(string directory, EnvironmentVariableTarget target)
     {
         try
         {
@@ -257,9 +260,9 @@ internal sealed class EnvironmentService
                 !string.Equals(p.Trim(), directory, StringComparison.OrdinalIgnoreCase));
             Environment.SetEnvironmentVariable("PATH", string.Join(';', newProcessPaths), EnvironmentVariableTarget.Process);
         }
-        catch
+        catch (Exception ex)
         {
-            // PATH update is best-effort
+            _diagnostics?.Warn($"Failed to clean PATH: {ex.Message}");
         }
     }
 
@@ -293,9 +296,9 @@ internal sealed class EnvironmentService
                 WindowsShortcut.Create(desktopShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Shortcut creation is best-effort
+            _diagnostics?.Warn($"Failed to create shortcuts: {ex.Message}");
         }
     }
 
@@ -329,13 +332,13 @@ internal sealed class EnvironmentService
                 File.Delete(desktopShortcut);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Best effort
+            _diagnostics?.Warn($"Failed to delete shortcuts: {ex.Message}");
         }
     }
 
-    private static void BroadcastEnvironmentChange()
+    private void BroadcastEnvironmentChange()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -358,16 +361,16 @@ internal sealed class EnvironmentService
                 5000,
                 out _);
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore failures - environment is still set in registry
+            _diagnostics?.Warn($"Failed to broadcast environment change: {ex.Message}");
         }
     }
 }
 
 internal static class UnixFilePermissions
 {
-    public static void MakeExecutable(string path)
+    public static void MakeExecutable(string path, DiagnosticContext? diagnostics = null)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -381,7 +384,7 @@ internal static class UnixFilePermissions
         }
         catch (PlatformNotSupportedException)
         {
-            // Ignore if FS does not support unix permissions.
+            diagnostics?.Warn("Filesystem does not support Unix permissions.");
         }
     }
 }

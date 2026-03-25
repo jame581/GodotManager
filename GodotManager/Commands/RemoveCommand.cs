@@ -1,4 +1,5 @@
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -95,7 +96,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
         return 0;
     }
 
-    internal sealed class Settings : CommandSettings
+    internal sealed class Settings : GlobalSettings
     {
         [CommandArgument(0, "<id>")]
         public Guid Id { get; set; }

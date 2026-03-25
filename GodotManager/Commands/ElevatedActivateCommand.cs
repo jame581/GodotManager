@@ -1,3 +1,4 @@
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -65,9 +66,9 @@ internal sealed class ElevatedActivateCommand : AsyncCommand<ElevatedActivateCom
                 {
                     await _environment.RemoveActiveAsync(currentActive);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Best effort cleanup
+                    DiagnosticContext.WarnAlways($"Failed to clean up previous activation ({currentActive.Version}): {ex.Message}");
                 }
             }
 

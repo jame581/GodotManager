@@ -1,10 +1,11 @@
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace GodotManager.Commands;
 
-internal sealed class DeactivateCommand : AsyncCommand
+internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
@@ -15,7 +16,9 @@ internal sealed class DeactivateCommand : AsyncCommand
         _environment = environment;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context)
+    internal sealed class Settings : GlobalSettings { }
+
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         var registry = await _registry.LoadAsync();
         var activeInstall = registry.GetActive();

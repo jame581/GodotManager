@@ -1,4 +1,5 @@
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -142,7 +143,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         return -1;
     }
 
-    internal sealed class Settings : CommandSettings
+    internal sealed class Settings : GlobalSettings
     {
         [CommandOption("-v|--version <VERSION>")]
         public string Version { get; set; } = string.Empty;

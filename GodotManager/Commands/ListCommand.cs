@@ -1,10 +1,11 @@
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace GodotManager.Commands;
 
-internal sealed class ListCommand : AsyncCommand
+internal sealed class ListCommand : AsyncCommand<ListCommand.Settings>
 {
     private readonly RegistryService _registry;
 
@@ -13,7 +14,9 @@ internal sealed class ListCommand : AsyncCommand
         _registry = registry;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context)
+    internal sealed class Settings : GlobalSettings { }
+
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         var registry = await _registry.LoadAsync();
 

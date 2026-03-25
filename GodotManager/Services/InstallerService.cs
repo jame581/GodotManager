@@ -40,13 +40,15 @@ internal sealed class InstallerService
     private readonly AppPaths _paths;
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly DiagnosticContext? _diagnostics;
     private readonly HttpClient _httpClient;
 
-    public InstallerService(AppPaths paths, RegistryService registry, EnvironmentService environment, HttpClient? httpClient = null)
+    public InstallerService(AppPaths paths, RegistryService registry, EnvironmentService environment, HttpClient? httpClient = null, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
         _registry = registry;
         _environment = environment;
+        _diagnostics = diagnostics;
         _httpClient = httpClient ?? new HttpClient();
     }
 
@@ -111,12 +113,12 @@ internal sealed class InstallerService
 
                 if (binary != null)
                 {
-                    UnixFilePermissions.MakeExecutable(binary);
+                    UnixFilePermissions.MakeExecutable(binary, _diagnostics);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // best-effort: if we fail to set executable permission, installation still succeeds
+                _diagnostics?.Warn($"Failed to set executable permission on Godot binary: {ex.Message}");
             }
         }
 

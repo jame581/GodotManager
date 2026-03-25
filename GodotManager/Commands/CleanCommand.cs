@@ -20,7 +20,7 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         _paths = paths;
     }
 
-    public sealed class Settings : CommandSettings
+    public sealed class Settings : GlobalSettings
     {
         [CommandOption("--yes")]
         [Description("Skip confirmation prompt.")]

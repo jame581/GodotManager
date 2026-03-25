@@ -1,3 +1,4 @@
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -92,7 +93,7 @@ internal sealed class FetchCommand : AsyncCommand<FetchCommand.Settings>
         }
     }
 
-    internal sealed class Settings : CommandSettings
+    internal sealed class Settings : GlobalSettings
     {
         [CommandOption("--stable")]
         [Description("Show only stable releases.")]

@@ -1,4 +1,5 @@
 using GodotManager.Config;
+using GodotManager.Infrastructure;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -16,6 +17,7 @@ internal sealed class GodotVersionFetcher
 {
     private readonly HttpClient _httpClient;
     private readonly string _cacheFilePath;
+    private readonly DiagnosticContext? _diagnostics;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(24);
     private const string GitHubApiUrl = "https://api.github.com/repos/godotengine/godot/releases";
 
@@ -25,9 +27,10 @@ internal sealed class GodotVersionFetcher
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public GodotVersionFetcher(AppPaths paths, HttpClient? httpClient = null)
+    public GodotVersionFetcher(AppPaths paths, HttpClient? httpClient = null, DiagnosticContext? diagnostics = null)
     {
         _cacheFilePath = Path.Combine(paths.ConfigDirectory, "releases-cache.json");
+        _diagnostics = diagnostics;
         _httpClient = httpClient ?? new HttpClient();
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("godman", "1.0"));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -71,8 +74,9 @@ internal sealed class GodotVersionFetcher
             await using var stream = File.OpenRead(_cacheFilePath);
             return await JsonSerializer.DeserializeAsync<List<GodotRelease>>(stream, CacheJsonOptions, cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
+            _diagnostics?.Warn($"Failed to read release cache: {ex.Message}");
             return null;
         }
     }
@@ -84,9 +88,9 @@ internal sealed class GodotVersionFetcher
             await using var stream = File.Create(_cacheFilePath);
             await JsonSerializer.SerializeAsync(stream, releases, CacheJsonOptions, cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
-            // Best effort — caching is not critical
+            _diagnostics?.Warn($"Failed to write release cache: {ex.Message}");
         }
     }
 
@@ -143,9 +147,9 @@ internal sealed class GodotVersionFetcher
                     if (stale != null)
                         return stale;
                 }
-                catch
+                catch (Exception cacheEx)
                 {
-                    // Fall through to original exception
+                    _diagnostics?.Warn($"Failed to read stale cache as fallback: {cacheEx.Message}");
                 }
             }
 

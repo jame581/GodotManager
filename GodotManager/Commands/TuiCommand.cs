@@ -1,4 +1,5 @@
 using GodotManager.Config;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using GodotManager.Tui;
 using Spectre.Console;
@@ -6,7 +7,7 @@ using Spectre.Console.Cli;
 
 namespace GodotManager.Commands;
 
-internal sealed class TuiCommand : AsyncCommand
+internal sealed class TuiCommand : AsyncCommand<TuiCommand.Settings>
 {
     private readonly TuiRunner _runner;
 
@@ -15,7 +16,9 @@ internal sealed class TuiCommand : AsyncCommand
         _runner = new TuiRunner(registry, installer, environment, paths, urlBuilder, fetcher);
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context)
+    internal sealed class Settings : GlobalSettings { }
+
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         try
         {
