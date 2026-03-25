@@ -28,6 +28,10 @@ app.Configure(config =>
     config.SetApplicationName("godman");
     config.SetApplicationVersion(Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
 
+    config.AddExample("list");
+    config.AddExample("install", "--version", "4.5.1", "--edition", "Standard", "--activate");
+    config.AddExample("activate", "<id>", "--verbose");
+
     config.AddCommand<ListCommand>("list").WithDescription("List registered installs");
     config.AddCommand<FetchCommand>("fetch").WithDescription("Browse available Godot versions from GitHub");
     config.AddCommand<InstallCommand>("install").WithDescription("Download or import an archive and register it");
