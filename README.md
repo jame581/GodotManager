@@ -79,6 +79,10 @@ godman tui
 # Doctor and cleanup
 godman doctor
 godman clean --yes
+
+# Enable diagnostic warnings for troubleshooting
+godman activate <id> --verbose
+godman install --version 4.5.1 --edition Standard --platform linux --activate --verbose
 ```
 
 ## Commands
@@ -92,6 +96,10 @@ godman clean --yes
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, config.
 - `--version` — show the current godman version.
+
+### Global options
+All commands accept the following global options:
+- `--verbose` / `-V` — enable diagnostic warnings for best-effort operations (shim cleanup, PATH updates, shortcut creation, cache I/O, etc.). By default these operations fail silently; with `--verbose` they print `warn:` messages to the console.
 
 ## Paths
 ### Linux
@@ -141,6 +149,7 @@ dotnet test -v detailed
 - Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
+- **Troubleshooting**: If something seems off after install/activate, run the command again with `--verbose` (`-V`) to see diagnostic warnings for any best-effort operations that failed silently.
 
 ## Author
 

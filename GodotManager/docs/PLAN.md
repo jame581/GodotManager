@@ -39,7 +39,7 @@
   - `GodotDownloadUrlBuilder` ✅ — auto-construct download URLs for known Godot versions/editions/platforms.
   - `GodotVersionFetcher` ✅ — fetch available Godot releases from GitHub API with filtering.
 - **Commands**: CLI commands using Spectre.Console.Cli with typed settings classes.
-- **Infrastructure**: `TypeRegistrar` for DI integration with Spectre.Console.Cli.
+- **Infrastructure**: `TypeRegistrar` for DI integration with Spectre.Console.Cli; `DiagnosticContext` for verbose warning system; `GlobalSettings` base class for shared CLI options; `VerboseInterceptor` for propagating global flags.
 
 ## Phase 2 — TUI (Spectre.Console.CLI) ✅ COMPLETE
 - **tui** command launches interactive menu powered by Spectre.Console:
@@ -109,11 +109,12 @@
 - Cleanup command for full uninstall.
 - Dry-run mode for install and activate commands (preview without changes).
 - Integration tests for download/install flows with mocked HTTP and fixture-based archives.
+- Verbose diagnostic warnings (`--verbose` / `-V`) for all best-effort operations; moderate-risk operations (previous activation cleanup) always warn.
 
 ## Pending Features
 - ~~**Checksum validation**: populate and verify `Checksum` field during downloads.~~ ✅ Done (SHA256 computed during download and local archive import, stored in registry, shown in `list`).
 - **Resume support**: partially downloaded files resume capability.
-- **Verbosity levels**: configurable logging/output detail.
+- ~~**Verbosity levels**: configurable logging/output detail.~~ ✅ Done (global `--verbose` / `-V` flag via `DiagnosticContext` + `VerboseInterceptor`).
 
 ## Next Steps
 - ~~Add checksum verification for downloads.~~ ✅ Done.
