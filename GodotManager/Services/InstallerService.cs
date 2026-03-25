@@ -310,7 +310,7 @@ internal sealed class InstallerService
         return $"{request.Version}-{edition}-{platform}-{scope}";
     }
 
-    private static string BuildInstallFolderName(InstallRequest request, string? archiveName)
+    internal static string BuildInstallFolderName(InstallRequest request, string? archiveName)
     {
         var candidate = Path.GetFileName(archiveName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(candidate))
@@ -336,6 +336,8 @@ internal sealed class InstallerService
     {
         var suffixes = new[]
         {
+            ".tar.gz",
+            ".tar",
             ".zip",
             ".exe",
             ".x86_64",
