@@ -1,5 +1,6 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -72,12 +73,12 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         var argumentBuilder = new StringBuilder();
         if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
         {
-            argumentBuilder.Append(QuoteArg(args[1]));
+            argumentBuilder.Append(ProcessHelpers.QuoteArg(args[1]));
             argumentBuilder.Append(' ');
         }
 
         argumentBuilder.Append("clean-elevated --payload ");
-        argumentBuilder.Append(QuoteArg(encoded));
+        argumentBuilder.Append(ProcessHelpers.QuoteArg(encoded));
 
         var psi = new ProcessStartInfo
         {
@@ -116,16 +117,6 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             AnsiConsole.MarkupLineInterpolated($"[grey]  Unblock-File '{fileName}'[/]");
             return -1;
         }
-    }
-
-    private static string QuoteArg(string arg)
-    {
-        if (string.IsNullOrWhiteSpace(arg) || arg.Contains(' ') || arg.Contains('"'))
-        {
-            return "\"" + arg.Replace("\"", "\\\"") + "\"";
-        }
-
-        return arg;
     }
 
     private static void CleanupShimDirectory(string shimDir, string label)
