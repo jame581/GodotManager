@@ -79,6 +79,39 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoveActiveAsync_WithGlobalScope_DeletesGlobalShim()
+    {
+        // Arrange
+        var tempDir = Path.Combine(_fixture.TempRoot, "shim-global-remove");
+        Directory.CreateDirectory(tempDir);
+
+        var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
+        var exePath = Path.Combine(tempDir, exeName);
+        File.WriteAllText(exePath, "fake executable");
+
+        var entry = InstallEntryFactory.Create(path: tempDir, scope: InstallScope.Global);
+
+        // Setup: Create shim first
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        var shimDir = _fixture.Paths.GetShimDirectory(InstallScope.Global);
+        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
+        var shimPath = Path.Combine(shimDir, shimName);
+
+        Assert.True(File.Exists(shimPath), $"Global shim should exist before removal at {shimPath}");
+
+        // Also verify user shim directory does NOT have a shim
+        var userShimDir = _fixture.Paths.GetShimDirectory(InstallScope.User);
+        var userShimPath = Path.Combine(userShimDir, shimName);
+
+        // Act
+        await _fixture.Environment.RemoveActiveAsync(entry);
+
+        // Assert - global shim should be deleted
+        Assert.False(File.Exists(shimPath), "Global shim file should be deleted after removal");
+    }
+
+    [Fact]
     public async Task ApplyActiveAsync_WithDryRun_DoesNotCreateShim()
     {
         // Arrange

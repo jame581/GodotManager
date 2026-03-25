@@ -42,7 +42,7 @@ internal sealed class EnvironmentService
         return Task.CompletedTask;
     }
 
-    public async Task RemoveActiveAsync(InstallEntry? entry, CancellationToken cancellationToken = default)
+    public Task RemoveActiveAsync(InstallEntry? entry, CancellationToken cancellationToken = default)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -50,10 +50,10 @@ internal sealed class EnvironmentService
         }
         else
         {
-            RemoveUnix();
+            RemoveUnix(entry);
         }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     private void ApplyWindows(InstallEntry entry, bool createDesktopShortcut)
@@ -172,7 +172,7 @@ internal sealed class EnvironmentService
         UnixFilePermissions.MakeExecutable(shimPath);
     }
 
-    private void RemoveUnix()
+    private void RemoveUnix(InstallEntry? entry)
     {
         // Remove environment script
         if (File.Exists(_paths.EnvScriptPath))
@@ -187,8 +187,8 @@ internal sealed class EnvironmentService
             }
         }
 
-        // Delete shim file
-        var shimPath = Path.Combine(_paths.GetShimDirectory(InstallScope.User), "godot");
+        // Delete shim file from the correct scope directory
+        var shimPath = Path.Combine(_paths.GetShimDirectory(entry?.Scope ?? InstallScope.User), "godot");
         if (File.Exists(shimPath))
         {
             try
