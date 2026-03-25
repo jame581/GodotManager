@@ -19,6 +19,32 @@ public class EnvironmentServiceTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     [Fact]
+    public async Task ApplyActiveAsync_SetsProcessEnvironmentVariable()
+    {
+        // Arrange
+        var tempDir = Path.Combine(_fixture.TempRoot, "env-process");
+        Directory.CreateDirectory(tempDir);
+
+        var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
+        File.WriteAllText(Path.Combine(tempDir, exeName), "fake executable");
+
+        var entry = InstallEntryFactory.Create(path: tempDir);
+
+        // Clear any existing value
+        System.Environment.SetEnvironmentVariable("GODOT_HOME", null, EnvironmentVariableTarget.Process);
+
+        // Act
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        // Assert
+        var envValue = System.Environment.GetEnvironmentVariable("GODOT_HOME", EnvironmentVariableTarget.Process);
+        Assert.Equal(tempDir, envValue);
+
+        // Cleanup
+        System.Environment.SetEnvironmentVariable("GODOT_HOME", null, EnvironmentVariableTarget.Process);
+    }
+
+    [Fact]
     public async Task ApplyActiveAsync_CreatesShimFile()
     {
         // Arrange

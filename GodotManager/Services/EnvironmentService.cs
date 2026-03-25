@@ -142,6 +142,9 @@ internal sealed class EnvironmentService
         var exportLine = $"export {_paths.EnvVarName}=\"{entry.Path}\"";
         File.WriteAllText(_paths.EnvScriptPath, exportLine + Environment.NewLine);
 
+        // Also set in current process so doctor command shows it immediately
+        Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.Process);
+
         var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot");
 
         // Derive binary name from installation folder name
