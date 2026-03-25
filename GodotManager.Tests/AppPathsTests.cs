@@ -89,6 +89,41 @@ public class AppPathsTests
     }
 
     [Fact]
+    public void Linux_GetLegacyPaths_ReturnsExpectedPaths()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var paths = new AppPaths();
+        var legacyPaths = paths.GetLegacyPaths();
+
+        Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".config", "godot-manager"));
+        Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".local", "bin", "godot-manager"));
+        Assert.Contains(legacyPaths, p => p.Path == "/usr/local/bin/godot-manager");
+        Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".local", "bin", "godman"));
+    }
+
+    [Fact]
+    public void Windows_GetLegacyPaths_ReturnsExpectedPaths()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var paths = new AppPaths();
+        var legacyPaths = paths.GetLegacyPaths();
+
+        Assert.Contains(legacyPaths, p => p.Path == Path.Combine(appData, "GodotManager"));
+        Assert.Contains(legacyPaths, p => p.Path == Path.Combine(programFiles, "GodotManager"));
+    }
+
+    [Fact]
     public void Linux_DoesNotMigrateOldInstallRoot_WhenFileExists()
     {
         if (OperatingSystem.IsWindows())

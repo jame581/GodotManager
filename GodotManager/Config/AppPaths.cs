@@ -118,6 +118,33 @@ internal sealed class AppPaths
         return scope == InstallScope.Global ? _globalShimDirectory : _userShimDirectory;
     }
 
+    /// <summary>
+    /// Returns legacy directory paths that should have been migrated.
+    /// Each entry is (legacyPath, description).
+    /// </summary>
+    public IReadOnlyList<(string Path, string Description)> GetLegacyPaths()
+    {
+        var paths = new List<(string, string)>();
+
+        if (OperatingSystem.IsWindows())
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            paths.Add((System.IO.Path.Combine(appData, LegacyWindowsFolderName), "legacy config (GodotManager)"));
+            paths.Add((System.IO.Path.Combine(programFiles, LegacyWindowsFolderName), "legacy global (GodotManager)"));
+        }
+        else
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            paths.Add((System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), "legacy config (godot-manager)"));
+            paths.Add((System.IO.Path.Combine(home, ".local", "bin", LegacyLinuxFolderName), "legacy installs (godot-manager)"));
+            paths.Add((System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName), "legacy global installs (godot-manager)"));
+            paths.Add((System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName), "old install root (godman)"));
+        }
+
+        return paths;
+    }
+
     private void EnsureDirectories()
     {
         System.IO.Directory.CreateDirectory(ConfigDirectory);

@@ -96,6 +96,17 @@ internal sealed class DoctorCommand : AsyncCommand
             }
         }
 
+        // Check for leftover legacy paths that should have been migrated
+        var legacyPaths = _paths.GetLegacyPaths();
+        foreach (var (legacyPath, description) in legacyPaths)
+        {
+            if (Directory.Exists(legacyPath))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]Legacy directory found[/]: {legacyPath} ({description})");
+                AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
+            }
+        }
+
         return 0;
     }
 }

@@ -40,4 +40,36 @@ public class DoctorCommandE2ETests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
     }
+
+    [Fact]
+    public async Task Doctor_WithLegacyDirectory_ExitsZero()
+    {
+        var app = CliTestHarness.Create(_fixture);
+        await _fixture.Registry.SaveAsync(new InstallRegistry());
+
+        // Create a legacy directory at a path GetLegacyPaths() will check
+        var legacyPaths = _fixture.Paths.GetLegacyPaths();
+        var legacyDir = legacyPaths[0].Path;
+        var createdDir = false;
+
+        if (!Directory.Exists(legacyDir))
+        {
+            Directory.CreateDirectory(legacyDir);
+            createdDir = true;
+        }
+
+        try
+        {
+            var result = await app.RunAsync("doctor");
+
+            Assert.Equal(0, result.ExitCode);
+        }
+        finally
+        {
+            if (createdDir)
+            {
+                try { Directory.Delete(legacyDir, true); } catch { }
+            }
+        }
+    }
 }
