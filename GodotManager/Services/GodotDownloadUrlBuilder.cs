@@ -4,7 +4,6 @@ namespace GodotManager.Services;
 
 internal sealed class GodotDownloadUrlBuilder
 {
-    private const string ObjectStorageBase = "https://godot-releases.nbg1.your-objectstorage.com";
     private const string OfficialDownloadsBase = "https://downloads.godotengine.org/";
 
     public bool TryBuildUri(string version, InstallEdition edition, InstallPlatform platform, out Uri? uri, out string? error)
