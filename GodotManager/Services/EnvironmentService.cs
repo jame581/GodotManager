@@ -71,8 +71,9 @@ internal sealed class EnvironmentService
         // Also set in current process so doctor command shows it immediately
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.Process);
 
-        // Add shim directory to PATH
+        // Ensure shim directory exists (may have been removed by clean command) and add to PATH
         var shimDir = _paths.GetShimDirectory(entry.Scope);
+        Directory.CreateDirectory(shimDir);
         AddToPath(shimDir, target);
 
         // Broadcast change notification to other processes (best effort)
@@ -94,7 +95,7 @@ internal sealed class EnvironmentService
             exe = files.FirstOrDefault() ?? exe;
         }
 
-        var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot.cmd");
+        var shimPath = Path.Combine(shimDir, "godot.cmd");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
 
@@ -142,13 +143,24 @@ internal sealed class EnvironmentService
 
     private void ApplyUnix(InstallEntry entry)
     {
+        // Ensure config directory exists (may have been removed by clean command)
+        var envDir = Path.GetDirectoryName(_paths.EnvScriptPath);
+        if (!string.IsNullOrEmpty(envDir))
+        {
+            Directory.CreateDirectory(envDir);
+        }
+
         var exportLine = $"export {_paths.EnvVarName}=\"{entry.Path}\"";
         File.WriteAllText(_paths.EnvScriptPath, exportLine + Environment.NewLine);
 
         // Also set in current process so doctor command shows it immediately
         Environment.SetEnvironmentVariable(_paths.EnvVarName, entry.Path, EnvironmentVariableTarget.Process);
 
-        var shimPath = Path.Combine(_paths.GetShimDirectory(entry.Scope), "godot");
+        // Ensure shim directory exists (may have been removed by clean command)
+        var shimDir = _paths.GetShimDirectory(entry.Scope);
+        Directory.CreateDirectory(shimDir);
+
+        var shimPath = Path.Combine(shimDir, "godot");
 
         // Derive binary name from installation folder name
         var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
