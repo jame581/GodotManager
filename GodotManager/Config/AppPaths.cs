@@ -76,16 +76,22 @@ internal sealed class AppPaths
 
             if (allowMigration && home == defaultHome && globalShim == "/usr/local/bin")
             {
+                // Migrate from legacy godot-manager paths
                 var legacyConfigRoot = System.IO.Path.Combine(defaultHome, ".config", LegacyLinuxFolderName);
                 var legacyUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LegacyLinuxFolderName);
                 var legacyGlobalInstallRoot = System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName);
                 TryMigrateDirectory(legacyConfigRoot, userConfigRoot);
                 TryMigrateDirectory(legacyGlobalInstallRoot, globalInstallRoot);
-
-                // Migrate from old ~/.local/bin/godman/ install root (only if it's a directory, not the binary)
                 if (System.IO.Directory.Exists(legacyUserInstallRoot))
                 {
                     TryMigrateDirectory(legacyUserInstallRoot, userInstallRoot);
+                }
+
+                // Migrate from old ~/.local/bin/godman/ install root (only if it's a directory, not the binary)
+                var oldUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LinuxFolderName);
+                if (System.IO.Directory.Exists(oldUserInstallRoot))
+                {
+                    TryMigrateDirectory(oldUserInstallRoot, userInstallRoot);
                 }
             }
 
