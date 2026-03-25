@@ -38,7 +38,7 @@ internal sealed class GodmanTestFixture : IDisposable
 
         Paths = new AppPaths();
         Registry = new RegistryService(Paths);
-        Environment = new EnvironmentService(Paths);
+        Environment = new EnvironmentService(Paths, diagnostics: null);
     }
 
     public void Dispose()

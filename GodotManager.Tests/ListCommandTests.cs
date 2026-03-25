@@ -26,7 +26,7 @@ public class ListCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);
@@ -52,7 +52,7 @@ public class ListCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);
@@ -73,7 +73,7 @@ public class ListCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);
@@ -94,7 +94,7 @@ public class ListCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);

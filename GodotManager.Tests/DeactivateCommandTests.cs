@@ -35,7 +35,7 @@ public class DeactivateCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);
@@ -57,7 +57,7 @@ public class DeactivateCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        var result = await _command.ExecuteAsync(null!);
+        var result = await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
 
         // Assert
         Assert.Equal(0, result);
@@ -80,7 +80,7 @@ public class DeactivateCommandTests : IDisposable
         await _fixture.Registry.SaveAsync(registry);
 
         // Act
-        await _command.ExecuteAsync(null!);
+        await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
 
         // Assert
         var updatedRegistry = await _fixture.Registry.LoadAsync();
