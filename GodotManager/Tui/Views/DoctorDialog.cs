@@ -12,16 +12,19 @@ internal sealed class DoctorDialog : Dialog
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
     private readonly AppPaths _paths;
+    private readonly IApplication _app;
     private readonly TextView _reportView;
 
     public DoctorDialog(
         RegistryService registry,
         EnvironmentService environment,
-        AppPaths paths)
+        AppPaths paths,
+        IApplication app)
     {
         _registry = registry;
         _environment = environment;
         _paths = paths;
+        _app = app;
 
         Title = "Doctor";
         Width = Dim.Percent(70);
@@ -105,7 +108,7 @@ internal sealed class DoctorDialog : Dialog
         // Summary
         report.AppendLine($"\n=== Summary: {passed} passed, {failed} failed ===");
 
-        Application.Instance.Invoke(() =>
+        _app.Invoke(() =>
         {
             _reportView.Text = report.ToString();
         });

@@ -10,6 +10,7 @@ namespace GodotManager.Tui.Views;
 internal sealed class BrowseView : View
 {
     private readonly GodotVersionFetcher _fetcher;
+    private readonly IApplication _app;
     private readonly TextField _filterField;
     private readonly CheckBox _stableOnly;
     private readonly ListView _listView;
@@ -19,9 +20,10 @@ internal sealed class BrowseView : View
 
     public event EventHandler<GodotRelease>? VersionSelected;
 
-    public BrowseView(GodotVersionFetcher fetcher)
+    public BrowseView(GodotVersionFetcher fetcher, IApplication app)
     {
         _fetcher = fetcher;
+        _app = app;
 
         Width = Dim.Fill();
         Height = Dim.Fill();
@@ -78,11 +80,11 @@ internal sealed class BrowseView : View
         try
         {
             _allReleases = await _fetcher.FetchReleasesAsync();
-            Application.Instance.Invoke(() => ApplyFilter());
+            _app.Invoke(() => ApplyFilter());
         }
         catch (Exception ex)
         {
-            Application.Instance.Invoke(() =>
+            _app.Invoke(() =>
             {
                 _items.Clear();
                 _items.Add($"Error loading versions: {ex.Message}");

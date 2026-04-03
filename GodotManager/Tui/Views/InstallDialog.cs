@@ -13,6 +13,7 @@ internal sealed class InstallDialog : Dialog
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly AppPaths _paths;
+    private readonly IApplication _app;
 
     private readonly TextField _versionField;
     private readonly OptionSelector _editionSelector;
@@ -27,11 +28,13 @@ internal sealed class InstallDialog : Dialog
     public InstallDialog(
         InstallerService installer,
         GodotDownloadUrlBuilder urlBuilder,
-        AppPaths paths)
+        AppPaths paths,
+        IApplication app)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
         _paths = paths;
+        _app = app;
 
         Title = "Install Godot";
         Width = Dim.Percent(60);
@@ -107,7 +110,7 @@ internal sealed class InstallDialog : Dialog
         var version = _versionField.Text?.Trim() ?? "";
         if (string.IsNullOrEmpty(version))
         {
-            MessageBox.ErrorQuery(Application.Instance, "Error", "Please enter a version.", "OK");
+            MessageBox.ErrorQuery(_app, "Error", "Please enter a version.", "OK");
             return;
         }
 
@@ -117,7 +120,7 @@ internal sealed class InstallDialog : Dialog
 
         if (!_urlBuilder.TryBuildUri(version, edition, platform, out var uri, out var error))
         {
-            MessageBox.ErrorQuery(Application.Instance, "Error", $"Could not build download URL: {error}", "OK");
+            MessageBox.ErrorQuery(_app, "Error", $"Could not build download URL: {error}", "OK");
             return;
         }
 
@@ -136,7 +139,7 @@ internal sealed class InstallDialog : Dialog
         {
             await _installer.InstallWithElevationAsync(request, progress =>
             {
-                Application.Instance.Invoke(() =>
+                _app.Invoke(() =>
                 {
                     _progressBar.Fraction = (float)progress;
                     _statusLabel.Text = progress < 1.0
@@ -145,19 +148,19 @@ internal sealed class InstallDialog : Dialog
                 });
             });
 
-            Application.Instance.Invoke(() =>
+            _app.Invoke(() =>
             {
                 _statusLabel.Text = "Install complete!";
-                MessageBox.Query(Application.Instance, "Success", $"Installed Godot {version} ({edition})", "OK");
+                MessageBox.Query(_app, "Success", $"Installed Godot {version} ({edition})", "OK");
                 RequestStop();
             });
         }
         catch (Exception ex)
         {
-            Application.Instance.Invoke(() =>
+            _app.Invoke(() =>
             {
                 _statusLabel.Text = "Install failed.";
-                MessageBox.ErrorQuery(Application.Instance, "Error", $"Install failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(_app, "Error", $"Install failed: {ex.Message}", "OK");
                 _installing = false;
                 _installButton.Visible = true;
             });

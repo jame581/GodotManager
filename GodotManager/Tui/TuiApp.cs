@@ -19,6 +19,8 @@ internal sealed class TuiApp
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly GodotVersionFetcher _fetcher;
 
+    private IApplication? _app;
+
     private InstallsListView? _installsList;
     private DetailsView? _detailsView;
     private BrowseView? _browseView;
@@ -45,6 +47,7 @@ internal sealed class TuiApp
     {
         var app = Application.Create();
         app.Init();
+        _app = app;
 
         var window = new Window
         {
@@ -75,7 +78,7 @@ internal sealed class TuiApp
         leftFrame.Add(_installsList);
 
         _detailsView = new DetailsView();
-        _browseView = new BrowseView(_fetcher);
+        _browseView = new BrowseView(_fetcher, app);
         _browseView.VersionSelected += OnBrowseVersionSelected;
         _rightFrame.Add(_detailsView);
 
@@ -165,11 +168,11 @@ internal sealed class TuiApp
 
     private void OnBrowseVersionSelected(object? sender, GodotRelease release)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _app!);
         dialog.PresetVersion(release.Version);
-        Application.Instance.Run(dialog);
+        _app!.Run(dialog);
         dialog.Dispose();
-        _ = RefreshRegistryAsync(Application.Instance);
+        _ = RefreshRegistryAsync(_app!);
     }
 
     private void UpdateDetailsForSelection()
@@ -323,7 +326,7 @@ internal sealed class TuiApp
 
     private void ShowInstallDialog(IApplication app)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, app);
         app.Run(dialog);
         dialog.Dispose();
         _ = RefreshRegistryAsync(app);
@@ -331,7 +334,7 @@ internal sealed class TuiApp
 
     private void ShowDoctorDialog(IApplication app)
     {
-        var dialog = new DoctorDialog(_registry, _environment, _paths);
+        var dialog = new DoctorDialog(_registry, _environment, _paths, app);
         app.Run(dialog);
         dialog.Dispose();
     }
