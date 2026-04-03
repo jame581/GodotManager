@@ -4,7 +4,7 @@
 - .NET 10 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
 - Maintain installs registry, download/unpack builds, set active install via env var and shim.
 - Supports both User and Global installation scopes on Windows and Linux.
-- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅; Phase 5: Linux packaging (partial) ✅; Phase 6: WinGet publishing ✅.
+- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅; Phase 4: TUI Rework ✅; Phase 5: Linux packaging (partial) ✅; Phase 6: WinGet publishing ✅.
 
 ## Phase 1 — Core CLI ✅ COMPLETE
 - Commands:
@@ -150,50 +150,26 @@ Detect Godot Engine installations managed by Steam and integrate them into godma
 | Windows | `C:\Program Files (x86)\Steam\` (from registry) | `config\libraryfolders.vdf` |
 | Linux | `~/.steam/steam/` or `~/.local/share/Steam/` | `config/libraryfolders.vdf` |
 
-## Phase 4 — TUI Rework (Lazygit-Style)
+## Phase 4 — TUI Rework (Lazygit-Style) ✅ COMPLETE
 
-Replace the current menu-driven TUI with a persistent, panel-based interface using **Terminal.Gui** (gui.cs).
+Replaced the Spectre.Console menu-driven TUI with a persistent two-panel Terminal.Gui v2 interface.
 
-### Why Terminal.Gui over Spectre.Console
-- Spectre.Console cannot combine Live Display with interactive input
-- Terminal.Gui is designed for persistent multi-panel layouts with keyboard navigation
-- Mature framework (10K+ GitHub stars), supports .NET Standard 2.0+
-
-### Proposed Layout
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Godot Manager v1.0.2                                   [?]  │
-├──────────────────┬──────────────────────────────────────────┤
-│  INSTALLS        │  DETAILS                                 │
-│  ──────────────  │  ────────────────────────────────────────│
-│  * 4.5.1 (std)   │  Version:  4.5.1                         │
-│    4.4.0 (mono)  │  Edition:  Standard                      │
-│    4.3.0 (std)   │  Platform: Linux                         │
-│  🎮 4.6.1 (steam)│  Path:     ~/.local/bin/godman/4.5.1     │
-│                  │  SHA256:   abc123def456...                │
-│                  │  Status:   ACTIVE                        │
-│                  │                                          │
-│                  │  [a]ctivate [r]emove [d]eactivate        │
-├──────────────────┴──────────────────────────────────────────┤
-│ [1]List [2]Browse [3]Install [4]Doctor  q:Quit  ?:Help      │
-└─────────────────────────────────────────────────────────────┘
-```
+### Implementation
+- **Terminal.Gui v2** (`2.0.0-develop.5213`) with sub-namespaces (`Terminal.Gui.Views`, `Terminal.Gui.ViewBase`, `Terminal.Gui.App`, `Terminal.Gui.Input`)
+- **TuiApp**: Orchestrator — creates Terminal.Gui application, two-panel layout (30/70 split), status bar with F-key shortcuts, global keyboard handlers
+- **InstallsListView**: Left panel — scrollable list with active marker (▸), selection events
+- **DetailsView**: Right panel (default) — shows version, edition, platform, scope, path, added date, active status, action key hints
+- **BrowseView**: Right panel (alternate, toggled via F1) — remote version browser with text filter, stable-only toggle, async fetch
+- **InstallDialog**: Modal — version input, edition/scope selectors (OptionSelector), progress bar, async install via InstallerService
+- **DoctorDialog**: Modal — runs registry, path, and shim checks with pass/fail report
+- **HelpOverlay**: Modal — keyboard shortcut reference
 
 ### Keyboard Navigation
-- **Arrow keys / j,k**: Navigate install list
 - **Tab / Shift+Tab**: Switch panels
-- **1-4**: Jump to views (List, Browse, Install, Doctor)
-- **a**: Activate selected  |  **r**: Remove  |  **d**: Deactivate
-- **i**: Install new version  |  **f**: Fetch/browse versions
-- **?**: Help overlay  |  **q**: Quit
-
-### Implementation Phases
-1. Add `Terminal.Gui` 1.19.0 dependency
-2. Create `TuiWindowManager` — main window with panel layout
-3. Build `InstallsListView` (left panel) and `DetailsView` (right panel)
-4. Add keyboard handlers, focus management, modal dialogs
-5. Integrate Browse view with async version fetching + progress bars
-6. Keep existing Spectre.Console CLI commands unchanged
+- **↑ / ↓**: Navigate install list
+- **a**: Activate selected | **d**: Deactivate | **r**: Remove
+- **F1**: Toggle Browse panel | **F2**: Install dialog | **F3**: Doctor dialog
+- **?**: Help overlay | **q / Ctrl+Q**: Quit
 
 ## Phase 5 — Linux Distribution Packaging ✅ PARTIAL
 
