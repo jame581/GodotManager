@@ -1,3 +1,4 @@
+using System.Reflection;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
@@ -26,6 +27,9 @@ internal sealed class TuiApp
     private BrowseView? _browseView;
     private FrameView? _leftFrame;
     private FrameView? _rightFrame;
+    private Label? _statusMessage;
+    private Label? _infoLabel;
+    private int _statusClearToken;
     private bool _browseMode;
 
     public TuiApp(
@@ -73,7 +77,7 @@ internal sealed class TuiApp
             X = 0,
             Y = 0,
             Width = Dim.Percent(30),
-            Height = Dim.Fill(1)
+            Height = Dim.Fill(2)
         };
         _leftFrame = leftFrame;
 
@@ -83,7 +87,7 @@ internal sealed class TuiApp
             X = Pos.Right(leftFrame),
             Y = 0,
             Width = Dim.Fill(),
-            Height = Dim.Fill(1)
+            Height = Dim.Fill(2)
         };
 
         _installsList = new InstallsListView();
@@ -102,6 +106,33 @@ internal sealed class TuiApp
             UpdateDetailsForSelection();
         }
 
+        // Info bar with status message and version info
+        var infoBar = new View
+        {
+            Y = Pos.AnchorEnd(2),
+            Width = Dim.Fill(),
+            Height = 1,
+            CanFocus = false
+        };
+
+        _statusMessage = new Label
+        {
+            Text = "",
+            X = 1,
+            Y = 0,
+            Width = Dim.Percent(40)
+        };
+
+        var infoText = BuildInfoText(initialRegistry);
+        _infoLabel = new Label
+        {
+            Text = infoText,
+            X = Pos.AnchorEnd(infoText.Length + 1),
+            Y = 0
+        };
+
+        infoBar.Add(_statusMessage, _infoLabel);
+
         var statusBar = new StatusBar
         {
             Y = Pos.AnchorEnd(1)
@@ -113,7 +144,7 @@ internal sealed class TuiApp
             new Shortcut(Key.Q.WithCtrl, "Quit", () => RequestStop(window), "")
         );
 
-        window.Add(leftFrame, _rightFrame, statusBar);
+        window.Add(leftFrame, _rightFrame, infoBar, statusBar);
 
         window.KeyDown += (s, e) => HandleGlobalKey(e, app, window);
 
@@ -183,7 +214,9 @@ internal sealed class TuiApp
             _rightFrame.Title = "Browse Versions";
             _rightFrame.Add(_browseView!);
             _browseView!.SetFocus();
-            _ = _browseView.LoadVersionsAsync();
+            SetStatus("Loading versions...", durationMs: 10000);
+            _ = _browseView.LoadVersionsAsync().ContinueWith(_ =>
+                _app?.Invoke(() => SetStatus("Versions loaded")));
         }
         else
         {
@@ -225,6 +258,7 @@ internal sealed class TuiApp
             {
                 _installsList?.SetInstalls(registry);
                 UpdateDetailsForSelection();
+                UpdateInfoBar(registry);
             });
         }
         catch (Exception ex)
@@ -264,6 +298,7 @@ internal sealed class TuiApp
                 MessageBox.Query(app, "Activated", $"Activated {entry.Version} ({entry.Edition})", "OK");
             });
             await RefreshRegistryAsync(app);
+            app.Invoke(() => SetStatus($"Activated {entry.Version}"));
         }
         catch (Exception ex)
         {
@@ -298,6 +333,7 @@ internal sealed class TuiApp
                 MessageBox.Query(app, "Deactivated", $"Deactivated {active.Version} ({active.Edition})", "OK");
             });
             await RefreshRegistryAsync(app);
+            app.Invoke(() => SetStatus($"Deactivated {active.Version}"));
         }
         catch (Exception ex)
         {
@@ -349,6 +385,7 @@ internal sealed class TuiApp
                 MessageBox.Query(app, "Removed", $"Removed {entry.Version} ({entry.Edition})", "OK");
             });
             await RefreshRegistryAsync(app);
+            app.Invoke(() => SetStatus($"Removed {entry.Version}"));
         }
         catch (Exception ex)
         {
@@ -365,6 +402,7 @@ internal sealed class TuiApp
         app.Run(dialog);
         dialog.Dispose();
         _ = RefreshRegistryAsync(app);
+        SetStatus("Install complete");
     }
 
     private void ShowDoctorDialog(IApplication app)
@@ -379,5 +417,48 @@ internal sealed class TuiApp
         var overlay = new HelpOverlay();
         app.Run(overlay);
         overlay.Dispose();
+    }
+
+    private static string GetGodmanVersion()
+    {
+        return typeof(TuiApp).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion ?? "?";
+    }
+
+    private static string BuildInfoText(InstallRegistry? registry)
+    {
+        var version = GetGodmanVersion();
+        var active = registry?.GetActive();
+        var activeText = active is not null
+            ? $"{active.Version} ({(active.Edition == InstallEdition.DotNet ? ".NET" : "Std")})"
+            : "None";
+        var count = registry?.Installs.Count ?? 0;
+        return $"godman v{version} │ Active: {activeText} │ {count} installed";
+    }
+
+    private void SetStatus(string message, int durationMs = 3000)
+    {
+        if (_statusMessage is null || _app is null) return;
+
+        var token = Interlocked.Increment(ref _statusClearToken);
+        _statusMessage.Text = message;
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(durationMs);
+            if (Volatile.Read(ref _statusClearToken) == token)
+            {
+                _app.Invoke(() => _statusMessage.Text = "");
+            }
+        });
+    }
+
+    private void UpdateInfoBar(InstallRegistry? registry)
+    {
+        if (_infoLabel is null) return;
+        var text = BuildInfoText(registry);
+        _infoLabel.Text = text;
+        _infoLabel.X = Pos.AnchorEnd(text.Length + 1);
     }
 }
