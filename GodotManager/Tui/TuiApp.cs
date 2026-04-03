@@ -49,6 +49,17 @@ internal sealed class TuiApp
         app.Init();
         _app = app;
 
+        // Load registry synchronously before building UI
+        InstallRegistry? initialRegistry = null;
+        try
+        {
+            initialRegistry = _registry.LoadAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Will show empty list; errors surface through Doctor
+        }
+
         var window = new Window
         {
             Title = "Godot Manager",
@@ -82,6 +93,13 @@ internal sealed class TuiApp
         _browseView.VersionSelected += OnBrowseVersionSelected;
         _rightFrame.Add(_detailsView);
 
+        // Populate install list from pre-loaded registry
+        if (initialRegistry is not null)
+        {
+            _installsList.SetInstalls(initialRegistry);
+            UpdateDetailsForSelection();
+        }
+
         var statusBar = new StatusBar
         {
             Y = Pos.AnchorEnd(1)
@@ -97,10 +115,9 @@ internal sealed class TuiApp
 
         window.KeyDown += (s, e) => HandleGlobalKey(e, app, window);
 
-        _ = LoadInstallsAsync(app);
-
         app.Run(window);
         window.Dispose();
+        ((IDisposable)app).Dispose();
 
         return 0;
     }
