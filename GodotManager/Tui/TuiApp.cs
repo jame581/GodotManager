@@ -165,7 +165,8 @@ internal sealed class TuiApp
         {
             _rightFrame.Title = "Browse Versions";
             _rightFrame.Add(_browseView!);
-            _ = _browseView!.LoadVersionsAsync();
+            _browseView!.SetFocus();
+            _ = _browseView.LoadVersionsAsync();
         }
         else
         {
