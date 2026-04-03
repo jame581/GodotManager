@@ -28,7 +28,6 @@ internal sealed class BrowseView : View
         Width = Dim.Fill();
         Height = Dim.Fill();
         CanFocus = true;
-        TabStop = TabBehavior.TabGroup;
 
         var filterLabel = new Label
         {

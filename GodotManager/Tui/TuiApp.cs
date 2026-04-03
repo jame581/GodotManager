@@ -24,6 +24,7 @@ internal sealed class TuiApp
     private InstallsListView? _installsList;
     private DetailsView? _detailsView;
     private BrowseView? _browseView;
+    private FrameView? _leftFrame;
     private FrameView? _rightFrame;
     private bool _browseMode;
 
@@ -74,6 +75,7 @@ internal sealed class TuiApp
             Width = Dim.Percent(30),
             Height = Dim.Fill(1)
         };
+        _leftFrame = leftFrame;
 
         _rightFrame = new FrameView
         {
@@ -124,7 +126,12 @@ internal sealed class TuiApp
 
     private void HandleGlobalKey(Key key, IApplication app, Window window)
     {
-        if (key == Key.Q && !(_browseView?.HasFocus ?? false))
+        if (key == Key.Tab)
+        {
+            TogglePanelFocus();
+            key.Handled = true;
+        }
+        else if (key == Key.Q && !(_browseView?.HasFocus ?? false))
         {
             RequestStop(window);
             key.Handled = true;
@@ -154,6 +161,16 @@ internal sealed class TuiApp
     private static void RequestStop(Window window)
     {
         window.RequestStop();
+    }
+
+    private void TogglePanelFocus()
+    {
+        if (_leftFrame is null || _rightFrame is null) return;
+
+        if (_leftFrame.HasFocus)
+            _rightFrame.SetFocus();
+        else
+            _leftFrame.SetFocus();
     }
 
     private void ToggleBrowseMode(IApplication app)
