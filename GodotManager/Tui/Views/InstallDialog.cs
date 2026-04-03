@@ -85,11 +85,16 @@ internal sealed class InstallDialog : Dialog
         };
 
         _installButton = new Button { Text = "Install" };
-        _installButton.Accepting += (_, _) => _ = DoInstallAsync();
+        _installButton.Accepting += (_, args) =>
+        {
+            args.Handled = true;
+            _ = DoInstallAsync();
+        };
 
         _cancelButton = new Button { Text = "Cancel" };
-        _cancelButton.Accepting += (_, _) =>
+        _cancelButton.Accepting += (_, args) =>
         {
+            args.Handled = true;
             if (!_installing) RequestStop();
         };
 
