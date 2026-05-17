@@ -114,4 +114,9 @@ internal sealed class BrowseView : View
             _items.Add($"{release.Version} ({string.Join(", ", editions)}){stable}");
         }
     }
+
+    public void FocusList()
+    {
+        _listView.SetFocus();
+    }
 }
