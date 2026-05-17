@@ -20,6 +20,13 @@ internal sealed class BrowseView : View
 
     public event EventHandler<GodotRelease>? VersionSelected;
 
+    /// <summary>
+    /// True when the filter TextField has focus, so TuiApp can let letter
+    /// keys flow through as text input instead of intercepting them as
+    /// action keys.
+    /// </summary>
+    public bool IsFilterFocused => _filterField.HasFocus;
+
     public BrowseView(GodotVersionFetcher fetcher, IApplication app)
     {
         _fetcher = fetcher;

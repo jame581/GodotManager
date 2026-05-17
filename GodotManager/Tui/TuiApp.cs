@@ -148,6 +148,11 @@ internal sealed class TuiApp
 
         window.KeyDown += (s, e) => HandleGlobalKey(e, app, window);
 
+        // Use Application-level KeyDown to intercept a/d/r BEFORE the
+        // focused view (e.g., the inner ListView) gets a chance to swallow
+        // them as type-ahead navigation.
+        app.Keyboard.KeyDown += (_, key) => HandleActionKey(key, app, window);
+
         app.Run(window);
         window.Dispose();
         ((IDisposable)app).Dispose();
@@ -171,42 +176,6 @@ internal sealed class TuiApp
         else if (key == Key.Q && !(_browseView?.HasFocus ?? false))
         {
             RequestStop(window);
-            key.Handled = true;
-        }
-        else if (key == Key.A)
-        {
-            if (IsBrowseFocused())
-            {
-                SetStatus("Switch to Installs (Tab) to activate");
-            }
-            else
-            {
-                _ = ActivateSelectedAsync(app);
-            }
-            key.Handled = true;
-        }
-        else if (key == Key.D)
-        {
-            if (IsBrowseFocused())
-            {
-                SetStatus("Switch to Installs (Tab) to deactivate");
-            }
-            else
-            {
-                _ = DeactivateAsync(app);
-            }
-            key.Handled = true;
-        }
-        else if (key == Key.R)
-        {
-            if (IsBrowseFocused())
-            {
-                SetStatus("Switch to Installs (Tab) to remove");
-            }
-            else
-            {
-                _ = RemoveSelectedAsync(app);
-            }
             key.Handled = true;
         }
         else if (key.AsRune.Value == '?')
@@ -244,6 +213,51 @@ internal sealed class TuiApp
     }
 
     private bool IsBrowseFocused() => _browseView?.HasFocus ?? false;
+
+    private void HandleActionKey(Key key, IApplication app, View mainWindow)
+    {
+        if (key.Handled) return;
+        if (key != Key.A && key != Key.D && key != Key.R) return;
+        // Skip when a modal dialog is on top (Install/Doctor/Help/MessageBox)
+        // so letter keys flow into the modal's text fields and buttons as usual.
+        if (app.TopRunnableView != mainWindow) return;
+        // Skip when Browse's filter text field has focus — user is typing
+        // a search term, not invoking an action.
+        if (_browseView?.IsFilterFocused == true) return;
+
+        if (IsBrowseFocused())
+        {
+            var verb = key == Key.A ? "activate"
+                : key == Key.D ? "deactivate"
+                : "remove";
+            SetStatus($"Switch to Installs (Tab) to {verb}");
+            key.Handled = true;
+            return;
+        }
+
+        var entry = _installsList?.SelectedEntry;
+        if (entry is null)
+        {
+            SetStatus("No install selected");
+            key.Handled = true;
+            return;
+        }
+
+        if (key == Key.A)
+        {
+            if (entry.IsActive) SetStatus($"{entry.Version} is already active");
+            else _ = ActivateSelectedAsync(app);
+        }
+        else if (key == Key.D)
+        {
+            _ = DeactivateAsync(app);
+        }
+        else if (key == Key.R)
+        {
+            _ = RemoveSelectedAsync(app);
+        }
+        key.Handled = true;
+    }
 
     private void RestoreBrowseFocusIfNeeded()
     {
