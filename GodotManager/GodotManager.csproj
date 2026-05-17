@@ -25,10 +25,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.*" />
-    <PackageReference Include="SharpCompress" Version="0.37.0" />
-    <PackageReference Include="Spectre.Console" Version="0.49.1" />
-    <PackageReference Include="Spectre.Console.Cli" Version="0.49.1" />
-    <PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5213" />
+    <PackageReference Include="SharpCompress" Version="0.48.1" />
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
+    <PackageReference Include="Terminal.Gui" Version="2.1.0" />
   </ItemGroup>
 
 </Project>
