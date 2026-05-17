@@ -138,7 +138,7 @@ internal sealed class TuiApp
             Y = Pos.AnchorEnd(1)
         };
         statusBar.Add(
-            new Shortcut(Key.F1, "Browse", () => ToggleBrowseMode(app), ""),
+            new Shortcut(Key.F1, "Browse", () => EnterBrowseMode(app), ""),
             new Shortcut(Key.F2, "Install", () => ShowInstallDialog(app), ""),
             new Shortcut(Key.F3, "Doctor", () => ShowDoctorDialog(app), ""),
             new Shortcut(Key.Q.WithCtrl, "Quit", () => RequestStop(window), "")
@@ -160,6 +160,12 @@ internal sealed class TuiApp
         if (key == Key.Tab)
         {
             TogglePanelFocus();
+            key.Handled = true;
+        }
+        else if (key == Key.Esc && _browseMode)
+        {
+            ExitBrowseMode();
+            _leftFrame?.SetFocus();
             key.Handled = true;
         }
         else if (key == Key.Q && !(_browseView?.HasFocus ?? false))
@@ -199,31 +205,56 @@ internal sealed class TuiApp
         if (_leftFrame is null || _rightFrame is null) return;
 
         if (_leftFrame.HasFocus)
+        {
             _rightFrame.SetFocus();
+        }
         else
+        {
+            // Moving focus to the Installs list — if we're in Browse,
+            // exit it first so Details becomes visible alongside the
+            // selected install (spec invariant: focus on Installs ⇒
+            // right panel = Details).
+            if (_browseMode)
+            {
+                ExitBrowseMode();
+            }
             _leftFrame.SetFocus();
+        }
     }
 
-    private void ToggleBrowseMode(IApplication app)
+    private void EnterBrowseMode(IApplication app)
     {
-        _browseMode = !_browseMode;
-        _rightFrame!.RemoveAll();
+        if (_browseView is null || _rightFrame is null) return;
 
         if (_browseMode)
         {
-            _rightFrame.Title = "Browse Versions";
-            _rightFrame.Add(_browseView!);
-            _browseView!.SetFocus();
-            SetStatus("Loading versions...", durationMs: 10000);
-            _ = _browseView.LoadVersionsAsync().ContinueWith(_ =>
-                _app?.Invoke(() => SetStatus("Versions loaded")));
+            // Already in Browse — just ensure focus is on the list,
+            // in case it had drifted (e.g., into the filter).
+            _browseView.FocusList();
+            return;
         }
-        else
-        {
-            _rightFrame.Title = "Details";
-            _rightFrame.Add(_detailsView!);
-            UpdateDetailsForSelection();
-        }
+
+        _browseMode = true;
+        _rightFrame.RemoveAll();
+        _rightFrame.Title = "Browse Versions";
+        _rightFrame.Add(_browseView);
+        _browseView.FocusList();
+
+        SetStatus("Loading versions...", durationMs: 10000);
+        _ = _browseView.LoadVersionsAsync().ContinueWith(_ =>
+            _app?.Invoke(() => SetStatus("Versions loaded")));
+    }
+
+    private void ExitBrowseMode()
+    {
+        if (_detailsView is null || _rightFrame is null) return;
+        if (!_browseMode) return;
+
+        _browseMode = false;
+        _rightFrame.RemoveAll();
+        _rightFrame.Title = "Details";
+        _rightFrame.Add(_detailsView);
+        UpdateDetailsForSelection();
     }
 
     private void OnInstallSelectionChanged(object? sender, InstallEntry? entry)
