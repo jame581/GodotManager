@@ -33,7 +33,7 @@ F1 and exits via Tab/Esc.
 |---|---|
 | Right panel model | Focus-coupled. Focus on Installs ⇒ Details; focus on Browse ⇒ Browse. |
 | F1 semantics | "Enter Browse" — not a toggle. Idempotent when already in Browse. |
-| Exit Browse | Tab (focus → Installs), or Esc when the filter is not open. |
+| Exit Browse | Tab (focus → Installs), or Esc (always, regardless of which sub-widget has focus). |
 | a/d/r while focus is in Browse | Blocked. Status bar shows `Switch to Installs (Tab) to activate / deactivate / remove` for ~3 s. |
 | Browse fetch behaviour | Unchanged — lazy on first entry per session. |
 | Install dialog (F2) | After it closes, restore the right panel to whichever mode was active when it opened. |
@@ -49,7 +49,7 @@ The right panel is in exactly one of two modes: `Details` (default) or
 | App start | Details | Installs |
 | F1 (from anywhere) | Browse | BrowseView |
 | Tab (from Browse) | Details | Installs |
-| Esc (in Browse, filter closed) | Details | Installs |
+| Esc (in Browse) | Details | Installs |
 | Tab (from Installs) | Details (unchanged) | RightFrame (no interactive widgets in Details — focus is harmless) |
 | F1 (already in Browse) | Browse (unchanged) | BrowseView (no-op) |
 | Install dialog closes | Restores previous mode | Restores previous focus |
@@ -81,7 +81,7 @@ clicking into it.)
 - Wire a focus-change handler on `_leftFrame` that calls `ExitBrowseMode()` when the left frame (Installs) gains focus while `_browseMode` is `true`.
 - `HandleGlobalKey`:
   - F1 → `EnterBrowseMode(app)` (was `ToggleBrowseMode`).
-  - Esc → if `_browseMode`, exit Browse (after first giving `BrowseView` a chance to close its filter — see below).
+  - Esc → if `_browseMode`, exit Browse (BrowseView raises `RequestExit`; TuiApp calls `ExitBrowseMode`).
   - a / d / r → if focus is in `_browseView` (or any descendant), do not invoke the registry/environment action; instead `SetStatus("Switch to Installs (Tab) to <verb>")` and mark the key handled.
 - `ShowInstallDialog(IApplication)` and the BrowseView → install flow: capture `_browseMode` before opening the dialog; restore it after the dialog closes (current behaviour calls `RefreshRegistryAsync` only).
 - Status-bar shortcut label for F1: keep `"Browse"`. Tooltip wording (if any) updated.
@@ -118,7 +118,7 @@ clicking into it.)
 - Mouse support.
 - Saving the active right-panel mode across TUI sessions.
 - Changes to InstallDialog, DoctorDialog, HelpOverlay layout.
-- Refactoring `BrowseView` filter semantics beyond the Esc-handling bullet above.
+- Refactoring `BrowseView` filter semantics beyond the Esc and `FocusList()` additions above.
 
 ## Testing approach
 
