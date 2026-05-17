@@ -64,10 +64,13 @@ action-key hints visible whenever the user might act.
 |---|---|---|
 | F1 | Toggle Browse on/off | Enter Browse + focus BrowseView |
 | Tab | Swap left ↔ right focus | Same; leaving Browse also reverts right panel to Details |
-| Esc (in Browse) | Closes filter if open | If filter is open → close filter. Otherwise → exit Browse to Installs + Details. |
+| Esc (in Browse) | (no binding) | Always exits Browse to Installs + Details, regardless of which sub-widget has focus. |
 | a / d / r | Global, on selected install | Same when focus is on Installs. When focus is on Browse: blocked + status message. |
-| /, s | Filter / stable-only toggle in Browse | Unchanged. |
 | F2, F3, ?, Ctrl+Q | Unchanged | Unchanged. |
+
+(The Browse filter `TextField` and `Stable only` `CheckBox` are always
+visible; users edit the filter as a normal text field after Tabbing or
+clicking into it.)
 
 ## Components touched
 
@@ -84,11 +87,12 @@ action-key hints visible whenever the user might act.
 - Status-bar shortcut label for F1: keep `"Browse"`. Tooltip wording (if any) updated.
 
 ### `GodotManager/Tui/Views/BrowseView.cs`
-- Surface a `RequestExit` event that TuiApp subscribes to. Fired when:
-  - User presses Esc and the filter field is already hidden.
-- When user presses Esc and the filter field is visible:
-  - Clear the filter text, hide the field, return focus to the list. (Already half-implemented via `Command.Find` toggle; add the Esc binding.)
-- No change to the filter-as-typing behaviour — that's already gated by the user explicitly pressing `/` to open the filter and focus it.
+- Surface a `RequestExit` event that TuiApp subscribes to.
+- Add an Esc key binding on the view (and on the inner `_filterField` /
+  `_listView` if Esc isn't propagated up) that fires `RequestExit`.
+- Add a `FocusList()` helper that moves focus to the result `ListView`.
+  Called by `TuiApp.EnterBrowseMode` so that re-entering Browse always
+  lands on the list, not on whichever sub-widget last had focus.
 
 ### `GodotManager/Tui/Views/HelpOverlay.cs`
 - F1 line: `Open Browse versions` (was `Toggle Browse versions panel`).
@@ -101,7 +105,7 @@ action-key hints visible whenever the user might act.
 
 - **First-time Browse fetch.** Unchanged — `BrowseView.LoadVersionsAsync()` runs on first F1 entry per session. Subsequent F1 entries re-focus without re-fetching.
 - **Acting "blind" via a/d/r.** Explicitly blocked when focus is in Browse (see decision table). The previously-supported but error-prone "act on whatever is selected in Installs while looking at Browse" path is removed in favour of an explicit Tab-first workflow.
-- **Filter open while Tab pressed.** Tab from Browse always exits to Installs regardless of which sub-widget (filter, list) has focus. The filter is dismissed as part of the exit so the next Browse entry starts clean.
+- **Tab from Browse with filter focused.** Tab from Browse always exits to Installs regardless of which sub-widget (filter, list, checkbox) has focus. Filter text is preserved for the next Browse entry — only focus moves.
 - **No installs registered.** Right panel shows the existing "No install selected." placeholder. F1 still enters Browse normally.
 - **Install dialog from BrowseView.** When the user picks a remote version (`VersionSelected` → install dialog), the dialog opens over the current layout. After it closes:
   - The registry refresh runs (existing behaviour).
@@ -125,8 +129,8 @@ established this convention). Verification is manual smoke testing:
 2. F1 → right panel = Browse, focus = Browse. ✓
 3. Tab → right panel = Details, focus = Installs. ✓
 4. F1 → Esc → right panel = Details, focus = Installs. ✓
-5. F1 → `/` → type text → Esc → filter closes, focus returns to list. ✓
-6. F1 → `/` → type text → Tab → exits Browse cleanly. ✓
+5. F1 → Tab into filter → type text → Esc → exits Browse; re-enter via F1, filter text is still there, focus is on the list. ✓
+6. F1 → Tab into filter → type text → Tab again → exits Browse cleanly. ✓
 7. Select an install, F1, press `a` → no activation, status message shown. ✓
 8. Select an install, F1, Tab, press `a` → activation runs normally. ✓
 9. F1, pick a remote version, install dialog runs, close it → right panel back in Browse. ✓
