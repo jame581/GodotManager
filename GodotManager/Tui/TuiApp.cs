@@ -245,6 +245,14 @@ internal sealed class TuiApp
 
     private bool IsBrowseFocused() => _browseView?.HasFocus ?? false;
 
+    private void RestoreBrowseFocusIfNeeded()
+    {
+        if (_browseMode && _browseView is not null && !_browseView.HasFocus)
+        {
+            _browseView.FocusList();
+        }
+    }
+
     private void EnterBrowseMode(IApplication app)
     {
         if (_browseView is null || _rightFrame is null) return;
@@ -295,6 +303,7 @@ internal sealed class TuiApp
         _app!.Run(dialog);
         dialog.Dispose();
         _ = RefreshRegistryAsync(_app!);
+        RestoreBrowseFocusIfNeeded();
     }
 
     private void UpdateDetailsForSelection()
@@ -457,6 +466,7 @@ internal sealed class TuiApp
         dialog.Dispose();
         _ = RefreshRegistryAsync(app);
         SetStatus("Install complete");
+        RestoreBrowseFocusIfNeeded();
     }
 
     private void ShowDoctorDialog(IApplication app)
@@ -464,6 +474,7 @@ internal sealed class TuiApp
         var dialog = new DoctorDialog(_registry, _environment, _paths, app);
         app.Run(dialog);
         dialog.Dispose();
+        RestoreBrowseFocusIfNeeded();
     }
 
     private void ShowHelpOverlay(IApplication app)
