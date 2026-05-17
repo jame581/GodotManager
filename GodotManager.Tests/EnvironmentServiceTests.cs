@@ -107,6 +107,11 @@ public class EnvironmentServiceTests : IDisposable
     [Fact]
     public async Task RemoveActiveAsync_WithGlobalScope_DeletesGlobalShim()
     {
+        if (OperatingSystem.IsWindows() && !GodotManager.Services.WindowsElevationHelper.IsElevated())
+        {
+            return; // Global scope writes to HKLM; CI runners have admin, local devs typically don't
+        }
+
         // Arrange
         var tempDir = Path.Combine(_fixture.TempRoot, "shim-global-remove");
         Directory.CreateDirectory(tempDir);
