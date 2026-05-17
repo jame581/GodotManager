@@ -4,7 +4,7 @@ using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console.Cli;
-using Spectre.Console.Testing;
+using Spectre.Console.Cli.Testing;
 using System.Net.Http;
 
 namespace GodotManager.Tests.Helpers;

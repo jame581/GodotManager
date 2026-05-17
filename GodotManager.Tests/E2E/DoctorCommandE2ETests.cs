@@ -20,7 +20,7 @@ public class DoctorCommandE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
         await _fixture.Registry.SaveAsync(new InstallRegistry());
 
-        var result = await app.RunAsync("doctor");
+        var result = await app.RunAsync(["doctor"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -36,7 +36,7 @@ public class DoctorCommandE2ETests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("doctor");
+        var result = await app.RunAsync(["doctor"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -60,7 +60,7 @@ public class DoctorCommandE2ETests : IDisposable
 
         try
         {
-            var result = await app.RunAsync("doctor");
+            var result = await app.RunAsync(["doctor"]);
 
             Assert.Equal(0, result.ExitCode);
         }

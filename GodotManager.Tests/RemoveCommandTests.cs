@@ -1,7 +1,4 @@
-using GodotManager.Commands;
-using GodotManager.Config;
 using GodotManager.Domain;
-using GodotManager.Services;
 using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
@@ -13,12 +10,10 @@ namespace GodotManager.Tests;
 public class RemoveCommandTests : IDisposable
 {
     private readonly GodmanTestFixture _fixture;
-    private readonly RemoveCommand _command;
 
     public RemoveCommandTests()
     {
         _fixture = new GodmanTestFixture();
-        _command = new RemoveCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
@@ -34,13 +29,13 @@ public class RemoveCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = false };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", entry.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Empty(updatedRegistry.Installs);
@@ -61,13 +56,13 @@ public class RemoveCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = true };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", entry.Id.ToString(), "--delete"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
         Assert.False(Directory.Exists(installPath), "Directory should be deleted with --delete flag");
     }
 
@@ -89,13 +84,13 @@ public class RemoveCommandTests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = false };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", entry.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
@@ -109,13 +104,13 @@ public class RemoveCommandTests : IDisposable
         var registry = new InstallRegistry();
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = Guid.NewGuid(), DeleteFiles = false };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", Guid.NewGuid().ToString()]);
 
         // Assert
-        Assert.Equal(-1, result);
+        Assert.Equal(-1, result.ExitCode);
     }
 
     [Fact]
@@ -140,13 +135,13 @@ public class RemoveCommandTests : IDisposable
         registry.MarkActive(entry1.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = entry2.Id, DeleteFiles = false };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", entry2.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry1.Id, updatedRegistry.ActiveId);
@@ -168,13 +163,13 @@ public class RemoveCommandTests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new RemoveCommand.Settings { Id = entry.Id, DeleteFiles = true, DryRun = true };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["remove", entry.Id.ToString(), "--delete", "--dry-run"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Single(updatedRegistry.Installs);

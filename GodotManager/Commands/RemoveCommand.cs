@@ -18,7 +18,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
         _environment = environment;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var registry = await _registry.LoadAsync();
         var install = registry.Installs.FirstOrDefault(x => x.Id == settings.Id);

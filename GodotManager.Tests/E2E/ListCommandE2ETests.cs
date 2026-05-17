@@ -20,7 +20,7 @@ public class ListCommandE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
         await _fixture.Registry.SaveAsync(new InstallRegistry());
 
-        var result = await app.RunAsync("list");
+        var result = await app.RunAsync(["list"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -36,7 +36,7 @@ public class ListCommandE2ETests : IDisposable
             version: "4.4.0", path: Path.Combine(_fixture.TempRoot, "g440")));
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("list");
+        var result = await app.RunAsync(["list"]);
 
         Assert.Equal(0, result.ExitCode);
     }

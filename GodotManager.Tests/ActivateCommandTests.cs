@@ -16,12 +16,10 @@ namespace GodotManager.Tests;
 public class ActivateCommandTests : IDisposable
 {
     private readonly GodmanTestFixture _fixture;
-    private readonly ActivateCommand _command;
 
     public ActivateCommandTests()
     {
         _fixture = new GodmanTestFixture();
-        _command = new ActivateCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
@@ -41,13 +39,13 @@ public class ActivateCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new ActivateCommand.Settings { Id = entry.Id };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["activate", entry.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry.Id, updatedRegistry.ActiveId);
@@ -62,13 +60,13 @@ public class ActivateCommandTests : IDisposable
         var registry = new InstallRegistry();
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new ActivateCommand.Settings { Id = Guid.NewGuid() };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["activate", Guid.NewGuid().ToString()]);
 
         // Assert
-        Assert.Equal(-1, result);
+        Assert.Equal(-1, result.ExitCode);
     }
 
     [Fact]
@@ -84,13 +82,13 @@ public class ActivateCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new ActivateCommand.Settings { Id = entry.Id, DryRun = true };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["activate", entry.Id.ToString(), "--dry-run"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
@@ -120,13 +118,13 @@ public class ActivateCommandTests : IDisposable
         registry.MarkActive(entry1.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var settings = new ActivateCommand.Settings { Id = entry2.Id };
+        var app = CliTestHarness.Create(_fixture);
 
         // Act
-        var result = await _command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["activate", entry2.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Equal(entry2.Id, updatedRegistry.ActiveId);
@@ -158,9 +156,10 @@ public class ActivateCommandTests : IDisposable
         registry.Installs.Add(entry2);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // First activate entry1 - this creates a shim
-        var settings1 = new ActivateCommand.Settings { Id = entry1.Id };
-        await _command.ExecuteAsync(null!, settings1);
+        await app.RunAsync(["activate", entry1.Id.ToString()]);
 
         var shimDir = _fixture.Paths.GetShimDirectory(InstallScope.User);
         var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
@@ -171,11 +170,10 @@ public class ActivateCommandTests : IDisposable
         var oldShimContent = File.ReadAllText(shimPath);
 
         // Now switch to entry2
-        var settings2 = new ActivateCommand.Settings { Id = entry2.Id };
-        var result = await _command.ExecuteAsync(null!, settings2);
+        var result = await app.RunAsync(["activate", entry2.Id.ToString()]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
         Assert.True(File.Exists(shimPath), "Shim should exist after switch");
 
         var newShimContent = File.ReadAllText(shimPath);

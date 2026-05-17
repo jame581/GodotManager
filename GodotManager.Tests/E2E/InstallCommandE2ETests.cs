@@ -19,7 +19,7 @@ public class InstallCommandE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
 
         var result = await app.RunAsync(
-            "install", "--version", "4.5.1", "--url", "http://example.com/godot.zip", "--dry-run");
+            ["install", "--version", "4.5.1", "--url", "http://example.com/godot.zip", "--dry-run"]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -32,7 +32,7 @@ public class InstallCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture);
 
-        var result = await app.RunAsync("install");
+        var result = await app.RunAsync(["install"]);
 
         Assert.NotEqual(0, result.ExitCode);
     }
@@ -45,7 +45,7 @@ public class InstallCommandE2ETests : IDisposable
 
         var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
         var result = await app.RunAsync(
-            "install", "--version", "4.5.1", "--archive", mockArchive, "--platform", platform);
+            ["install", "--version", "4.5.1", "--archive", mockArchive, "--platform", platform]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -66,7 +66,7 @@ public class InstallCommandE2ETests : IDisposable
 
         var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
         var result = await app.RunAsync(
-            "install", "--version", "4.5.1", "--url", "http://test.com/godot.zip", "--platform", platform);
+            ["install", "--version", "4.5.1", "--url", "http://test.com/godot.zip", "--platform", platform]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -84,7 +84,7 @@ public class InstallCommandE2ETests : IDisposable
 
         var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
         var result = await app.RunAsync(
-            "install", "--version", "4.5.1", "--archive", mockArchive, "--platform", platform, "--activate");
+            ["install", "--version", "4.5.1", "--archive", mockArchive, "--platform", platform, "--activate"]);
 
         Assert.Equal(0, result.ExitCode);
 

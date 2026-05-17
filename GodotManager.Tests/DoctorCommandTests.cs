@@ -1,4 +1,3 @@
-using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
@@ -11,12 +10,10 @@ namespace GodotManager.Tests;
 public class DoctorCommandTests : IDisposable
 {
     private readonly GodmanTestFixture _fixture;
-    private readonly DoctorCommand _command;
 
     public DoctorCommandTests()
     {
         _fixture = new GodmanTestFixture();
-        _command = new DoctorCommand(_fixture.Registry, _fixture.Paths);
     }
 
     [Fact]
@@ -26,11 +23,13 @@ public class DoctorCommandTests : IDisposable
         var registry = new InstallRegistry();
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new DoctorCommand.Settings());
+        var result = await app.RunAsync(["doctor"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -50,11 +49,13 @@ public class DoctorCommandTests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new DoctorCommand.Settings());
+        var result = await app.RunAsync(["doctor"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -73,11 +74,13 @@ public class DoctorCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new DoctorCommand.Settings());
+        var result = await app.RunAsync(["doctor"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     public void Dispose()

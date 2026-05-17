@@ -1,5 +1,3 @@
-using GodotManager.Commands;
-using GodotManager.Services;
 using GodotManager.Tests.Helpers;
 using System;
 using System.Net.Http;
@@ -66,80 +64,65 @@ public class FetchCommandTests : IDisposable
     public async Task ExecuteAsync_WithMockReleases_ReturnsZero()
     {
         // Arrange
-        var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
-        var command = new FetchCommand(fetcher);
-        var settings = new FetchCommand.Settings { Limit = 20 };
+        var app = CliTestHarness.Create(_fixture, CreateMockHttpClient(MockReleasesJson));
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["fetch", "--limit", "20"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
     public async Task ExecuteAsync_WithStableFilter_ReturnsZero()
     {
         // Arrange
-        var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
-        var command = new FetchCommand(fetcher);
-        var settings = new FetchCommand.Settings { StableOnly = true, Limit = 20 };
+        var app = CliTestHarness.Create(_fixture, CreateMockHttpClient(MockReleasesJson));
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["fetch", "--stable", "--limit", "20"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
     public async Task ExecuteAsync_WithVersionFilter_ReturnsZero()
     {
         // Arrange
-        var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
-        var command = new FetchCommand(fetcher);
-        var settings = new FetchCommand.Settings { VersionFilter = "4.5", Limit = 20 };
+        var app = CliTestHarness.Create(_fixture, CreateMockHttpClient(MockReleasesJson));
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["fetch", "--filter", "4.5", "--limit", "20"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
     public async Task ExecuteAsync_WithNoCache_ReturnsZero()
     {
         // Arrange
-        var httpClient = CreateMockHttpClient(MockReleasesJson);
-        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
-        var command = new FetchCommand(fetcher);
-        var settings = new FetchCommand.Settings { NoCache = true, Limit = 20 };
+        var app = CliTestHarness.Create(_fixture, CreateMockHttpClient(MockReleasesJson));
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["fetch", "--no-cache", "--limit", "20"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
     public async Task ExecuteAsync_WithEmptyReleases_ReturnsZero()
     {
         // Arrange
-        var httpClient = CreateMockHttpClient(EmptyReleasesJson);
-        var fetcher = new GodotVersionFetcher(_fixture.Paths, httpClient);
-        var command = new FetchCommand(fetcher);
-        var settings = new FetchCommand.Settings { Limit = 20 };
+        var app = CliTestHarness.Create(_fixture, CreateMockHttpClient(EmptyReleasesJson));
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync(["fetch", "--limit", "20"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     private static HttpClient CreateMockHttpClient(string jsonResponse)

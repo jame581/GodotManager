@@ -31,7 +31,7 @@ public class ActivateDeactivateE2ETests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("activate", entry.Id.ToString());
+        var result = await app.RunAsync(["activate", entry.Id.ToString()]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -45,7 +45,7 @@ public class ActivateDeactivateE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
         await _fixture.Registry.SaveAsync(new InstallRegistry());
 
-        var result = await app.RunAsync("activate", Guid.NewGuid().ToString());
+        var result = await app.RunAsync(["activate", Guid.NewGuid().ToString()]);
 
         Assert.NotEqual(0, result.ExitCode);
     }
@@ -62,7 +62,7 @@ public class ActivateDeactivateE2ETests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("activate", entry.Id.ToString(), "--dry-run");
+        var result = await app.RunAsync(["activate", entry.Id.ToString(), "--dry-run"]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -83,7 +83,7 @@ public class ActivateDeactivateE2ETests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("deactivate");
+        var result = await app.RunAsync(["deactivate"]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -97,7 +97,7 @@ public class ActivateDeactivateE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
         await _fixture.Registry.SaveAsync(new InstallRegistry());
 
-        var result = await app.RunAsync("deactivate");
+        var result = await app.RunAsync(["deactivate"]);
 
         Assert.Equal(0, result.ExitCode);
     }

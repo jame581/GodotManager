@@ -26,7 +26,7 @@ public class RemoveCommandE2ETests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("remove", entry.Id.ToString());
+        var result = await app.RunAsync(["remove", entry.Id.ToString()]);
 
         Assert.Equal(0, result.ExitCode);
 
@@ -47,7 +47,7 @@ public class RemoveCommandE2ETests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("remove", entry.Id.ToString(), "--delete");
+        var result = await app.RunAsync(["remove", entry.Id.ToString(), "--delete"]);
 
         Assert.Equal(0, result.ExitCode);
         Assert.False(Directory.Exists(installPath));
@@ -59,7 +59,7 @@ public class RemoveCommandE2ETests : IDisposable
         var app = CliTestHarness.Create(_fixture);
         await _fixture.Registry.SaveAsync(new InstallRegistry());
 
-        var result = await app.RunAsync("remove", Guid.NewGuid().ToString());
+        var result = await app.RunAsync(["remove", Guid.NewGuid().ToString()]);
 
         Assert.NotEqual(0, result.ExitCode);
     }
@@ -76,7 +76,7 @@ public class RemoveCommandE2ETests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
-        var result = await app.RunAsync("remove", entry.Id.ToString(), "--dry-run");
+        var result = await app.RunAsync(["remove", entry.Id.ToString(), "--dry-run"]);
 
         Assert.Equal(0, result.ExitCode);
 

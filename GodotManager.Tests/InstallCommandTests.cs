@@ -1,7 +1,5 @@
 using GodotManager.Commands;
-using GodotManager.Config;
 using GodotManager.Domain;
-using GodotManager.Services;
 using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
@@ -29,25 +27,23 @@ public class InstallCommandTests : IDisposable
     public async Task ExecuteAsync_DryRun_ReturnsZero()
     {
         // Arrange
-        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
-        var urlBuilder = new GodotDownloadUrlBuilder();
-        var command = new InstallCommand(installer, urlBuilder);
+        var app = CliTestHarness.Create(_fixture);
 
-        var settings = new InstallCommand.Settings
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Url = "https://example.com/godot.zip",
-            DryRun = true
-        };
+        var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync([
+            "install",
+            "--version", "4.5.1",
+            "--edition", "Standard",
+            "--platform", platform,
+            "--scope", "User",
+            "--url", "https://example.com/godot.zip",
+            "--dry-run"
+        ]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -55,27 +51,22 @@ public class InstallCommandTests : IDisposable
     {
         // Arrange
         var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
-        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
-        var urlBuilder = new GodotDownloadUrlBuilder();
-        var command = new InstallCommand(installer, urlBuilder);
+        var app = CliTestHarness.Create(_fixture);
 
-        var settings = new InstallCommand.Settings
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            ArchivePath = mockArchive,
-            Activate = false,
-            Force = false,
-            DryRun = false
-        };
+        var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync([
+            "install",
+            "--version", "4.5.1",
+            "--edition", "Standard",
+            "--platform", platform,
+            "--scope", "User",
+            "--archive", mockArchive
+        ]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var registry = await _fixture.Registry.LoadAsync();
         Assert.Single(registry.Installs);
@@ -111,27 +102,22 @@ public class InstallCommandTests : IDisposable
         // Arrange
         var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
         var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive));
-        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
-        var urlBuilder = new GodotDownloadUrlBuilder();
-        var command = new InstallCommand(installer, urlBuilder);
+        var app = CliTestHarness.Create(_fixture, mockHttpClient);
 
-        var settings = new InstallCommand.Settings
-        {
-            Version = "4.5.1",
-            Edition = InstallEdition.Standard,
-            Platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
-            Scope = InstallScope.User,
-            Url = "http://test.com/godot.zip",
-            Activate = false,
-            Force = false,
-            DryRun = false
-        };
+        var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
 
         // Act
-        var result = await command.ExecuteAsync(null!, settings);
+        var result = await app.RunAsync([
+            "install",
+            "--version", "4.5.1",
+            "--edition", "Standard",
+            "--platform", platform,
+            "--scope", "User",
+            "--url", "http://test.com/godot.zip"
+        ]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var registry = await _fixture.Registry.LoadAsync();
         Assert.Single(registry.Installs);

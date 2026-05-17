@@ -18,7 +18,7 @@ internal sealed class TuiCommand : AsyncCommand<TuiCommand.Settings>
 
     internal sealed class Settings : GlobalSettings { }
 
-    public override Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         try
         {

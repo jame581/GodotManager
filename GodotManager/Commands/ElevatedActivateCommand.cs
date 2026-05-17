@@ -20,7 +20,7 @@ internal sealed class ElevatedActivateCommand : AsyncCommand<ElevatedActivateCom
         _environment = environment;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
         {

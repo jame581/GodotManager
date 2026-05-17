@@ -1,4 +1,3 @@
-using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
@@ -10,12 +9,10 @@ namespace GodotManager.Tests;
 public class ListCommandTests : IDisposable
 {
     private readonly GodmanTestFixture _fixture;
-    private readonly ListCommand _command;
 
     public ListCommandTests()
     {
         _fixture = new GodmanTestFixture();
-        _command = new ListCommand(_fixture.Registry);
     }
 
     [Fact]
@@ -25,11 +22,13 @@ public class ListCommandTests : IDisposable
         var registry = new InstallRegistry();
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
+        var result = await app.RunAsync(["list"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -51,11 +50,13 @@ public class ListCommandTests : IDisposable
         registry.Installs.Add(entry2);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
+        var result = await app.RunAsync(["list"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -72,11 +73,13 @@ public class ListCommandTests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
+        var result = await app.RunAsync(["list"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -93,11 +96,13 @@ public class ListCommandTests : IDisposable
         registry.Installs.Add(entry);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new ListCommand.Settings());
+        var result = await app.RunAsync(["list"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     public void Dispose()

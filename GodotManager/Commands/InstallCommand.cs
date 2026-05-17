@@ -18,7 +18,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         _urlBuilder = urlBuilder;
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         try
         {

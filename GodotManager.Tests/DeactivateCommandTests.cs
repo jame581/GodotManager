@@ -1,5 +1,3 @@
-using GodotManager.Commands;
-using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
@@ -12,12 +10,10 @@ namespace GodotManager.Tests;
 public class DeactivateCommandTests : IDisposable
 {
     private readonly GodmanTestFixture _fixture;
-    private readonly DeactivateCommand _command;
 
     public DeactivateCommandTests()
     {
         _fixture = new GodmanTestFixture();
-        _command = new DeactivateCommand(_fixture.Registry, _fixture.Environment);
     }
 
     [Fact]
@@ -34,11 +30,13 @@ public class DeactivateCommandTests : IDisposable
         registry.MarkActive(entry.Id);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
+        var result = await app.RunAsync(["deactivate"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
 
         var updatedRegistry = await _fixture.Registry.LoadAsync();
         Assert.Null(updatedRegistry.ActiveId);
@@ -56,11 +54,13 @@ public class DeactivateCommandTests : IDisposable
         // Don't mark as active
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        var result = await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
+        var result = await app.RunAsync(["deactivate"]);
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.Equal(0, result.ExitCode);
     }
 
     [Fact]
@@ -79,8 +79,10 @@ public class DeactivateCommandTests : IDisposable
         registry.MarkActive(entry1.Id);
         await _fixture.Registry.SaveAsync(registry);
 
+        var app = CliTestHarness.Create(_fixture);
+
         // Act
-        await _command.ExecuteAsync(null!, new DeactivateCommand.Settings());
+        await app.RunAsync(["deactivate"]);
 
         // Assert
         var updatedRegistry = await _fixture.Registry.LoadAsync();

@@ -16,7 +16,7 @@ internal sealed class ListCommand : AsyncCommand<ListCommand.Settings>
 
     internal sealed class Settings : GlobalSettings { }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var registry = await _registry.LoadAsync();
 

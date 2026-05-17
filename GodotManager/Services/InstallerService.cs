@@ -412,7 +412,7 @@ internal sealed class InstallerService
 
     private static async Task ExtractAsync(string archivePath, string destination, Action<double>? progress, CancellationToken cancellationToken)
     {
-        using var archive = ArchiveFactory.Open(archivePath);
+        using var archive = ArchiveFactory.OpenArchive(archivePath);
         var entries = archive.Entries.Where(e => !e.IsDirectory).ToList();
         var total = entries.Count;
         var processed = 0;

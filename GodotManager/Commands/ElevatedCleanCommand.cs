@@ -19,7 +19,7 @@ internal sealed class ElevatedCleanCommand : Command<ElevatedCleanCommand.Settin
         _paths = paths;
     }
 
-    public override int Execute(CommandContext context, Settings settings)
+    protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
         {

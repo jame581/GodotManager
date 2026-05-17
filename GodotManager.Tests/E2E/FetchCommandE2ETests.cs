@@ -46,7 +46,7 @@ public class FetchCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture, MockHttp());
 
-        var result = await app.RunAsync("fetch");
+        var result = await app.RunAsync(["fetch"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -56,7 +56,7 @@ public class FetchCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture, MockHttp());
 
-        var result = await app.RunAsync("fetch", "--stable");
+        var result = await app.RunAsync(["fetch", "--stable"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -66,7 +66,7 @@ public class FetchCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture, MockHttp());
 
-        var result = await app.RunAsync("fetch", "--filter", "4.5");
+        var result = await app.RunAsync(["fetch", "--filter", "4.5"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -76,7 +76,7 @@ public class FetchCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture, MockHttp());
 
-        var result = await app.RunAsync("fetch", "--limit", "1");
+        var result = await app.RunAsync(["fetch", "--limit", "1"]);
 
         Assert.Equal(0, result.ExitCode);
     }
@@ -86,7 +86,7 @@ public class FetchCommandE2ETests : IDisposable
     {
         var app = CliTestHarness.Create(_fixture, MockHttp());
 
-        var result = await app.RunAsync("fetch", "--no-cache");
+        var result = await app.RunAsync(["fetch", "--no-cache"]);
 
         Assert.Equal(0, result.ExitCode);
     }
