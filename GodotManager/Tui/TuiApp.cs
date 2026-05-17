@@ -301,8 +301,12 @@ internal sealed class TuiApp
         var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _app!);
         dialog.PresetVersion(release.Version);
         _app!.Run(dialog);
+        var installed = dialog.Success;
         dialog.Dispose();
-        _ = RefreshRegistryAsync(_app!);
+        if (installed)
+        {
+            _ = RefreshRegistryAsync(_app!);
+        }
         RestoreBrowseFocusIfNeeded();
     }
 
@@ -463,9 +467,13 @@ internal sealed class TuiApp
     {
         var dialog = new InstallDialog(_installer, _urlBuilder, _paths, app);
         app.Run(dialog);
+        var installed = dialog.Success;
         dialog.Dispose();
-        _ = RefreshRegistryAsync(app);
-        SetStatus("Install complete");
+        if (installed)
+        {
+            _ = RefreshRegistryAsync(app);
+            SetStatus("Install complete");
+        }
         RestoreBrowseFocusIfNeeded();
     }
 

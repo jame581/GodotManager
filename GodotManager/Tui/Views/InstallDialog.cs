@@ -25,6 +25,12 @@ internal sealed class InstallDialog : Dialog
 
     private bool _installing;
 
+    /// <summary>
+    /// True only after an install completed successfully. Stays false if the
+    /// user cancelled, closed the dialog with Esc, or the install threw.
+    /// </summary>
+    public bool Success { get; private set; }
+
     public InstallDialog(
         InstallerService installer,
         GodotDownloadUrlBuilder urlBuilder,
@@ -155,6 +161,7 @@ internal sealed class InstallDialog : Dialog
 
             _app.Invoke(() =>
             {
+                Success = true;
                 _statusLabel.Text = "Install complete!";
                 MessageBox.Query(_app, "Success", $"Installed Godot {version} ({edition})", "OK");
                 RequestStop();
