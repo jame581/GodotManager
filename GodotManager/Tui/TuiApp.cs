@@ -175,17 +175,38 @@ internal sealed class TuiApp
         }
         else if (key == Key.A)
         {
-            _ = ActivateSelectedAsync(app);
+            if (IsBrowseFocused())
+            {
+                SetStatus("Switch to Installs (Tab) to activate");
+            }
+            else
+            {
+                _ = ActivateSelectedAsync(app);
+            }
             key.Handled = true;
         }
         else if (key == Key.D)
         {
-            _ = DeactivateAsync(app);
+            if (IsBrowseFocused())
+            {
+                SetStatus("Switch to Installs (Tab) to deactivate");
+            }
+            else
+            {
+                _ = DeactivateAsync(app);
+            }
             key.Handled = true;
         }
         else if (key == Key.R)
         {
-            _ = RemoveSelectedAsync(app);
+            if (IsBrowseFocused())
+            {
+                SetStatus("Switch to Installs (Tab) to remove");
+            }
+            else
+            {
+                _ = RemoveSelectedAsync(app);
+            }
             key.Handled = true;
         }
         else if (key.AsRune.Value == '?')
@@ -221,6 +242,8 @@ internal sealed class TuiApp
             _leftFrame.SetFocus();
         }
     }
+
+    private bool IsBrowseFocused() => _browseView?.HasFocus ?? false;
 
     private void EnterBrowseMode(IApplication app)
     {
