@@ -549,6 +549,16 @@ public class DownloadServiceTests : IDisposable
     }
 
     [Fact]
+    public void ChecksumStatus_DefaultsToUnverified()
+    {
+        // Task 6 persists this to the registry, so the enum's default is what a
+        // pre-1.3.0 entry or an unbindable JSON property deserializes to. Declaring
+        // Verified first would make that default "verified" — failing open on a
+        // security-relevant field. Reordering the members fails here.
+        Assert.Equal(ChecksumStatus.Unverified, default(ChecksumStatus));
+    }
+
+    [Fact]
     public void ParseSums_FindsMatchingFileNameAndIgnoresOthers()
     {
         var content =

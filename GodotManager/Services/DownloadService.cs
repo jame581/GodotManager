@@ -8,10 +8,16 @@ using System.Text.Json;
 
 namespace GodotManager.Services;
 
+/// <summary>
+/// Unverified is explicitly zero so it is the default. This field is
+/// security-relevant and reaches the persisted registry, where a pre-1.3.0 entry
+/// or a property that fails to bind deserializes to the enum's default: that must
+/// fail closed, never read back as though a checksum had been confirmed.
+/// </summary>
 internal enum ChecksumStatus
 {
-    Verified,
-    Unverified
+    Unverified = 0,
+    Verified = 1
 }
 
 /// <param name="ArchiveName">Pre-redirect name. Drives install-folder naming; must match pre-1.3.0 behaviour.</param>
@@ -373,16 +379,14 @@ internal sealed class DownloadService
             {
                 var httpReason = $"could not fetch {sumsUri} (HTTP {(int)response.StatusCode})";
 
-                if (response.StatusCode == HttpStatusCode.NotFound)
-                {
-                    // Not an anomaly: this release simply publishes no sums.
-                    _diagnostics?.Warn(
-                        $"No checksums published for {source.Version}-{source.Flavor}; skipping verification.");
-                }
-                else
-                {
-                    DiagnosticContext.WarnAlways($"Could not verify this download: {httpReason}");
-                }
+                // Verbose-only, like every diagnostic below. This service runs
+                // in-process under Terminal.Gui during a TUI install, so writing to
+                // AnsiConsole unconditionally would paint raw ANSI over a screen it
+                // does not own. The reason travels back on DownloadOutcome instead,
+                // and the caller decides how to render it.
+                _diagnostics?.Warn(response.StatusCode == HttpStatusCode.NotFound
+                    ? $"No checksums published for {source.Version}-{source.Flavor}; skipping verification."
+                    : $"Could not verify this download: {httpReason}");
 
                 return (ChecksumStatus.Unverified, httpReason);
             }
@@ -393,7 +397,7 @@ internal sealed class DownloadService
                                    && !cancellationToken.IsCancellationRequested)
         {
             var reason = $"could not fetch {sumsUri}: {ex.Message}";
-            DiagnosticContext.WarnAlways($"Could not verify this download: {reason}");
+            _diagnostics?.Warn($"Could not verify this download: {reason}");
             return (ChecksumStatus.Unverified, reason);
         }
 
@@ -401,9 +405,10 @@ internal sealed class DownloadService
         if (expected is null)
         {
             // Sums exist but do not cover this asset. Verification was attempted and
-            // could not be completed, which the user should hear about unprompted.
+            // could not be completed; the reason rides back on DownloadOutcome for
+            // the caller to surface.
             var reason = $"{resolvedFileName} is not listed in {sumsUri}";
-            DiagnosticContext.WarnAlways($"Could not verify this download: {reason}");
+            _diagnostics?.Warn($"Could not verify this download: {reason}");
             return (ChecksumStatus.Unverified, reason);
         }
 
