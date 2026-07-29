@@ -1,0 +1,368 @@
+using GodotManager.Config;
+using GodotManager.Infrastructure;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+namespace GodotManager.Services;
+
+internal enum ChecksumStatus
+{
+    Verified,
+    Unverified
+}
+
+/// <param name="ArchiveName">Pre-redirect name. Drives install-folder naming; must match pre-1.3.0 behaviour.</param>
+/// <param name="ResolvedFileName">Post-redirect name. The SHA512-SUMS.txt lookup key.</param>
+internal sealed record DownloadOutcome(
+    string FilePath,
+    string ArchiveName,
+    string ResolvedFileName,
+    string Sha512,
+    ChecksumStatus Status,
+    string? UnverifiedReason);
+
+/// <summary>A failure worth retrying: a network blip, or a server status suggesting a later attempt.</summary>
+internal sealed class TransientDownloadException : Exception
+{
+    public TransientDownloadException(string message, Exception? inner = null)
+        : base(message, inner) { }
+}
+
+/// <summary>
+/// Sidecar describing an in-flight transfer. It exists only so a partial download
+/// can be resumed by a later process, and is deleted the moment the transfer ends.
+/// </summary>
+internal sealed class DownloadCacheMeta
+{
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>Read back on resume, where the 206 may carry no Content-Disposition to re-derive it from.</summary>
+    public string ArchiveName { get; set; } = string.Empty;
+
+    public string? ETag { get; set; }
+}
+
+internal sealed class DownloadService
+{
+    /// <summary>
+    /// Delays BETWEEN attempts, so N entries means N+1 attempts. These two
+    /// entries therefore allow three attempts in total.
+    /// </summary>
+    private static readonly TimeSpan[] DefaultBackoff =
+    [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2)
+    ];
+
+    private const int BufferSize = 81920;
+
+    private readonly AppPaths _paths;
+    private readonly HttpClient _httpClient;
+    private readonly DiagnosticContext? _diagnostics;
+    private readonly TimeSpan[] _backoff;
+
+    public DownloadService(
+        AppPaths paths,
+        HttpClient? httpClient = null,
+        DiagnosticContext? diagnostics = null,
+        TimeSpan[]? backoff = null)
+    {
+        _paths = paths;
+        _httpClient = httpClient ?? new HttpClient();
+        _diagnostics = diagnostics;
+        _backoff = backoff ?? DefaultBackoff;
+    }
+
+    /// <summary>Stable cache key for a URI: first 16 hex chars of its SHA-256.</summary>
+    internal static string ComputeCacheKey(Uri uri) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(uri.AbsoluteUri)))[..16];
+
+    public async Task<DownloadOutcome> DownloadAsync(
+        Uri uri,
+        Action<double>? progress,
+        CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(_paths.DownloadCacheDirectory);
+
+        var key = ComputeCacheKey(uri);
+        var partPath = Path.Combine(_paths.DownloadCacheDirectory, key + ".part");
+        var metaPath = Path.Combine(_paths.DownloadCacheDirectory, key + ".json");
+        var archivePath = Path.Combine(_paths.DownloadCacheDirectory, key + ".archive");
+
+        // A completed archive can survive a download that succeeded but whose install
+        // then failed. This run has not established its provenance, so discard it
+        // rather than reuse it. This is not a content cache.
+        TryDelete(archivePath);
+
+        var meta = LoadMeta(metaPath, uri);
+        if (meta is null)
+        {
+            // No usable sidecar: bytes on disk cannot be safely resumed, because
+            // there is no ETag to guard the Range request with.
+            TryDelete(partPath);
+            TryDelete(metaPath);
+            meta = new DownloadCacheMeta { Url = uri.AbsoluteUri };
+        }
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var (archiveName, resolvedFileName, sha512) =
+                    await TransferAsync(uri, partPath, metaPath, meta, progress, cancellationToken);
+
+                // The sidecar describes an in-flight transfer; it is meaningless now.
+                TryDelete(metaPath);
+                File.Move(partPath, archivePath, overwrite: true);
+
+                return new DownloadOutcome(
+                    archivePath,
+                    archiveName,
+                    resolvedFileName,
+                    sha512,
+                    ChecksumStatus.Unverified,
+                    "no published checksums for this source");
+            }
+            catch (Exception ex) when (IsRetryable(ex, cancellationToken) && attempt < _backoff.Length)
+            {
+                _diagnostics?.Warn($"Download attempt {attempt + 1} failed ({ex.Message}); retrying.");
+                await Task.Delay(_backoff[attempt], cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>Best-effort removal of a completed cache entry.</summary>
+    public void DeleteCacheEntry(string archiveFilePath)
+    {
+        try
+        {
+            var key = Path.GetFileNameWithoutExtension(archiveFilePath);
+            TryDelete(archiveFilePath);
+            TryDelete(Path.Combine(_paths.DownloadCacheDirectory, key + ".json"));
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Failed to clean download cache entry: {ex.Message}");
+        }
+    }
+
+    private static bool IsRetryable(Exception ex, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        return ex is TransientDownloadException
+            or HttpRequestException
+            or TaskCanceledException
+            or IOException;
+    }
+
+    private async Task<(string ArchiveName, string ResolvedFileName, string Sha512)> TransferAsync(
+        Uri uri,
+        string partPath,
+        string metaPath,
+        DownloadCacheMeta meta,
+        Action<double>? progress,
+        CancellationToken cancellationToken)
+    {
+        var existing = File.Exists(partPath) ? new FileInfo(partPath).Length : 0L;
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (existing > 0)
+        {
+            // A single unbounded range: everything from the first byte we lack.
+            request.Headers.Range = new RangeHeaderValue(existing, null);
+
+            if (!string.IsNullOrEmpty(meta.ETag)
+                && EntityTagHeaderValue.TryParse(meta.ETag, out var validator))
+            {
+                request.Headers.IfRange = new RangeConditionHeaderValue(validator);
+            }
+        }
+
+        using var response = await _httpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+        {
+            TryDelete(partPath);
+            throw new TransientDownloadException("Cached partial download was stale; restarting.");
+        }
+
+        var status = (int)response.StatusCode;
+        if (status is 408 or 429 || status >= 500)
+        {
+            throw new TransientDownloadException($"Server returned HTTP {status}.");
+        }
+
+        // Deliberately NOT EnsureSuccessStatusCode(): it raises HttpRequestException,
+        // which IsRetryable accepts, so a 404 would burn every attempt.
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new GodmanException(
+                $"Download failed: HTTP {status} for {uri}",
+                "Check the version number, and that this edition and platform exist for it upstream.");
+        }
+
+        // Both conditions matter. A 200 means the server ignored Range (or If-Range
+        // failed), so the bytes on disk are worthless. An unsolicited 206 with nothing
+        // on disk would open a nonexistent file for FileMode.Open, raising a
+        // FileNotFoundException that IsRetryable treats as transient.
+        var append = response.StatusCode == HttpStatusCode.PartialContent && existing > 0;
+        if (!append)
+        {
+            existing = 0;
+        }
+
+        var contentDispositionName = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
+            ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"');
+
+        // Pre-1.3.0 resolution, preserved exactly so install folder names don't change.
+        // On a resumed transfer the 206 need not repeat Content-Disposition, so the name
+        // recorded when the transfer started is what keeps the folder name stable.
+        var archiveName = contentDispositionName
+            ?? (append && !string.IsNullOrWhiteSpace(meta.ArchiveName) ? meta.ArchiveName : null)
+            ?? Path.GetFileName(uri.LocalPath);
+
+        // Post-redirect name: what SHA512-SUMS.txt actually lists.
+        var resolvedFileName = contentDispositionName
+            ?? Path.GetFileName(response.RequestMessage?.RequestUri?.LocalPath ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(resolvedFileName))
+        {
+            resolvedFileName = archiveName;
+        }
+
+        var remaining = response.Content.Headers.ContentLength ?? -1;
+        var total = remaining > 0 ? existing + remaining : -1;
+
+        meta.Url = uri.AbsoluteUri;
+        meta.ArchiveName = archiveName;
+        // ToString() rather than Tag, so a weak validator stays marked weak and a
+        // later If-Range built from it can only fail closed (a full 200), never
+        // masquerade as the strong comparison If-Range requires. A validator kept
+        // from an earlier response is likewise never cleared: at worst it is stale
+        // and costs one restart, whereas dropping it would leave the next resume
+        // unguarded.
+        meta.ETag = response.Headers.ETag?.ToString() ?? meta.ETag;
+        SaveMeta(metaPath, meta);
+
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA512);
+
+        // Hash state cannot survive a process boundary, so rebuild it from the bytes
+        // already on disk. This runs on every entry, including in-process retries,
+        // rather than maintaining two code paths for one operation. The read handle
+        // is opened and disposed before the write handle below, so there is no
+        // FileShare.None conflict.
+        if (append)
+        {
+            await RehashAsync(partPath, existing, hasher, cancellationToken);
+        }
+
+        await using (var file = new FileStream(
+            partPath,
+            append ? FileMode.Open : FileMode.Create,
+            FileAccess.Write,
+            FileShare.None))
+        {
+            if (append)
+            {
+                file.Seek(0, SeekOrigin.End);
+            }
+
+            await using var network = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var buffer = new byte[BufferSize];
+            var read = existing;
+            int r;
+
+            while ((r = await network.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+            {
+                await file.WriteAsync(buffer.AsMemory(0, r), cancellationToken);
+                hasher.AppendData(buffer, 0, r);
+                read += r;
+
+                if (total > 0)
+                {
+                    progress?.Invoke((double)read / total * 100d);
+                }
+            }
+        }
+
+        progress?.Invoke(100d);
+        return (archiveName, resolvedFileName, Convert.ToHexStringLower(hasher.GetHashAndReset()));
+    }
+
+    private static async Task RehashAsync(
+        string path, long length, IncrementalHash hasher, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        var buffer = new byte[BufferSize];
+        long done = 0;
+
+        while (done < length)
+        {
+            var want = (int)Math.Min(buffer.Length, length - done);
+            var r = await stream.ReadAsync(buffer.AsMemory(0, want), cancellationToken);
+            if (r <= 0)
+            {
+                break;
+            }
+
+            hasher.AppendData(buffer, 0, r);
+            done += r;
+        }
+    }
+
+    /// <summary>Returns null when no usable sidecar exists for this URI.</summary>
+    private DownloadCacheMeta? LoadMeta(string metaPath, Uri uri)
+    {
+        try
+        {
+            if (!File.Exists(metaPath))
+            {
+                return null;
+            }
+
+            var loaded = JsonSerializer.Deserialize<DownloadCacheMeta>(File.ReadAllText(metaPath));
+            return loaded is not null && string.Equals(loaded.Url, uri.AbsoluteUri, StringComparison.Ordinal)
+                ? loaded
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Ignoring unreadable download metadata at {metaPath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void SaveMeta(string metaPath, DownloadCacheMeta meta)
+    {
+        try
+        {
+            File.WriteAllText(metaPath, JsonSerializer.Serialize(meta));
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Failed to write download metadata to {metaPath}: {ex.Message}");
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cache maintenance.
+        }
+    }
+}
