@@ -24,6 +24,12 @@ internal sealed record DownloadOutcome(
     ChecksumStatus Status,
     string? UnverifiedReason);
 
+/// <summary>
+/// Identifies an upstream release whose published checksums can be fetched.
+/// Supplied only for auto-built download URLs.
+/// </summary>
+internal sealed record ChecksumSource(string Version, string Flavor = "stable");
+
 /// <summary>A failure worth retrying: a network blip, or a server status suggesting a later attempt.</summary>
 internal sealed class TransientDownloadException : Exception
 {
@@ -41,6 +47,15 @@ internal sealed class DownloadCacheMeta
 
     /// <summary>Read back on resume, where the 206 may carry no Content-Disposition to re-derive it from.</summary>
     public string ArchiveName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The SHA512-SUMS.txt lookup key resolved on the leg that started the transfer.
+    /// Kept for the same reason as <see cref="ArchiveName"/>, and one more: without
+    /// Content-Disposition this name comes from the response's post-redirect URI, so a
+    /// transfer resumed against a different mirror would otherwise key the lookup on
+    /// that mirror's URI and silently drop to Unverified.
+    /// </summary>
+    public string ResolvedFileName { get; set; } = string.Empty;
 
     public string? ETag { get; set; }
 }
@@ -82,6 +97,7 @@ internal sealed class DownloadService
 
     public async Task<DownloadOutcome> DownloadAsync(
         Uri uri,
+        ChecksumSource? checksums,
         Action<double>? progress,
         CancellationToken cancellationToken = default)
     {
@@ -114,17 +130,25 @@ internal sealed class DownloadService
                 var (archiveName, resolvedFileName, sha512) =
                     await TransferAsync(uri, partPath, metaPath, meta, progress, cancellationToken);
 
+                // Verify before promoting the .part to an archive, so a bad payload
+                // never exists under the name the rest of the install trusts.
+                var (status, reason) = await VerifyAsync(sha512, resolvedFileName, checksums, cancellationToken);
+
                 // The sidecar describes an in-flight transfer; it is meaningless now.
                 TryDelete(metaPath);
                 File.Move(partPath, archivePath, overwrite: true);
 
-                return new DownloadOutcome(
-                    archivePath,
-                    archiveName,
-                    resolvedFileName,
-                    sha512,
-                    ChecksumStatus.Unverified,
-                    "no published checksums for this source");
+                return new DownloadOutcome(archivePath, archiveName, resolvedFileName, sha512, status, reason);
+            }
+            catch (ChecksumMismatchException)
+            {
+                // Deleting the partial is the point: leaving it would have the next
+                // run resume the same bad bytes and fail identically forever. Sitting
+                // above the retry catch also keeps a mismatch unretryable no matter
+                // what IsRetryable grows to accept.
+                TryDelete(partPath);
+                TryDelete(metaPath);
+                throw;
             }
             catch (Exception ex) when (IsRetryable(ex, cancellationToken) && attempt < _backoff.Length)
             {
@@ -239,8 +263,12 @@ internal sealed class DownloadService
             ?? (append && !string.IsNullOrWhiteSpace(meta.ArchiveName) ? meta.ArchiveName : null)
             ?? Path.GetFileName(uri.LocalPath);
 
-        // Post-redirect name: what SHA512-SUMS.txt actually lists.
+        // Post-redirect name: what SHA512-SUMS.txt actually lists. As with ArchiveName,
+        // the name recorded when the transfer started wins on a resumed leg: the URI
+        // fallback below reflects wherever this particular response was served from,
+        // which need not be the mirror the first leg redirected to.
         var resolvedFileName = contentDispositionName
+            ?? (append && !string.IsNullOrWhiteSpace(meta.ResolvedFileName) ? meta.ResolvedFileName : null)
             ?? Path.GetFileName(response.RequestMessage?.RequestUri?.LocalPath ?? string.Empty);
         if (string.IsNullOrWhiteSpace(resolvedFileName))
         {
@@ -252,6 +280,7 @@ internal sealed class DownloadService
 
         meta.Url = uri.AbsoluteUri;
         meta.ArchiveName = archiveName;
+        meta.ResolvedFileName = resolvedFileName;
         // ToString() rather than Tag, so a weak validator stays marked weak and a
         // later If-Range built from it can only fail closed (a full 200), never
         // masquerade as the strong comparison If-Range requires. A validator kept
@@ -309,6 +338,111 @@ internal sealed class DownloadService
 
         progress?.Invoke(100d);
         return (archiveName, resolvedFileName, Convert.ToHexStringLower(hasher.GetHashAndReset()));
+    }
+
+    /// <summary>
+    /// Compares the transferred payload against the release's published SHA512-SUMS.txt.
+    /// Verify-when-available: a mismatch throws, but an absent or unusable sums file
+    /// only downgrades the outcome to Unverified with a reason.
+    /// </summary>
+    private async Task<(ChecksumStatus Status, string? Reason)> VerifyAsync(
+        string sha512,
+        string resolvedFileName,
+        ChecksumSource? source,
+        CancellationToken cancellationToken)
+    {
+        if (source is null)
+        {
+            // Nothing was attempted and nothing is wrong: a custom URL or a local
+            // archive has no upstream sums to check against. No warning belongs here.
+            return (ChecksumStatus.Unverified, "no published checksums for this source (custom URL or local archive)");
+        }
+
+        var sumsUri = new Uri(
+            $"https://github.com/godotengine/godot-builds/releases/download/{source.Version}-{source.Flavor}/SHA512-SUMS.txt");
+
+        string content;
+        try
+        {
+            // One attempt, deliberately, and outside the transfer's retry loop: a
+            // release that publishes no sums answers 404, and that is the common,
+            // expected case. Retrying it would add the full backoff to every such
+            // install for no benefit.
+            using var response = await _httpClient.GetAsync(sumsUri, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var httpReason = $"could not fetch {sumsUri} (HTTP {(int)response.StatusCode})";
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // Not an anomaly: this release simply publishes no sums.
+                    _diagnostics?.Warn(
+                        $"No checksums published for {source.Version}-{source.Flavor}; skipping verification.");
+                }
+                else
+                {
+                    DiagnosticContext.WarnAlways($"Could not verify this download: {httpReason}");
+                }
+
+                return (ChecksumStatus.Unverified, httpReason);
+            }
+
+            content = await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException
+                                   && !cancellationToken.IsCancellationRequested)
+        {
+            var reason = $"could not fetch {sumsUri}: {ex.Message}";
+            DiagnosticContext.WarnAlways($"Could not verify this download: {reason}");
+            return (ChecksumStatus.Unverified, reason);
+        }
+
+        var expected = ParseSums(content, resolvedFileName);
+        if (expected is null)
+        {
+            // Sums exist but do not cover this asset. Verification was attempted and
+            // could not be completed, which the user should hear about unprompted.
+            var reason = $"{resolvedFileName} is not listed in {sumsUri}";
+            DiagnosticContext.WarnAlways($"Could not verify this download: {reason}");
+            return (ChecksumStatus.Unverified, reason);
+        }
+
+        if (!string.Equals(expected, sha512, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ChecksumMismatchException(resolvedFileName, expected, sha512, sumsUri);
+        }
+
+        return (ChecksumStatus.Verified, null);
+    }
+
+    /// <summary>
+    /// Parses sha512sum-format content, returning the hash for the given file name
+    /// or null when absent.
+    /// </summary>
+    internal static string? ParseSums(string content, string fileName)
+    {
+        foreach (var rawLine in content.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var separator = line.IndexOf(' ');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var name = line[separator..].TrimStart(' ', '*');
+            if (string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return line[..separator];
+            }
+        }
+
+        return null;
     }
 
     private static async Task RehashAsync(

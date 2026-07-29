@@ -52,7 +52,8 @@ public class DownloadServiceTests : IDisposable
         int bytes,
         string archiveName = "Godot_v4.5.1-stable_linux.x86_64.zip",
         string? etag = null,
-        bool staleContent = false)
+        bool staleContent = false,
+        string? resolvedFileName = null)
     {
         // staleContent seeds bytes that are NOT a prefix of Payload, standing in for
         // a partial captured from a different version of the resource. Appending to
@@ -63,9 +64,12 @@ public class DownloadServiceTests : IDisposable
 
         await File.WriteAllBytesAsync(CacheFile(".part"), partial);
         var etagJson = etag is null ? "null" : JsonSerializer.Serialize(etag);
+        var resolvedJson = resolvedFileName is null ? "null" : JsonSerializer.Serialize(resolvedFileName);
         await File.WriteAllTextAsync(
             CacheFile(".json"),
-            $$"""{"Url":"{{TestUri.AbsoluteUri}}","ArchiveName":"{{archiveName}}","ETag":{{etagJson}}}""");
+            $$"""
+            {"Url":"{{TestUri.AbsoluteUri}}","ArchiveName":"{{archiveName}}","ResolvedFileName":{{resolvedJson}},"ETag":{{etagJson}}}
+            """);
     }
 
     [Fact]
@@ -73,7 +77,7 @@ public class DownloadServiceTests : IDisposable
     {
         var service = CreateService(new MockRangeHttpHandler(Payload, fileName: "Godot_v4.5.1-stable_linux.x86_64.zip"));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal("Godot_v4.5.1-stable_linux.x86_64.zip", outcome.ArchiveName);
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -90,7 +94,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload);
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal("bytes=50000-", handler.ReceivedRangeHeaders.Single());
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -106,7 +110,7 @@ public class DownloadServiceTests : IDisposable
         await SeedPartialAsync(50_000);
         var service = CreateService(new MockRangeHttpHandler(Payload));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal(Convert.ToHexStringLower(SHA512.HashData(Payload)), outcome.Sha512);
     }
@@ -122,7 +126,7 @@ public class DownloadServiceTests : IDisposable
         await SeedPartialAsync(50_000, archiveName: "Godot_v4.5.1-stable_mono_linux_x86_64.zip");
         var service = CreateService(new MockRangeHttpHandler(Payload));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal("Godot_v4.5.1-stable_mono_linux_x86_64.zip", outcome.ArchiveName);
     }
@@ -134,7 +138,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload, etag: "\"v1\"");
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         // A malformed If-Range would make the mock answer 200 instead of 206.
         Assert.Equal("bytes=50000-", handler.ReceivedRangeHeaders.Single());
@@ -152,7 +156,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload, etag: "\"new\"");
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal("bytes=50000-", handler.ReceivedRangeHeaders.Single());
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -172,7 +176,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload, misalignedRangeStart: 0);
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal("bytes=50000-", handler.ReceivedRangeHeaders.Single());
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -185,7 +189,7 @@ public class DownloadServiceTests : IDisposable
         await SeedPartialAsync(50_000, staleContent: true);
         var service = CreateService(new MockRangeHttpHandler(Payload, honorRange: false));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         // Not 250_000 bytes: the stale partial must be discarded, not appended to.
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -202,7 +206,7 @@ public class DownloadServiceTests : IDisposable
 
         var service = CreateService(new MockRangeHttpHandler(Payload));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
     }
@@ -216,7 +220,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload);
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Null(handler.ReceivedRangeHeaders.Single());
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -233,7 +237,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new MockRangeHttpHandler(Payload);
         var service = CreateService(handler);
 
-        await service.DownloadAsync(TestUri, progress: null);
+        await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Null(handler.ReceivedRangeHeaders.Single());
     }
@@ -259,7 +263,7 @@ public class DownloadServiceTests : IDisposable
 
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal(1, handler.CallCount);
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -280,7 +284,7 @@ public class DownloadServiceTests : IDisposable
 
         var service = CreateService(handler);
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal(3, handler.CallCount);
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
@@ -295,7 +299,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
         var service = CreateService(handler);
 
-        await Assert.ThrowsAsync<TransientDownloadException>(() => service.DownloadAsync(TestUri, progress: null));
+        await Assert.ThrowsAsync<TransientDownloadException>(() => service.DownloadAsync(TestUri, checksums: null, progress: null));
 
         Assert.Equal(3, handler.CallCount);
     }
@@ -308,7 +312,7 @@ public class DownloadServiceTests : IDisposable
         var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
         var service = CreateService(handler);
 
-        await Assert.ThrowsAsync<GodmanException>(() => service.DownloadAsync(TestUri, progress: null));
+        await Assert.ThrowsAsync<GodmanException>(() => service.DownloadAsync(TestUri, checksums: null, progress: null));
 
         Assert.Equal(1, handler.CallCount);
     }
@@ -320,7 +324,7 @@ public class DownloadServiceTests : IDisposable
         var service = CreateService(new MockRangeHttpHandler(Payload));
         var reported = new List<double>();
 
-        await service.DownloadAsync(TestUri, reported.Add);
+        await service.DownloadAsync(TestUri, checksums: null, progress: reported.Add);
 
         // Multiple reads happen, so an implementation that counted only newly
         // received bytes would report values well below 50 early on.
@@ -337,7 +341,7 @@ public class DownloadServiceTests : IDisposable
         await File.WriteAllTextAsync(CacheFile(".archive"), "stale content from a failed install");
         var service = CreateService(new MockRangeHttpHandler(Payload));
 
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
     }
@@ -351,16 +355,217 @@ public class DownloadServiceTests : IDisposable
         await File.WriteAllTextAsync(CacheFile(".archive"), "stale content from a failed install");
         var service = CreateService(new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
 
-        await Assert.ThrowsAsync<GodmanException>(() => service.DownloadAsync(TestUri, progress: null));
+        await Assert.ThrowsAsync<GodmanException>(() => service.DownloadAsync(TestUri, checksums: null, progress: null));
 
         Assert.False(File.Exists(CacheFile(".archive")));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithMatchingSums_ReportsVerified()
+    {
+        var handler = new MockSumsHttpHandler(Payload, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt");
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal(ChecksumStatus.Verified, outcome.Status);
+        Assert.Null(outcome.UnverifiedReason);
+        Assert.Equal(1, handler.SumsRequestCount);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_AfterResume_StillVerifies()
+    {
+        // The one place resume and verification meet. The hash handed to the
+        // comparison has to be rebuilt from the 50 KB already on disk plus the
+        // 206 tail; if the rehash is skipped or mis-sized the digest covers the
+        // wrong bytes and this fails as a ChecksumMismatchException. The Range
+        // assertion is what keeps the test honest about actually resuming —
+        // a restart from zero would verify just fine and say nothing.
+        await SeedPartialAsync(50_000);
+        var handler = new MockSumsHttpHandler(Payload, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt");
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal("bytes=50000-", handler.ReceivedArchiveRangeHeaders.Single());
+        Assert.Equal(ChecksumStatus.Verified, outcome.Status);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithMismatchedSums_ThrowsAndLeavesNothingBehind()
+    {
+        var handler = new MockSumsHttpHandler(
+            Payload, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt", overrideHash: new string('a', 128));
+        var service = CreateService(handler);
+
+        await Assert.ThrowsAsync<ChecksumMismatchException>(
+            () => service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null));
+
+        // Nothing survives: a retained .part would be resumed by the next run and
+        // fail the same way forever, and a retained .archive would be a bad archive
+        // sitting in the cache.
+        Assert.Empty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenSumsFetchFails_ReportsUnverifiedButKeepsDownload()
+    {
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            return ok;
+        });
+
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.NotNull(outcome.UnverifiedReason);
+        Assert.True(File.Exists(outcome.FilePath));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_FetchesSumsOnceFromThePublishedUrl()
+    {
+        // A version with no published sums answers 404, which is the normal path,
+        // so the sums fetch must sit outside the retry loop: three attempts plus
+        // the full backoff on every such install would be pure delay. The URL is
+        // asserted exactly because a typo there degrades every install to
+        // Unverified without failing anything.
+        var sumsUris = new List<Uri>();
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                sumsUris.Add(req.RequestUri);
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            return ok;
+        });
+
+        var service = CreateService(handler);
+
+        await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal(
+            "https://github.com/godotengine/godot-builds/releases/download/4.5.1-stable/SHA512-SUMS.txt",
+            Assert.Single(sumsUris).AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenArchiveIsNotListedInSums_ReportsUnverified()
+    {
+        // The sums file exists but lists only other assets: verification was
+        // attempted and could not be completed, which is not the same as a mismatch,
+        // so the download survives instead of being deleted.
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{new string('a', 128)}  some-other-asset.zip\n")
+                };
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            ok.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = "Godot_v4.5.1-stable_linux.x86_64.zip" };
+            return ok;
+        });
+
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.NotNull(outcome.UnverifiedReason);
+        Assert.True(File.Exists(outcome.FilePath));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_OnResumeWithoutContentDisposition_LooksUpTheRecordedResolvedName()
+    {
+        // The lookup key is the post-redirect file name, which is derived from the
+        // response's final request URI when no Content-Disposition is present. A
+        // transfer interrupted against one mirror and resumed against another would
+        // otherwise key the lookup on the second mirror's URI and silently drop to
+        // Unverified, so the name resolved on the first leg is kept in the sidecar.
+        await SeedPartialAsync(50_000, resolvedFileName: "Godot_v4.5.1-stable_linux.x86_64.zip");
+
+        var sums = $"{Convert.ToHexStringLower(SHA512.HashData(Payload))}  Godot_v4.5.1-stable_linux.x86_64.zip\n";
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(sums) };
+            }
+
+            // A different mirror: no Content-Disposition, and a final URI whose file
+            // name is a CDN blob id rather than the asset name.
+            var from = (int)req.Headers.Range!.Ranges.Single().From!.Value;
+            var slice = Payload.Skip(from).ToArray();
+            var partial = new HttpResponseMessage(HttpStatusCode.PartialContent)
+            {
+                Content = new ByteArrayContent(slice),
+                RequestMessage = new HttpRequestMessage(
+                    HttpMethod.Get, new Uri("https://mirror-b.invalid/objects/9f2c1ab4"))
+            };
+            partial.Content.Headers.ContentLength = slice.Length;
+            partial.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, Payload.Length - 1, Payload.Length);
+            return partial;
+        });
+
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal("Godot_v4.5.1-stable_linux.x86_64.zip", outcome.ResolvedFileName);
+        Assert.Equal(ChecksumStatus.Verified, outcome.Status);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithNullChecksumSource_MakesNoSumsRequest()
+    {
+        var handler = new MockSumsHttpHandler(Payload, "x.zip", "SHA512-SUMS.txt");
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
+
+        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.Equal(0, handler.SumsRequestCount);
+    }
+
+    [Fact]
+    public void ParseSums_FindsMatchingFileNameAndIgnoresOthers()
+    {
+        var content =
+            "aaa  other-file.zip\n" +
+            "bbb  Godot_v4.5.1-stable_linux.x86_64.zip\n" +
+            "\n" +
+            "ccc  third.zip\n";
+
+        Assert.Equal("bbb", DownloadService.ParseSums(content, "Godot_v4.5.1-stable_linux.x86_64.zip"));
+        Assert.Null(DownloadService.ParseSums(content, "absent.zip"));
     }
 
     [Fact]
     public async Task DeleteCacheEntry_RemovesTheArchive()
     {
         var service = CreateService(new MockRangeHttpHandler(Payload));
-        var outcome = await service.DownloadAsync(TestUri, progress: null);
+        var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
         service.DeleteCacheEntry(outcome.FilePath);
 

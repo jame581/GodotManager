@@ -297,6 +297,12 @@ internal sealed class MockSumsHttpHandler : HttpMessageHandler
 
     public int SumsRequestCount => _sumsRequestCount;
 
+    /// <summary>
+    /// Range headers seen on archive requests only, so a test can assert that a
+    /// transfer genuinely resumed rather than quietly restarting from zero.
+    /// </summary>
+    public List<string?> ReceivedArchiveRangeHeaders { get; } = new();
+
     public MockSumsHttpHandler(byte[] archiveContent, string archiveFileName, string sumsUrlFragment, string? overrideHash = null)
     {
         _archiveContent = archiveContent;
@@ -320,6 +326,8 @@ internal sealed class MockSumsHttpHandler : HttpMessageHandler
             Interlocked.Increment(ref _sumsRequestCount);
             return Task.FromResult(RangeAwareContent.BuildResponse(_sumsContent, request, _sumsETag));
         }
+
+        ReceivedArchiveRangeHeaders.Add(request.Headers.Range?.ToString());
 
         var response = RangeAwareContent.BuildResponse(_archiveContent, request, _archiveETag);
 
