@@ -19,12 +19,13 @@ internal static class CliTestHarness
     /// Build a CommandAppTester with test DI. Uses the fixture's services
     /// and optionally overrides HttpClient with a custom one.
     /// </summary>
-    public static CommandAppTester Create(GodmanTestFixture fixture, HttpClient? httpClient = null)
+    public static CommandAppTester Create(GodmanTestFixture fixture, HttpClient? httpClient = null, DiagnosticContext? diagnostics = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(fixture.Paths);
         services.AddSingleton(fixture.Registry);
         services.AddSingleton(fixture.Environment);
+        services.AddSingleton(diagnostics ?? new DiagnosticContext());
         services.AddSingleton(httpClient ?? new HttpClient());
         services.AddSingleton<DownloadService>();
         services.AddSingleton<InstallerService>();

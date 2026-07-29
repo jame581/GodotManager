@@ -1,3 +1,4 @@
+using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
@@ -101,5 +102,17 @@ public class CleanCommandTests : IDisposable
         Assert.False(Directory.Exists(globalInstall));
         // On Linux, only the shim file is removed, not the directory
         Assert.False(File.Exists(Path.Combine(globalShim, "godot")));
+    }
+
+    [Fact]
+    public void CleanupAll_RemovesTheDownloadCache()
+    {
+        File.WriteAllText(
+            Path.Combine(_fixture.Paths.DownloadCacheDirectory, "abc123.archive"),
+            "cached archive");
+
+        CleanCommand.CleanupAll(_fixture.Paths);
+
+        Assert.False(Directory.Exists(_fixture.Paths.DownloadCacheDirectory));
     }
 }

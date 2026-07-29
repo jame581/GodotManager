@@ -11,11 +11,13 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public DoctorCommand(RegistryService registry, AppPaths paths)
+    public DoctorCommand(RegistryService registry, AppPaths paths, DiagnosticContext? diagnostics = null)
     {
         _registry = registry;
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     internal sealed class Settings : GlobalSettings { }
@@ -108,6 +110,39 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 AnsiConsole.MarkupLineInterpolated($"[yellow]Legacy directory found[/]: {legacyPath} ({description})");
                 AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
             }
+        }
+
+        // Surface abandoned partials, which can be hundreds of megabytes.
+        // Best-effort: doctor must survive a cache directory that is missing,
+        // unreadable, or holds something unexpected rather than throwing.
+        try
+        {
+            if (Directory.Exists(_paths.DownloadCacheDirectory))
+            {
+                var cacheFiles = Directory.GetFiles(_paths.DownloadCacheDirectory);
+                var totalBytes = cacheFiles.Sum(f => new FileInfo(f).Length);
+                var partials = cacheFiles.Count(f => f.EndsWith(".part", StringComparison.OrdinalIgnoreCase));
+
+                if (cacheFiles.Length == 0)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[green]Download cache[/] empty: {_paths.DownloadCacheDirectory}");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[yellow]Download cache[/]: {cacheFiles.Length} file(s), {totalBytes / 1024d / 1024d:F1} MB in {_paths.DownloadCacheDirectory}");
+
+                    if (partials > 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[yellow]  {partials} incomplete download(s)[/] will resume on the next install.");
+                        AnsiConsole.MarkupLine("[grey]  Run 'godman clean' to discard them.[/]");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Could not inspect download cache at {_paths.DownloadCacheDirectory}: {ex.Message}");
         }
 
         return 0;
