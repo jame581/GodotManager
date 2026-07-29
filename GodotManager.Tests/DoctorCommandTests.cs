@@ -86,8 +86,12 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Doctor_WithStalePartial_ReportsIt()
+    public async Task Doctor_WithOrphanedPartial_ReportsItAsNotResumable()
     {
+        // No .json sidecar: per DownloadService's cache-lifecycle invariant, a .part
+        // without a sidecar has no ETag to guard a Range request with, so DownloadAsync
+        // does not resume it -- it truncates and restarts from zero. Doctor must not
+        // claim this one "will resume".
         await File.WriteAllBytesAsync(
             Path.Combine(_fixture.Paths.DownloadCacheDirectory, "deadbeefdeadbeef.part"),
             new byte[2048]);
@@ -105,9 +109,41 @@ public class DoctorCommandTests : IDisposable
 
             Assert.Equal(0, result.ExitCode);
             // Positive assertion proving the redirected channel actually carried
-            // doctor's output, not just that "incomplete download" is absent by luck.
+            // doctor's output, not just that "1 resumable" is absent by luck.
             Assert.Contains("Download cache", result.Output);
             Assert.Contains("incomplete download", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("0 resumable", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithResumablePartial_ReportsItAsResumable()
+    {
+        // A .part with its .json sidecar present (URL + ETag) is the case where
+        // DownloadService actually resumes on the next install.
+        var partPath = Path.Combine(_fixture.Paths.DownloadCacheDirectory, "cafef00dcafef00d.part");
+        var metaPath = Path.Combine(_fixture.Paths.DownloadCacheDirectory, "cafef00dcafef00d.json");
+        await File.WriteAllBytesAsync(partPath, new byte[2048]);
+        await File.WriteAllTextAsync(
+            metaPath,
+            """{"Url":"https://example.test/godot.zip","ArchiveName":"godot.zip","ETag":"\"abc123\""}""");
+
+        var app = CliTestHarness.Create(_fixture);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Download cache", result.Output);
+            Assert.Contains("incomplete download", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("1 resumable", result.Output);
         }
         finally
         {
@@ -156,6 +192,40 @@ public class DoctorCommandTests : IDisposable
             // Proves the channel is live: other doctor output still renders.
             Assert.Contains("No installs registered yet", result.Output);
             Assert.DoesNotContain("Download cache", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithMissingCacheDirectoryAndVerbose_DoesNotWarn()
+    {
+        // A missing DownloadCacheDirectory is the single most common state (a fresh
+        // install that has never downloaded anything). Directory.Exists is what keeps
+        // that off the screen; without it, Directory.GetFiles would throw
+        // DirectoryNotFoundException, and the surrounding try/catch would turn that
+        // into a spurious "warn: ... DirectoryNotFoundException" under --verbose even
+        // though nothing is actually wrong. This test is what distinguishes "guard
+        // present" from "guard absent but masked by the catch" -- see task-9-report.md
+        // for the mutation that only this test (not
+        // Doctor_WithMissingCacheDirectory_DoesNotThrowAndSkipsCacheReport) catches.
+        Directory.Delete(_fixture.Paths.DownloadCacheDirectory, recursive: true);
+
+        var diagnostics = new DiagnosticContext { Verbose = true };
+        var app = CliTestHarness.Create(_fixture, diagnostics: diagnostics);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            // Proves the channel is live: other doctor output still renders.
+            Assert.Contains("No installs registered yet", result.Output);
+            Assert.DoesNotContain("warn:", result.Output, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

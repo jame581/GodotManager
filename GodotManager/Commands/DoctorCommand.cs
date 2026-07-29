@@ -121,7 +121,15 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             {
                 var cacheFiles = Directory.GetFiles(_paths.DownloadCacheDirectory);
                 var totalBytes = cacheFiles.Sum(f => new FileInfo(f).Length);
-                var partials = cacheFiles.Count(f => f.EndsWith(".part", StringComparison.OrdinalIgnoreCase));
+                var partFiles = cacheFiles.Where(f => f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)).ToList();
+                var partials = partFiles.Count;
+
+                // A .part is only resumable when its .json sidecar (URL + ETag) is
+                // still present -- see the cache-lifecycle invariant in DownloadService:
+                // without it there is no If-Range guard, so DownloadAsync discards the
+                // bytes and restarts from zero instead of resuming.
+                var cacheFileSet = new HashSet<string>(cacheFiles, StringComparer.OrdinalIgnoreCase);
+                var resumablePartials = partFiles.Count(f => cacheFileSet.Contains(Path.ChangeExtension(f, ".json")));
 
                 if (cacheFiles.Length == 0)
                 {
@@ -134,7 +142,8 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
                     if (partials > 0)
                     {
-                        AnsiConsole.MarkupLineInterpolated($"[yellow]  {partials} incomplete download(s)[/] will resume on the next install.");
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"[yellow]  {partials} incomplete download(s)[/], {resumablePartials} resumable.");
                         AnsiConsole.MarkupLine("[grey]  Run 'godman clean' to discard them.[/]");
                     }
                 }
