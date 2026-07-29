@@ -86,4 +86,26 @@ public class InstallDialogTests
         Assert.Contains("4.5.1", message);
         Assert.DoesNotContain("verif", message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void BuildCompletionMessage_WhenUnverifiedWithAReason_NamesIt()
+    {
+        // The TUI's account of InstallerService's onVerified callback: a specific
+        // reason should reach the dialog, not just the generic "could not be
+        // verified" text a version-less caller would fall back to.
+        var message = InstallProgressPresentation.BuildCompletionMessage(
+            "4.5.1", InstallEdition.Standard, unverified: true, reason: "could not fetch the sums file (HTTP 500)");
+
+        Assert.Contains("could not fetch the sums file (HTTP 500)", message);
+    }
+
+    [Fact]
+    public void BuildCompletionMessage_WhenUnverifiedWithNoReason_StillReadsAsACompleteSentence()
+    {
+        var message = InstallProgressPresentation.BuildCompletionMessage(
+            "4.5.1", InstallEdition.Standard, unverified: true, reason: null);
+
+        Assert.Contains("could not be verified", message, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith(".", message);
+    }
 }

@@ -1,7 +1,7 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
-using GodotManager.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -151,23 +151,36 @@ internal sealed class InstallDialog : Dialog
             Activate: true, Force: false,
             Checksums: new ChecksumSource(version));
 
+        var verificationStatus = ChecksumStatus.NotApplicable;
+        string? verificationReason = null;
+
         try
         {
-            InstallEntry result = await _installer.InstallWithElevationAsync(request, progress =>
-            {
-                _app.Invoke(() =>
+            InstallEntry result = await _installer.InstallWithElevationAsync(
+                request,
+                progress =>
                 {
-                    _progressBar.Fraction = InstallProgressPresentation.ToFraction(progress);
-                    _statusLabel.Text = InstallProgressPresentation.FormatProgressLabel(progress);
+                    _app.Invoke(() =>
+                    {
+                        _progressBar.Fraction = InstallProgressPresentation.ToFraction(progress);
+                        _statusLabel.Text = InstallProgressPresentation.FormatProgressLabel(progress);
+                    });
+                },
+                onVerified: (status, reason) =>
+                {
+                    verificationStatus = status;
+                    verificationReason = reason;
                 });
-            });
 
-            // request.Checksums is always set here (TryBuildUri above only ever
-            // builds an upstream release URL), mirroring the same check InstallCommand
-            // makes before its own --verbose-gated warning. The TUI owns the whole
-            // screen during an install, so the unverified condition is surfaced in
-            // this dialog's own widgets rather than by writing to AnsiConsole.
-            var unverified = request.Checksums is not null && !result.ChecksumVerified;
+            // NotApplicable covers both "no published sums to check against" and
+            // "this release publishes none upstream" -- neither is an error, so
+            // neither should be surfaced as though the download were suspect. Only
+            // Unverified -- an attempt that was actually made and did not succeed --
+            // is worth telling the user about. The TUI owns the whole screen during
+            // an install, so this is surfaced in the dialog's own widgets rather
+            // than by writing to AnsiConsole, mirroring InstallCommand's own
+            // --verbose-gated warning for the CLI.
+            var unverified = verificationStatus == ChecksumStatus.Unverified;
 
             _app.Invoke(() =>
             {
@@ -175,7 +188,7 @@ internal sealed class InstallDialog : Dialog
                 _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
                 MessageBox.Query(
                     _app, "Success",
-                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified),
+                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason),
                     "OK");
                 RequestStop();
             });
@@ -185,7 +198,15 @@ internal sealed class InstallDialog : Dialog
             _app.Invoke(() =>
             {
                 _statusLabel.Text = "Install failed.";
-                MessageBox.ErrorQuery(_app, "Error", $"Install failed: {ex.Message}", "OK");
+
+                // Every actionable remedy this release added rides on
+                // GodmanException.Hint. Showing only ex.Message would silently drop
+                // it for TUI users, leaving them with a bare failure and no next step.
+                var body = ex is GodmanException { Hint: { } hint }
+                    ? $"Install failed: {ex.Message}\n{hint}"
+                    : $"Install failed: {ex.Message}";
+
+                MessageBox.ErrorQuery(_app, "Error", body, "OK");
                 _installing = false;
                 _installButton.Visible = true;
             });

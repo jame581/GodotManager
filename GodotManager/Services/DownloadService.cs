@@ -16,8 +16,25 @@ namespace GodotManager.Services;
 /// </summary>
 internal enum ChecksumStatus
 {
+    /// <summary>
+    /// An attempt was made to check this download against published sums and it did
+    /// not succeed: the sums endpoint answered with something other than "not
+    /// found", the request itself failed, or the sums file exists but does not list
+    /// this asset. This is the one state worth telling the user about.
+    /// </summary>
     Unverified = 0,
-    Verified = 1
+    Verified = 1,
+
+    /// <summary>
+    /// Nothing was attempted, or nothing could have succeeded regardless of network
+    /// conditions: no <see cref="ChecksumSource"/> was supplied (a custom --url or a
+    /// local --archive has no upstream sums to check against), or the upstream
+    /// release publishes no SHA512-SUMS.txt at all (HTTP 404 — the common,
+    /// unremarkable case for many releases). Kept distinct from
+    /// <see cref="Unverified"/> so callers can warn only when verification was
+    /// actually attempted and failed, not on this expected condition.
+    /// </summary>
+    NotApplicable = 2
 }
 
 /// <param name="ArchiveName">Pre-redirect name. Drives install-folder naming; must match pre-1.3.0 behaviour.</param>
@@ -190,20 +207,15 @@ internal sealed class DownloadService
         }
     }
 
-    /// <summary>Best-effort removal of a completed cache entry.</summary>
-    public void DeleteCacheEntry(string archiveFilePath)
-    {
-        try
-        {
-            var key = Path.GetFileNameWithoutExtension(archiveFilePath);
-            TryDelete(archiveFilePath);
-            TryDelete(Path.Combine(_paths.DownloadCacheDirectory, key + ".json"));
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"Failed to clean download cache entry: {ex.Message}");
-        }
-    }
+    /// <summary>
+    /// Best-effort removal of a completed cache entry. The .json sidecar is already
+    /// gone by the time this runs -- DownloadAsync deletes it right after
+    /// verification, well before the archive is handed back for installation -- so
+    /// only the archive itself remains to clean up. TryDelete already swallows
+    /// everything it can throw, so there is nothing left here for a surrounding
+    /// try/catch to ever actually catch.
+    /// </summary>
+    public void DeleteCacheEntry(string archiveFilePath) => TryDelete(archiveFilePath);
 
     private static bool IsRetryable(Exception ex, CancellationToken cancellationToken)
     {
@@ -387,7 +399,7 @@ internal sealed class DownloadService
         {
             // Nothing was attempted and nothing is wrong: a custom URL or a local
             // archive has no upstream sums to check against. No warning belongs here.
-            return (ChecksumStatus.Unverified, "no published checksums for this source (custom URL or local archive)");
+            return (ChecksumStatus.NotApplicable, "no published checksums for this source (custom URL or local archive)");
         }
 
         var sumsUri = new Uri(
@@ -410,10 +422,17 @@ internal sealed class DownloadService
                 // AnsiConsole unconditionally would paint raw ANSI over a screen it
                 // does not own. The reason travels back on DownloadOutcome instead,
                 // and the caller decides how to render it.
-                _diagnostics?.Warn(response.StatusCode == HttpStatusCode.NotFound
-                    ? $"No checksums published for {source.Version}-{source.Flavor}; skipping verification."
-                    : $"Could not verify this download: {httpReason}");
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // The release simply published no sums. Normal, not an error --
+                    // NotApplicable rather than Unverified so callers don't warn.
+                    _diagnostics?.Warn(
+                        $"No checksums published for {source.Version}-{source.Flavor}; skipping verification.");
+                    return (ChecksumStatus.NotApplicable,
+                        $"no checksums published for {source.Version}-{source.Flavor}");
+                }
 
+                _diagnostics?.Warn($"Could not verify this download: {httpReason}");
                 return (ChecksumStatus.Unverified, httpReason);
             }
 
@@ -434,6 +453,17 @@ internal sealed class DownloadService
             // could not be completed; the reason rides back on DownloadOutcome for
             // the caller to surface.
             var reason = $"{resolvedFileName} is not listed in {sumsUri}";
+            _diagnostics?.Warn($"Could not verify this download: {reason}");
+            return (ChecksumStatus.Unverified, reason);
+        }
+
+        if (!IsSha512Hex(expected))
+        {
+            // A malformed line (wrong length, non-hex characters) is not the same
+            // failure as a genuine mismatch: a real archive should not hard-fail
+            // because the published sums line for it is garbled. Treat it the same
+            // as "not listed" rather than comparing against noise.
+            var reason = $"the entry for {resolvedFileName} in {sumsUri} is not a valid SHA-512 digest";
             _diagnostics?.Warn($"Could not verify this download: {reason}");
             return (ChecksumStatus.Unverified, reason);
         }
@@ -466,8 +496,12 @@ internal sealed class DownloadService
                 continue;
             }
 
+            // GitHub release asset names are case-sensitive, so the file name half of
+            // the comparison must be too. (The hex digest half, compared where this
+            // return value is consumed, is case-insensitive on purpose -- sha512sum
+            // output and this project's own hex encoding disagree on letter case.)
             var name = line[separator..].TrimStart(' ', '*');
-            if (string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(name, fileName, StringComparison.Ordinal))
             {
                 return line[..separator];
             }
@@ -475,6 +509,10 @@ internal sealed class DownloadService
 
         return null;
     }
+
+    /// <summary>128 lowercase-or-uppercase hex characters: the shape of a SHA-512 digest.</summary>
+    private static bool IsSha512Hex(string value) =>
+        value.Length == 128 && value.All(Uri.IsHexDigit);
 
     private static async Task RehashAsync(
         string path, long length, IncrementalHash hasher, CancellationToken cancellationToken)

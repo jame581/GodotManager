@@ -47,9 +47,17 @@ internal static class InstallProgressPresentation
     /// install, so this reaches the user through the dialog's own widgets rather
     /// than a write to AnsiConsole.
     /// </summary>
-    internal static string BuildCompletionMessage(string version, InstallEdition edition, bool unverified) =>
+    /// <param name="reason">
+    /// Why verification did not succeed, from InstallerService's onVerified
+    /// callback. Only meaningful when <paramref name="unverified"/> is true; the
+    /// caller is expected to have already excluded the "nothing to check" case
+    /// (no published sums) from that flag, so a message is never shown for it.
+    /// </param>
+    internal static string BuildCompletionMessage(
+        string version, InstallEdition edition, bool unverified, string? reason = null) =>
         unverified
             ? $"Installed Godot {version} ({edition}), but the download could not be verified " +
-              "against the checksums published upstream."
+              "against the checksums published upstream" +
+              (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}.")
             : $"Installed Godot {version} ({edition})";
 }

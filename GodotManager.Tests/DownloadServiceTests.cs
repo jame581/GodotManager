@@ -370,7 +370,11 @@ public class DownloadServiceTests : IDisposable
         // received bytes would report values well below 50 early on.
         Assert.True(reported.Count > 2, $"expected several progress reports, got {reported.Count}");
         Assert.All(reported, p => Assert.True(p >= 50d, $"progress {p} ignores the 100000 resumed bytes"));
-        Assert.Equal(100d, reported.Last());
+
+        // No terminal Assert.Equal(100d, reported.Last()) here: TransferAsync
+        // invokes progress?.Invoke(100d) unconditionally on every successful
+        // transfer regardless of the resumed-bytes accounting this test exercises,
+        // so that assertion would pass even if the accounting above were broken.
     }
 
     [Fact]
@@ -449,8 +453,13 @@ public class DownloadServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DownloadAsync_WhenSumsFetchFails_ReportsUnverifiedButKeepsDownload()
+    public async Task DownloadAsync_WhenNoSumsArePublished_ReportsNotApplicableButKeepsDownload()
     {
+        // HTTP 404 on SHA512-SUMS.txt is the ordinary case for many releases, not a
+        // failure -- NotApplicable rather than Unverified, so callers know not to
+        // warn about it. See DownloadAsync_WhenArchiveIsNotListedInSums_ReportsUnverified
+        // below for the genuine-failure counterpart, where the sums file exists but
+        // this asset is missing from it.
         var handler = new SequencedHttpHandler(req =>
         {
             if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
@@ -467,7 +476,7 @@ public class DownloadServiceTests : IDisposable
 
         var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
 
-        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.Equal(ChecksumStatus.NotApplicable, outcome.Status);
         Assert.NotNull(outcome.UnverifiedReason);
         Assert.True(File.Exists(outcome.FilePath));
     }
@@ -478,8 +487,9 @@ public class DownloadServiceTests : IDisposable
         // A version with no published sums answers 404, which is the normal path,
         // so the sums fetch must sit outside the retry loop: three attempts plus
         // the full backoff on every such install would be pure delay. The URL is
-        // asserted exactly because a typo there degrades every install to
-        // Unverified without failing anything.
+        // asserted exactly because a typo there makes every real release look
+        // like it published no sums (NotApplicable) instead of actually checking
+        // it, without failing anything or being otherwise visible.
         var sumsUris = new List<Uri>();
         var handler = new SequencedHttpHandler(req =>
         {
@@ -543,7 +553,16 @@ public class DownloadServiceTests : IDisposable
         // transfer interrupted against one mirror and resumed against another would
         // otherwise key the lookup on the second mirror's URI and silently drop to
         // Unverified, so the name resolved on the first leg is kept in the sidecar.
-        await SeedPartialAsync(50_000, resolvedFileName: "Godot_v4.5.1-stable_linux.x86_64.zip");
+        //
+        // archiveName is seeded deliberately different from resolvedFileName: they
+        // drive two different, independently load-bearing things (install-folder
+        // naming vs. the sums lookup key), and asserting only ResolvedFileName below
+        // would not catch a regression that conflated the two, since a seed where
+        // they happened to match would pass either way.
+        await SeedPartialAsync(
+            50_000,
+            archiveName: "godot-mirror-a-original-name.zip",
+            resolvedFileName: "Godot_v4.5.1-stable_linux.x86_64.zip");
 
         var sums = $"{Convert.ToHexStringLower(SHA512.HashData(Payload))}  Godot_v4.5.1-stable_linux.x86_64.zip\n";
         var handler = new SequencedHttpHandler(req =>
@@ -572,6 +591,7 @@ public class DownloadServiceTests : IDisposable
 
         var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
 
+        Assert.Equal("godot-mirror-a-original-name.zip", outcome.ArchiveName);
         Assert.Equal("Godot_v4.5.1-stable_linux.x86_64.zip", outcome.ResolvedFileName);
         Assert.Equal(ChecksumStatus.Verified, outcome.Status);
     }
@@ -584,7 +604,7 @@ public class DownloadServiceTests : IDisposable
 
         var outcome = await service.DownloadAsync(TestUri, checksums: null, progress: null);
 
-        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.Equal(ChecksumStatus.NotApplicable, outcome.Status);
         Assert.Equal(0, handler.SumsRequestCount);
     }
 
@@ -609,6 +629,52 @@ public class DownloadServiceTests : IDisposable
 
         Assert.Equal("bbb", DownloadService.ParseSums(content, "Godot_v4.5.1-stable_linux.x86_64.zip"));
         Assert.Null(DownloadService.ParseSums(content, "absent.zip"));
+    }
+
+    [Fact]
+    public void ParseSums_FileNameMatchIsCaseSensitive()
+    {
+        // GitHub release asset names are case-sensitive. An OrdinalIgnoreCase match
+        // here would let a sums line for a differently-cased asset silently stand
+        // in for this one.
+        var content = "aaa  Godot_v4.5.1-stable_linux.x86_64.zip\n";
+
+        Assert.Null(DownloadService.ParseSums(content, "GODOT_V4.5.1-STABLE_LINUX.X86_64.ZIP"));
+        Assert.Equal("aaa", DownloadService.ParseSums(content, "Godot_v4.5.1-stable_linux.x86_64.zip"));
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenTheSumsLineIsNotAValidDigest_ReportsUnverifiedRatherThanThrowing()
+    {
+        // A malformed sums line for the right file name (wrong length, non-hex) is
+        // not the same failure as a genuine mismatch. A good archive should not
+        // hard-fail an install because the published sums entry for it is garbled.
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    // "not-a-real-digest" is 18 characters and contains non-hex
+                    // characters -- neither the right length nor valid hex.
+                    Content = new StringContent("not-a-real-digest  Godot_v4.5.1-stable_linux.x86_64.zip\n")
+                };
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            ok.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = "Godot_v4.5.1-stable_linux.x86_64.zip" };
+            return ok;
+        });
+
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+        Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+        Assert.NotNull(outcome.UnverifiedReason);
+        Assert.True(File.Exists(outcome.FilePath), "a malformed sums entry must not delete a good archive");
     }
 
     [Fact]
@@ -727,7 +793,7 @@ public class DownloadServiceTests : IDisposable
         {
             var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
 
-            Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+            Assert.Equal(ChecksumStatus.NotApplicable, outcome.Status);
             Assert.DoesNotContain("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
 
             await AssertWarnChannelIsLiveAsync(diagnostics);

@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -80,10 +81,16 @@ public class InstallCommandE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task Install_WhenAnAutoUrlInstallCannotBeVerified_WarnsTheUser()
+    public async Task Install_WhenNoSumsArePublished_DoesNotWarn()
     {
-        // Only an auto-built URL identifies an upstream release, so only it gets a
-        // ChecksumSource — and only then is "could not verify" worth saying.
+        // ArchiveWithoutSums models the ordinary case: an upstream release with no
+        // SHA512-SUMS.txt at all (a real example: godot-builds' 4.0-stable answers
+        // 404 for it, while 4.5.1's does not). This used to warn on every such
+        // install — the exact regression the settled human ruling exists to
+        // prevent — because the command layer could not tell "nothing to check"
+        // apart from "checked and failed". Paired with
+        // Install_WhenSumsFetchGenuinelyFails_WarnsAndNamesTheReason below, which
+        // is the genuine-failure case that must still warn.
         var app = CliTestHarness.Create(_fixture, ArchiveWithoutSums(out var mockArchive));
 
         var originalConsole = AnsiConsole.Console;
@@ -94,7 +101,62 @@ public class InstallCommandE2ETests : IDisposable
             var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
 
             Assert.Equal(0, result.ExitCode);
-            Assert.Contains("could not be verified", result.Output);
+            // Positive assertion on the same channel, so the DoesNotContain below
+            // is not vacuously true because the redirect captured nothing at all.
+            Assert.Contains("Installed", result.Output);
+            Assert.DoesNotContain("warn:", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("could not be verified", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.False(Assert.Single(registry.Installs).ChecksumVerified);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WhenSumsFetchGenuinelyFails_WarnsAndNamesTheReason()
+    {
+        // The counterpart to the test above: this is not "no sums published", it is
+        // an actual failure to check them (HTTP 500, not 404), so it must still
+        // warn — and the message must name what went wrong rather than sending the
+        // user on a second ~70 MB download via --verbose just to find out.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await System.IO.File.ReadAllBytesAsync(mockArchive);
+
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            ok.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = "Godot_v4.5.1-stable_linux.x86_64.zip" };
+            return ok;
+        });
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("warn:", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("HTTP 500", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.False(Assert.Single(registry.Installs).ChecksumVerified);
         }
         finally
         {
@@ -329,7 +391,7 @@ public class InstallCommandE2ETests : IDisposable
         AnsiConsole.Console = app.Console;
         try
         {
-            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", "Linux"]);
+            var result = await app.RunAsync(["install", "--version", "4.5.1"]);
 
             Assert.NotEqual(0, result.ExitCode);
             Assert.Contains("Checksum mismatch", result.Output, StringComparison.OrdinalIgnoreCase);
@@ -356,7 +418,7 @@ public class InstallCommandE2ETests : IDisposable
 
         var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
 
-        var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", "Linux"]);
+        var result = await app.RunAsync(["install", "--version", "4.5.1"]);
 
         Assert.Equal(0, result.ExitCode);
 

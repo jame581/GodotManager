@@ -828,6 +828,120 @@ public class InstallerServiceIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallAsync_WithLocalArchive_InvokesOnVerifiedWithNotApplicable()
+    {
+        // A local --archive never runs verification at all -- InstallPlan's default
+        // ChecksumStatus (NotApplicable) is what onVerified should report here, not
+        // the fail-closed Unverified default that would wrongly tell a caller
+        // something was attempted and failed.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        ChecksumStatus? observedStatus = null;
+        string? observedReason = "not yet set";
+
+        await installer.InstallAsync(
+            new InstallRequest(
+                "4.5.1", InstallEdition.Standard, InstallPlatform.Linux, InstallScope.User,
+                DownloadUri: null, ArchivePath: mockArchive, InstallPath: null,
+                Activate: false, Force: false),
+            onVerified: (status, reason) =>
+            {
+                observedStatus = status;
+                observedReason = reason;
+            });
+
+        Assert.Equal(ChecksumStatus.NotApplicable, observedStatus);
+        Assert.Null(observedReason);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithNoPublishedSums_InvokesOnVerifiedWithNotApplicable()
+    {
+        // The plumbing Important 2 adds: InstallerService must hand the command
+        // layer enough to tell "nothing to check" apart from "checked and failed"
+        // without the command layer re-deriving it from ChecksumVerified alone.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            return ok;
+        });
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(handler));
+
+        ChecksumStatus? observedStatus = null;
+        string? observedReason = null;
+
+        await installer.InstallAsync(
+            new InstallRequest(
+                "4.5.1", InstallEdition.Standard, InstallPlatform.Linux, InstallScope.User,
+                new Uri("https://test.invalid/godot.zip"),
+                null, null, false, false, false,
+                Checksums: new ChecksumSource("4.5.1")),
+            onVerified: (status, reason) =>
+            {
+                observedStatus = status;
+                observedReason = reason;
+            });
+
+        Assert.Equal(ChecksumStatus.NotApplicable, observedStatus);
+        Assert.NotNull(observedReason);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenSumsFetchGenuinelyFails_InvokesOnVerifiedWithUnverifiedAndReason()
+    {
+        // The counterpart to the NotApplicable test above: an actual failure (HTTP
+        // 500, not 404) must come back as Unverified with a reason naming what
+        // happened, so the command layer knows to warn and what to say.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            return ok;
+        });
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(handler));
+
+        ChecksumStatus? observedStatus = null;
+        string? observedReason = null;
+
+        await installer.InstallAsync(
+            new InstallRequest(
+                "4.5.1", InstallEdition.Standard, InstallPlatform.Linux, InstallScope.User,
+                new Uri("https://test.invalid/godot.zip"),
+                null, null, false, false, false,
+                Checksums: new ChecksumSource("4.5.1")),
+            onVerified: (status, reason) =>
+            {
+                observedStatus = status;
+                observedReason = reason;
+            });
+
+        Assert.Equal(ChecksumStatus.Unverified, observedStatus);
+        Assert.Contains("HTTP 500", observedReason);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
     public async Task InstallAsync_WhenTheResolvedNameDiffers_UsesEachNameForItsOwnPurpose()
     {
         // DownloadOutcome carries two names for two jobs: ArchiveName (pre-redirect)

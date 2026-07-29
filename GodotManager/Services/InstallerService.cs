@@ -39,7 +39,13 @@ internal sealed record InstallPlan(
     string? Checksum = null,
     string? ChecksumAlgorithm = null,
     bool ChecksumVerified = false,
-    string? CacheFilePath = null);
+    string? CacheFilePath = null,
+    // Defaults to NotApplicable: every InstallPlan that does not come from an actual
+    // download (a local --archive, --path, or the elevated child re-checking a
+    // carried checksum) never ran verification at all, so there is nothing to warn
+    // the user about. Only the DownloadUri branch of ResolvePlanAsync overrides these.
+    ChecksumStatus ChecksumStatus = ChecksumStatus.NotApplicable,
+    string? UnverifiedReason = null);
 
 internal sealed record ElevatedInstallPayload(
     string Version,
@@ -77,10 +83,22 @@ internal sealed class InstallerService
         _download = downloadService ?? new DownloadService(paths, httpClient, diagnostics);
     }
 
-    public async Task<InstallEntry> InstallAsync(InstallRequest request, Action<double>? progress = null, CancellationToken cancellationToken = default)
+    /// <param name="onVerified">
+    /// Fired once, after the plan is resolved and before any files move, with the
+    /// outcome of checking the download against the checksums published upstream.
+    /// A transient diagnostic, not part of the persisted result: callers that care
+    /// whether to warn the user (only the command layer does) read it here rather
+    /// than through <see cref="InstallEntry"/>, which never carries it.
+    /// </param>
+    public async Task<InstallEntry> InstallAsync(
+        InstallRequest request,
+        Action<double>? progress = null,
+        CancellationToken cancellationToken = default,
+        Action<ChecksumStatus, string?>? onVerified = null)
     {
         var registry = await _registry.LoadAsync(cancellationToken);
         var plan = await ResolvePlanAsync(request, progress, cancellationToken);
+        onVerified?.Invoke(plan.ChecksumStatus, plan.UnverifiedReason);
         request = plan.Request;
         var targetDir = plan.TargetDirectory;
         var checksum = plan.Checksum;
@@ -206,14 +224,23 @@ internal sealed class InstallerService
         return entry;
     }
 
-    public async Task<InstallEntry> InstallWithElevationAsync(InstallRequest request, Action<double>? progress = null, CancellationToken cancellationToken = default)
+    /// <param name="onVerified">See <see cref="InstallAsync"/>. On the elevation
+    /// branch this fires from the plan resolved here in the unelevated parent —
+    /// the process that actually ran the download and the sums check — rather than
+    /// from anything the elevated child later re-derives.</param>
+    public async Task<InstallEntry> InstallWithElevationAsync(
+        InstallRequest request,
+        Action<double>? progress = null,
+        CancellationToken cancellationToken = default,
+        Action<ChecksumStatus, string?>? onVerified = null)
     {
         if (!OperatingSystem.IsWindows() || request.Scope != InstallScope.Global || WindowsElevationHelper.IsElevated())
         {
-            return await InstallAsync(request, progress, cancellationToken);
+            return await InstallAsync(request, progress, cancellationToken, onVerified);
         }
 
         var plan = await ResolvePlanAsync(request, progress, cancellationToken);
+        onVerified?.Invoke(plan.ChecksumStatus, plan.UnverifiedReason);
 
         // This process did the downloading and so is the only one that could compare
         // the bytes against the published sums. Carrying that result across is what
@@ -227,7 +254,7 @@ internal sealed class InstallerService
             InstallPath = plan.TargetDirectory,
             Known = plan.Checksum is null
                 ? null
-                : new KnownChecksum(plan.Checksum, plan.ChecksumAlgorithm ?? "sha512", plan.ChecksumVerified)
+                : new KnownChecksum(plan.Checksum, plan.ChecksumAlgorithm!, plan.ChecksumVerified)
         };
 
         try
@@ -238,9 +265,16 @@ internal sealed class InstallerService
         {
             // The download happened here, so the cache entry is this process's to clean
             // up: the child took the local-archive branch and its plan has no
-            // CacheFilePath at all. It has to happen after the child has exited, since
-            // the archive it is extracting is that very file. Non-null only for
-            // downloads, so a user-supplied --archive is never touched.
+            // CacheFilePath at all. This is meant to run after the child has exited,
+            // since the archive it is extracting is that very file (on the
+            // cancellation path that is not guaranteed: WaitForExitAsync(cancellationToken)
+            // throws immediately without killing the child, rather than waiting for
+            // it. That path is unreachable today -- nothing here supplies a live
+            // token -- and would be benign on Windows even if it happened, since
+            // SharpCompress holds FileShare.Read on the archive during extraction,
+            // so the delete would just raise a sharing violation that TryDelete
+            // swallows). Non-null only for downloads, so a user-supplied --archive
+            // is never touched.
             if (plan.CacheFilePath is not null)
             {
                 _download.DeleteCacheEntry(plan.CacheFilePath);
@@ -276,11 +310,16 @@ internal sealed class InstallerService
             // Path.GetDirectoryName, which returns "" for a bare relative name like
             // "mydir" and returns the directory itself for a trailing separator.
             // GetFullPath fixes the former; it preserves trailing separators, so the
-            // latter needs the explicit trim. A root path trims to itself and still
-            // falls into the "no parent directory" guard below, which is correct —
-            // but Path.GetFullPath("") throws ArgumentException instead of
-            // degenerating usefully, so an empty or whitespace-only --path is routed
-            // around it and left for that same guard to catch.
+            // latter needs the explicit trim. A root path trims to itself and has no
+            // parent, but whether that reaches the "no parent directory" guard in
+            // InstallAsync depends on --force: a root path almost always already
+            // exists, so without --force the Directory.Exists guard nearer the top
+            // of InstallAsync fires first, with its own --force hint -- a different
+            // error entirely. Only with --force (or a root that somehow does not
+            // exist) does execution reach the parent-directory guard below.
+            // Path.GetFullPath("") throws ArgumentException instead of degenerating
+            // usefully either way, so an empty or whitespace-only --path is routed
+            // around it and left for that same downstream guard to catch.
             targetDir = string.IsNullOrWhiteSpace(request.InstallPath)
                 ? request.InstallPath
                 : Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.InstallPath));
@@ -321,7 +360,9 @@ internal sealed class InstallerService
                 outcome.Sha512,
                 "sha512",
                 outcome.Status == ChecksumStatus.Verified,
-                outcome.FilePath);
+                outcome.FilePath,
+                outcome.Status,
+                outcome.UnverifiedReason);
         }
         else
         {
@@ -336,12 +377,19 @@ internal sealed class InstallerService
     /// </summary>
     /// <remarks>
     /// The claim arrives base64 on the command line of a process running as
-    /// administrator, so on its own it is an assertion, not evidence. The one thing
-    /// this process can establish for itself is that the archive it is about to
-    /// extract is the archive that was measured, so the hash is recomputed and
-    /// compared and a disagreement aborts the install. That window is real rather than
-    /// theoretical: the download lands in a cache directory the unelevated parent can
-    /// write, and the child extracts it with administrator rights.
+    /// administrator, so on its own it is an assertion, not evidence. This process
+    /// re-hashes the archive and compares it against the claimed value, so a
+    /// disagreement aborts the install. That narrows the window in which a swap
+    /// would go undetected; it does not close it. <see cref="ComputeChecksumAsync"/>
+    /// opens and closes its own handle here, during <c>ResolvePlanAsync</c>, and
+    /// <c>ExtractAsync</c> reopens the same path afterwards, once
+    /// <c>InstallAsync</c> has already run the target-exists check and created the
+    /// staging directory — a swap timed into that gap would still defeat the
+    /// re-hash. Fully closing it would mean holding one <c>FileShare</c>-restricted
+    /// handle across both the hash and the extract, which is a larger change than
+    /// this one. The window is real rather than theoretical regardless: the
+    /// download lands in a cache directory the unelevated parent can write, and the
+    /// child extracts it with administrator rights.
     ///
     /// What stays taken on trust is <c>Verified</c> itself — proving it would mean
     /// re-fetching the published sums inside the elevated process, turning a network
@@ -370,7 +418,17 @@ internal sealed class InstallerService
                 "Re-run the install. If it happens again, something else on this machine is writing to the download cache.");
         }
 
-        return new InstallPlan(request, targetDir, computed, "sha512", known.Verified);
+        // The unelevated parent already ran the real verification and is the only
+        // process that could have warned about it; that plumbing lives in
+        // InstallWithElevationAsync, not here. This process only knows the bool the
+        // payload carried, not why it is false when it is, so it cannot reconstruct
+        // a specific reason -- but it can still fail closed on the status.
+        return new InstallPlan(
+            request, targetDir, computed, "sha512", known.Verified,
+            ChecksumStatus: known.Verified ? ChecksumStatus.Verified : ChecksumStatus.Unverified,
+            UnverifiedReason: known.Verified
+                ? null
+                : "the unelevated process that downloaded this archive could not verify it");
     }
 
     /// <summary>
@@ -540,13 +598,17 @@ internal sealed class InstallerService
     /// Copies <paramref name="source"/> over <paramref name="destination"/>, overwriting
     /// collisions and leaving everything else in the destination untouched.
     /// </summary>
+    /// <remarks>
+    /// Only ever called with a staging directory ExtractAsync just populated. That
+    /// method filters out archive entries where IsDirectory is true, so nothing it
+    /// writes ever leaves an empty directory behind -- every directory under
+    /// <paramref name="source"/> contains at least one file somewhere beneath it.
+    /// That is what makes a directory-only pre-pass unnecessary: the per-file
+    /// Directory.CreateDirectory below already creates every directory that matters
+    /// as it copies the file that justifies it existing.
+    /// </remarks>
     private static void MergeDirectory(string source, string destination)
     {
-        foreach (var dir in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, dir)));
-        }
-
         foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
         {
             var target = Path.Combine(destination, Path.GetRelativePath(source, file));

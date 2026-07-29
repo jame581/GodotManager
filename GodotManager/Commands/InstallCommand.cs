@@ -69,6 +69,9 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 AnsiConsole.MarkupLine("[yellow]Administrator access is required for global installs. A UAC prompt will appear.[/]");
             }
 
+            var verificationStatus = ChecksumStatus.NotApplicable;
+            string? verificationReason = null;
+
             var result = await AnsiConsole.Progress()
                 .AutoClear(true)
                 .HideCompleted(true)
@@ -88,20 +91,32 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                         task.Value = clamped;
                     });
 
-                    return await _installer.InstallWithElevationAsync(request, progress);
+                    return await _installer.InstallWithElevationAsync(
+                        request,
+                        progress,
+                        onVerified: (status, reason) =>
+                        {
+                            verificationStatus = status;
+                            verificationReason = reason;
+                        });
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
 
-            // Only when verification was attempted and could not be completed. A --url
-            // or --archive install has no published sums by definition, and saying so
-            // every time would be noise. The reason itself is a verbose-only diagnostic
-            // from DownloadService: unconditional writes belong here, in the command
-            // layer, not in a service the TUI also runs in-process.
-            if (checksums is not null && !result.ChecksumVerified)
+            // Only when verification was actually attempted and did not succeed.
+            // NotApplicable covers both "no published sums to check against" (--url
+            // or --archive, which never carry a ChecksumSource) and "this release
+            // publishes none" (upstream 404, the ordinary case for many releases) --
+            // neither is an error, so neither should print a warning on every such
+            // install and train the user to ignore it. The reason names what
+            // actually went wrong instead of sending the user on a second ~70 MB
+            // download via --verbose just to find out. Unconditional writes belong
+            // here, in the command layer, not in a service the TUI also runs
+            // in-process.
+            if (verificationStatus == ChecksumStatus.Unverified)
             {
                 DiagnosticContext.WarnAlways(
                     "this download could not be verified against the checksums published " +
-                    "upstream. Re-run with --verbose to see why.");
+                    $"upstream: {verificationReason}");
             }
 
             return 0;
