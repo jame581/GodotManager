@@ -57,7 +57,7 @@ public class InstallerServiceIntegrationTests : IDisposable
 
         // Verify checksum was computed from download
         Assert.NotNull(result.Checksum);
-        Assert.Equal(64, result.Checksum.Length); // SHA256 hex string
+        Assert.Equal(128, result.Checksum.Length); // SHA512 hex string
 
         // Verify registry
         var registry = await _fixture.Registry.LoadAsync();
@@ -99,10 +99,10 @@ public class InstallerServiceIntegrationTests : IDisposable
 
         // Verify checksum was computed from local archive
         Assert.NotNull(result.Checksum);
-        Assert.Equal(64, result.Checksum.Length);
+        Assert.Equal(128, result.Checksum.Length);
 
         // Verify checksum matches independently computed hash
-        var expectedHash = ComputeSha256(mockArchive);
+        var expectedHash = ComputeSha512(mockArchive);
         Assert.Equal(expectedHash, result.Checksum);
 
         // Verify extracted files exist
@@ -428,11 +428,31 @@ public class InstallerServiceIntegrationTests : IDisposable
         File.Delete(mockArchive2);
     }
 
-    private static string ComputeSha256(string filePath)
+    [Fact]
+    public async Task InstallAsync_RecordsSha512AndAlgorithm()
     {
-        using var sha256 = SHA256.Create();
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, null, false, false, false));
+
+        Assert.NotNull(result.Checksum);
+        Assert.Equal(128, result.Checksum!.Length);
+        Assert.Equal("sha512", result.ChecksumAlgorithm);
+        Assert.False(result.ChecksumVerified);   // a local archive has nothing to verify against
+
+        File.Delete(mockArchive);
+    }
+
+    private static string ComputeSha512(string filePath)
+    {
+        using var sha512 = SHA512.Create();
         using var stream = File.OpenRead(filePath);
-        var hash = sha256.ComputeHash(stream);
-        return Convert.ToHexStringLower(hash);
+        return Convert.ToHexStringLower(sha512.ComputeHash(stream));
     }
 }
