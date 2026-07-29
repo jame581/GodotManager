@@ -174,8 +174,13 @@ internal sealed class DownloadService
                     // IOException is in the retryable set above to cover a connection
                     // dropping mid-transfer, so this exhaustion path cannot assume the
                     // cause was the network: the same IOException is what a full disk
-                    // or a permissions failure surfaces as. Naming "network" here would
-                    // send that user chasing a connection that was never the problem.
+                    // surfaces as too. Naming only "network" here would send that user
+                    // chasing a connection that was never the problem, so the hint below
+                    // names disk space as well. It also mentions permissions as generic
+                    // troubleshooting advice, but that is not this catch's doing: a
+                    // genuine permission failure raises UnauthorizedAccessException,
+                    // which IsRetryable does not accept, so it never reaches this catch
+                    // or this hint — it escapes to the command layer's unhinted catch.
                     "Check your network connection and that this machine has disk space " +
                     "and permission to write here, then try again. If the server keeps " +
                     "returning an error, wait and retry later, or pass --url to install " +
