@@ -171,7 +171,13 @@ internal sealed class DownloadService
                 // the original rides along as InnerException so nothing is lost.
                 throw new GodmanException(
                     $"Download failed after {_backoff.Length + 1} attempts: {ex.Message}",
-                    "Check your network connection and try again. If the server keeps " +
+                    // IOException is in the retryable set above to cover a connection
+                    // dropping mid-transfer, so this exhaustion path cannot assume the
+                    // cause was the network: the same IOException is what a full disk
+                    // or a permissions failure surfaces as. Naming "network" here would
+                    // send that user chasing a connection that was never the problem.
+                    "Check your network connection and that this machine has disk space " +
+                    "and permission to write here, then try again. If the server keeps " +
                     "returning an error, wait and retry later, or pass --url to install " +
                     "from a mirror.",
                     ex);

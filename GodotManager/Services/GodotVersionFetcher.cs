@@ -153,7 +153,12 @@ internal sealed class GodotVersionFetcher
                 }
             }
 
-            throw new InvalidOperationException($"Failed to fetch releases from GitHub: {ex.Message}", ex);
+            throw new GodmanException(
+                $"Failed to fetch releases from GitHub: {ex.Message}",
+                ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Forbidden }
+                    ? "This is usually GitHub API rate limiting. Cached results are used automatically when available; try again in a few minutes."
+                    : "Check your network connection. godman falls back to cached results when it has them; use --no-cache to force a fresh fetch.",
+                ex);
         }
     }
 

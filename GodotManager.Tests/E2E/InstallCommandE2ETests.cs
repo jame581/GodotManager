@@ -223,6 +223,66 @@ public class InstallCommandE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Install_WhenTargetExists_RendersMessageAndHint()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var app = CliTestHarness.Create(_fixture);
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console (CommandAppTester wires TestConsole into Settings.Console, a
+        // separate field), so it has to be redirected here to capture the
+        // rendered failure. Proven live by asserting the success path's own
+        // output below, on the same channel, before triggering the failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var first = await app.RunAsync(["install", "--version", "4.5.1", "--archive", mockArchive]);
+            Assert.Equal(0, first.ExitCode);
+            Assert.Contains("Installed", first.Output);
+
+            var second = await app.RunAsync(["install", "--version", "4.5.1", "--archive", mockArchive]);
+
+            Assert.NotEqual(0, second.ExitCode);
+            Assert.Contains("Install failed:", second.Output);
+            Assert.Contains("hint:", second.Output);
+            Assert.Contains("--force", second.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithEmptyPath_RendersActionableErrorNotAStackTrace()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var app = CliTestHarness.Create(_fixture);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--archive", mockArchive, "--path", ""]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Install failed:", result.Output);
+            Assert.Contains("hint:", result.Output);
+            Assert.DoesNotContain("ArgumentException", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
     public async Task Install_WithActivate_SetsActive()
     {
         var mockArchive = MockArchiveFactory.CreateMockGodotArchive();

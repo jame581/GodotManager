@@ -969,6 +969,75 @@ public class InstallerServiceIntegrationTests : IDisposable
         File.Delete(mockArchive);
     }
 
+    [Fact]
+    public async Task InstallAsync_WhenTargetExists_ThrowsActionableGodmanException()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var first = await installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, null, false, false, false));
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, first.Path, false, false, false)));
+
+        Assert.Contains(first.Path, ex.Message);
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("--force", ex.Hint!);
+        // A registry entry owns this directory, so removal must be offered too.
+        Assert.Contains("remove", ex.Hint!, StringComparison.OrdinalIgnoreCase);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenTargetExistsButIsNotRegistered_OffersOnlyForceOrManualDelete()
+    {
+        // A stray directory not owned by any registry entry has no "godman remove"
+        // to offer. The hint must not claim otherwise.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var target = Path.Combine(_fixture.TempRoot, "unregistered-dir");
+        Directory.CreateDirectory(target);
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, target, false, false, false)));
+
+        Assert.Contains(target, ex.Message);
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("--force", ex.Hint!);
+        Assert.DoesNotContain("godman remove", ex.Hint!);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithEmptyPath_ThrowsActionableGodmanExceptionRatherThanArgumentException()
+    {
+        // Path.GetFullPath("") throws a raw ArgumentException. Before staging
+        // extraction normalized targetDir up front, an empty --path fell through to
+        // the "cannot determine parent directory" guard and got an actionable
+        // message instead; this pins that behaviour back.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, "", false, false, false)));
+
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("--path", ex.Hint!);
+
+        File.Delete(mockArchive);
+    }
+
     private static string ComputeSha512(string filePath)
     {
         using var sha512 = SHA512.Create();

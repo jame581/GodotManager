@@ -326,6 +326,23 @@ public class DownloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadAsync_WhenTransientFailurePersists_HintDoesNotBlameOnlyTheNetwork()
+    {
+        // IOException sits in the retryable set to cover a connection dropping
+        // mid-transfer, but the exact same exception type is what a full disk or a
+        // permissions failure surfaces as. The exhausted-retry hint must not name
+        // "network" as though it were the only possible cause, or a disk-full user
+        // is sent chasing a connection that was never broken.
+        var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var service = CreateService(handler);
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(
+            () => service.DownloadAsync(TestUri, checksums: null, progress: null));
+
+        Assert.Contains("disk", ex.Hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task DownloadAsync_DoesNotRetryNotFound()
     {
         // Must surface as GodmanException, not HttpRequestException: the latter is

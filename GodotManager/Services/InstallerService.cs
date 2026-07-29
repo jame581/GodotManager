@@ -92,7 +92,14 @@ internal sealed class InstallerService
 
         if (Directory.Exists(targetDir) && !request.Force)
         {
-            throw new IOException($"Install directory already exists: {targetDir}. Use --force to overwrite.");
+            var owner = registry.Installs.FirstOrDefault(
+                x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
+
+            var hint = owner is null
+                ? "Re-run with --force to overwrite it, or delete the directory yourself."
+                : $"Re-run with --force to overwrite it, or run: godman remove {owner.Id:N} --delete";
+
+            throw new GodmanException($"Install directory already exists: {targetDir}", hint);
         }
 
         // Get archive path if not already set from earlier download
@@ -270,8 +277,13 @@ internal sealed class InstallerService
             // "mydir" and returns the directory itself for a trailing separator.
             // GetFullPath fixes the former; it preserves trailing separators, so the
             // latter needs the explicit trim. A root path trims to itself and still
-            // falls into the "no parent directory" guard below, which is correct.
-            targetDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.InstallPath));
+            // falls into the "no parent directory" guard below, which is correct —
+            // but Path.GetFullPath("") throws ArgumentException instead of
+            // degenerating usefully, so an empty or whitespace-only --path is routed
+            // around it and left for that same guard to catch.
+            targetDir = string.IsNullOrWhiteSpace(request.InstallPath)
+                ? request.InstallPath
+                : Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.InstallPath));
             if (request.ArchivePath is not null && File.Exists(request.ArchivePath))
             {
                 checksum = await ComputeChecksumAsync(request.ArchivePath, cancellationToken);

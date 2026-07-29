@@ -1,6 +1,7 @@
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -152,22 +153,30 @@ internal sealed class InstallDialog : Dialog
 
         try
         {
-            await _installer.InstallWithElevationAsync(request, progress =>
+            InstallEntry result = await _installer.InstallWithElevationAsync(request, progress =>
             {
                 _app.Invoke(() =>
                 {
-                    _progressBar.Fraction = (float)progress;
-                    _statusLabel.Text = progress < 1.0
-                        ? $"Installing... {progress:P0}"
-                        : "Finalizing...";
+                    _progressBar.Fraction = InstallProgressPresentation.ToFraction(progress);
+                    _statusLabel.Text = InstallProgressPresentation.FormatProgressLabel(progress);
                 });
             });
+
+            // request.Checksums is always set here (TryBuildUri above only ever
+            // builds an upstream release URL), mirroring the same check InstallCommand
+            // makes before its own --verbose-gated warning. The TUI owns the whole
+            // screen during an install, so the unverified condition is surfaced in
+            // this dialog's own widgets rather than by writing to AnsiConsole.
+            var unverified = request.Checksums is not null && !result.ChecksumVerified;
 
             _app.Invoke(() =>
             {
                 Success = true;
-                _statusLabel.Text = "Install complete!";
-                MessageBox.Query(_app, "Success", $"Installed Godot {version} ({edition})", "OK");
+                _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
+                MessageBox.Query(
+                    _app, "Success",
+                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified),
+                    "OK");
                 RequestStop();
             });
         }
