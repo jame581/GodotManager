@@ -20,7 +20,7 @@ CI runs `dotnet test -v minimal` on ubuntu-latest + windows-latest (.github/work
 
 - `GodotManager/Program.cs` — DI wiring + Spectre.Console.Cli command registration (entry point).
 - `GodotManager/Commands/` — one class per CLI verb (`install`, `activate`, `fetch`, …).
-- `GodotManager/Services/` — `InstallerService`, `RegistryService`, `EnvironmentService`, `GodotVersionFetcher`, `GodotDownloadUrlBuilder`, `WindowsElevationHelper`.
+- `GodotManager/Services/` — `InstallerService`, `RegistryService`, `EnvironmentService`, `GodotVersionFetcher`, `GodotDownloadUrlBuilder`, `WindowsElevationHelper`, `DownloadService` (transport: managed cache under `<ConfigDirectory>/downloads`, HTTP Range resume, retry, SHA-512 verification against `godotengine/godot-builds`).
 - `GodotManager/Domain/` — `InstallEntry`, `InstallRegistry` (persisted JSON model).
 - `GodotManager/Config/AppPaths.cs` — resolves all on-disk paths; honors env-var overrides.
 - `GodotManager/Infrastructure/` — DI glue (`TypeRegistrar`), `DiagnosticContext`, `VerboseInterceptor`, `GlobalSettings`, `ProcessHelpers`.
@@ -63,7 +63,7 @@ the fixture's services. See `GodotManager.Tests/Helpers/`.
 ## Release & packaging
 
 - Version is set in `GodotManager/GodotManager.csproj` (`<Version>`/`<AssemblyVersion>`).
-- WinGet manifests: `manifests/j/JanMesarc/`.
+- WinGet publishing: automated from `.github/workflows/release.yml` (`publish-winget` job); no manifests are checked into this repo.
 - RPM spec: `packaging/rpm/godman.spec`.
 - Linux one-liner installer: `install.sh`.
 - Release pipeline: `.github/workflows/release.yml`.

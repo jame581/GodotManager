@@ -15,6 +15,7 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 - Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`).
 - Dry-run mode to preview install/activate operations without making changes.
 - Cleanup command to remove installs, shims, and config.
+- Downloads are verified against Godot's published SHA-512 checksums, resume automatically if interrupted, and are cleaned up after install.
 
 ### Prerequisites
 
@@ -104,6 +105,7 @@ All commands accept the following global options:
 ## Paths
 ### Linux
 - **Config**: `~/.config/godman/`
+- **Download cache**: `~/.config/godman/downloads/`
 - **User installs**: `~/.local/bin/godman/`
 - **Global installs**: `/usr/local/bin/godman/`
 - **User shim**: `~/.local/bin/godot`
@@ -111,6 +113,7 @@ All commands accept the following global options:
 
 ### Windows
 - **Config**: `%APPDATA%\godman\`
+- **Download cache**: `%APPDATA%\godman\downloads\`
 - **User installs**: `%APPDATA%\godman\installs\`
 - **Global installs**: `C:\Program Files\godman\installs\`
 - **User shim**: `%APPDATA%\godman\bin\godot.cmd`
@@ -150,6 +153,9 @@ dotnet test -v detailed
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 - **Troubleshooting**: If something seems off after install/activate, run the command again with `--verbose` (`-V`) to see diagnostic warnings for any best-effort operations that failed silently.
+- **Checksum verification**: installs from auto-built URLs are checked against `SHA512-SUMS.txt` published on `godotengine/godot-builds`. A mismatch aborts the install and deletes the downloaded archive. Verification is skipped (not an error) for a custom `--url` or a local `--archive`, since there's no upstream release to check against; if the published checksums can't be fetched for another reason, godman continues without them and reports why with `--verbose`.
+- **Interrupted downloads resume**: partial downloads are kept under the download cache and resumed on the next `install`. Run `godman doctor` to see how much space they use, or `godman clean` to discard them.
+- **`--force` merges, it does not replace**: installing over an existing directory overwrites the files godman extracts and leaves anything else in that directory untouched. This matters when `--path` points at a directory you also use for other things.
 
 ## Author
 

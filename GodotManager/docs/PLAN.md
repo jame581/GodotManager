@@ -112,13 +112,13 @@
 - Verbose diagnostic warnings (`--verbose` / `-V`) for all best-effort operations; moderate-risk operations (previous activation cleanup) always warn.
 
 ## Pending Features
-- ~~**Checksum validation**: populate and verify `Checksum` field during downloads.~~ ✅ Done (SHA256 computed during download and local archive import, stored in registry, shown in `list`).
-- **Resume support**: partially downloaded files resume capability.
+- ~~**Checksum validation**: populate and verify `Checksum` field during downloads.~~ ✅ Done (SHA-512 computed during download and local archive import, verified against upstream `SHA512-SUMS.txt` when available, stored in registry, shown in `list`).
+- ~~**Resume support**: partially downloaded files resume capability.~~ ✅ Done (HTTP Range resume across invocations via DownloadService).
 - ~~**Verbosity levels**: configurable logging/output detail.~~ ✅ Done (global `--verbose` / `-V` flag via `DiagnosticContext` + `VerboseInterceptor`).
 
 ## Next Steps
 - ~~Add checksum verification for downloads.~~ ✅ Done.
-- Explore resume support for interrupted downloads.
+- ~~Explore resume support for interrupted downloads.~~ ✅ Done.
 - ~~Consider caching fetched version data to reduce GitHub API calls.~~ ✅ Done (24h TTL, `--no-cache` flag, offline fallback).
 - ~~Extend dry-run to remove command.~~ ✅ Done.
 - ~~Add end-to-end CLI command tests.~~ ✅ Done (23 E2E tests via Spectre.Console.Testing CommandAppTester).
@@ -207,3 +207,36 @@ Replaced the Spectre.Console menu-driven TUI with a persistent two-panel Termina
 2. ✅ Fork `microsoft/winget-pkgs` to account
 3. ✅ Initial version exists in winget-pkgs
 4. ✅ Workflow integrated into release pipeline — subsequent releases auto-submit PRs
+
+## Phase 7 — Install-Flow Robustness (1.3.0) ✅ COMPLETE
+
+- **DownloadService**: managed download cache at `<config>/downloads/`, HTTP Range
+  resume across invocations guarded by an If-Range ETag, retry with backoff (three
+  attempts total). Not a content cache — a completed download is never reused to
+  skip a fetch; it only makes an interrupted transfer resumable.
+- **Checksum verification**: SHA-512 against `godotengine/godot-builds`'
+  `SHA512-SUMS.txt`, keyed on the post-redirect filename. Mismatch aborts, deletes
+  the archive, and clears the cache entry so the next run can't resume the bad
+  bytes; unobtainable sums (the normal case for some versions) fall back to
+  unverified and continue. Registry records `ChecksumAlgorithm` and
+  `ChecksumVerified`; pre-1.3.0 entries fail closed and read back as unverified.
+- **Staging extraction**: fresh installs extract to a sibling of the target and
+  swap atomically; `--force` merges instead, so unrelated files already in a
+  `--path` directory survive.
+- **Elevated installs**: the parent passes its verification result to the child,
+  which re-hashes the archive before honouring that claim rather than trusting the
+  payload — closes a user-to-admin file-swap window in the cache directory. The
+  parent also owns cache cleanup, since it is the one that downloaded.
+- **GodmanException**: expected failures render a message plus an actionable hint,
+  rendered in the command catch blocks (Spectre does not propagate to Program.cs).
+- **doctor**: reports download cache size and how many incomplete downloads are
+  genuinely resumable.
+- **Not exercised end to end**: the Windows elevated install path (UAC, the
+  `install-elevated` re-entry, parent/child checksum handoff) has unit coverage
+  only — no Windows machine was available during development. The TUI's
+  unverified-checksum banner (`InstallDialog.cs`) has no automated coverage either,
+  because Terminal.Gui's module initializer throws under the xunit test host; only
+  the pure formatting helpers it calls are unit tested. Both need a manual check
+  before release.
+
+Spec: `GodotManager/docs/superpowers/specs/2026-07-28-v1.3.0-install-robustness-design.md`
