@@ -211,9 +211,11 @@ Replaced the Spectre.Console menu-driven TUI with a persistent two-panel Termina
 ## Phase 7 — Install-Flow Robustness (1.3.0) ✅ COMPLETE
 
 - **DownloadService**: managed download cache at `<config>/downloads/`, HTTP Range
-  resume across invocations guarded by an If-Range ETag, retry with backoff (three
-  attempts total). Not a content cache — a completed download is never reused to
-  skip a fetch; it only makes an interrupted transfer resumable.
+  resume across invocations guarded by a `Content-Range` offset check on the
+  response (an `If-Range` ETag is layered on top when a prior ETag is known, but
+  the offset check is what makes resume safe even without one), retry with
+  backoff (three attempts total). Not a content cache — a completed download is
+  never reused to skip a fetch; it only makes an interrupted transfer resumable.
 - **Checksum verification**: SHA-512 against `godotengine/godot-builds`'
   `SHA512-SUMS.txt`, keyed on the post-redirect filename. Mismatch aborts, deletes
   the archive, and clears the cache entry so the next run can't resume the bad
