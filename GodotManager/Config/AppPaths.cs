@@ -16,6 +16,7 @@ internal sealed class AppPaths
     public string ConfigDirectory { get; }
     public string RegistryFile { get; }
     public string EnvScriptPath { get; }
+    public string DownloadCacheDirectory { get; }
     public string EnvVarName => "GODOT_HOME";
 
     private readonly string _userInstallRoot;
@@ -104,6 +105,7 @@ internal sealed class AppPaths
 
         RegistryFile = System.IO.Path.Combine(ConfigDirectory, "installs.json");
         EnvScriptPath = System.IO.Path.Combine(ConfigDirectory, "env.sh");
+        DownloadCacheDirectory = System.IO.Path.Combine(ConfigDirectory, "downloads");
 
         EnsureDirectories();
     }
@@ -148,6 +150,7 @@ internal sealed class AppPaths
     private void EnsureDirectories()
     {
         System.IO.Directory.CreateDirectory(ConfigDirectory);
+        System.IO.Directory.CreateDirectory(DownloadCacheDirectory);
         System.IO.Directory.CreateDirectory(_userShimDirectory);
         System.IO.Directory.CreateDirectory(_userInstallRoot);
 

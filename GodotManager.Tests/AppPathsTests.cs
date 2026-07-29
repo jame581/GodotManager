@@ -1,5 +1,6 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using Xunit;
@@ -162,5 +163,16 @@ public class AppPathsTests
             if (!binaryExisted)
                 File.Delete(binaryPath);
         }
+    }
+
+    [Fact]
+    public void DownloadCacheDirectory_IsUnderConfigDirectoryAndExists()
+    {
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Equal(
+            Path.Combine(fixture.Paths.ConfigDirectory, "downloads"),
+            fixture.Paths.DownloadCacheDirectory);
+        Assert.True(Directory.Exists(fixture.Paths.DownloadCacheDirectory));
     }
 }
