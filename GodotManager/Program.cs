@@ -63,6 +63,10 @@ catch (CommandRuntimeException ex)
     AnsiConsole.MarkupLineInterpolated($"[red]{ex.Message}[/]");
     return -1;
 }
+catch (GodmanException ex)
+{
+    return GodmanExceptionRenderer.Render("error:", ex);
+}
 catch (System.Exception ex)
 {
     AnsiConsole.WriteException(ex, ExceptionFormats.ShortenEverything | ExceptionFormats.ShowLinks);

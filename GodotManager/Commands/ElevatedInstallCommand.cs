@@ -62,6 +62,10 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
             return 0;
         }
+        catch (GodmanException ex)
+        {
+            return GodmanExceptionRenderer.Render("Install failed:", ex);
+        }
         catch (Exception ex)
         {
             return Fail(ex.Message);
@@ -70,8 +74,7 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
 
     private static int Fail(string message)
     {
-        AnsiConsole.MarkupLineInterpolated($"[red]Install failed:[/] {message}");
-        return -1;
+        return GodmanExceptionRenderer.Render("Install failed:", message);
     }
 
     internal sealed class Settings : CommandSettings
