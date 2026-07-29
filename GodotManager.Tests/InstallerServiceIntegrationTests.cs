@@ -1,3 +1,4 @@
+using GodotManager.Commands;
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
@@ -9,6 +10,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -869,6 +872,99 @@ public class InstallerServiceIntegrationTests : IDisposable
             Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "Godot_v4.5.1-stable_linux"),
             result.Path);
         Assert.True(result.ChecksumVerified, "the sums lookup must use the post-redirect name");
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task ElevatedPayload_CarriesTheParentsVerification_IntoTheChildsRegistryEntry()
+    {
+        // The Windows global install downloads in one process and installs in another.
+        // Everything below is that boundary except Process.Start itself: the parent's
+        // resolved plan is encoded exactly as RunElevatedInstallAsync encodes it, and
+        // decoded exactly as the elevated child decodes it. Left uncarried, the child
+        // re-hashes and writes ChecksumVerified = false over a download the parent did
+        // verify — and the install command then tells the user so.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var parentHash = ComputeSha512(mockArchive);
+        var target = Path.Combine(_fixture.TempRoot, "elevated-target");
+
+        var parentRequest = new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.Global,
+            null, mockArchive, target, false, false, false,
+            Known: new KnownChecksum(parentHash, "sha512", Verified: true));
+
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(InstallerService.BuildElevatedPayload(parentRequest))));
+
+        var payload = JsonSerializer.Deserialize<ElevatedInstallPayload>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(encoded)));
+        Assert.NotNull(payload);
+
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var result = await installer.InstallAsync(ElevatedInstallCommand.BuildRequest(payload));
+
+        Assert.Equal(parentHash, result.Checksum);
+        Assert.Equal("sha512", result.ChecksumAlgorithm);
+        Assert.True(result.ChecksumVerified, "the parent verified this archive; the child must not record otherwise");
+
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.True(Assert.Single(registry.Installs).ChecksumVerified);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenACarriedChecksumDoesNotMatchTheArchive_RefusesToInstall()
+    {
+        // The elevated child extracts an archive out of a directory the unelevated
+        // parent can write to. If those bytes changed after the parent hashed them,
+        // writing them into Program Files as administrator is precisely what must not
+        // happen — so the claim is re-checked against the file rather than believed.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var target = Path.Combine(_fixture.TempRoot, "swapped-target");
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, target, false, false, false,
+            Known: new KnownChecksum(new string('c', 128), "sha512", Verified: true))));
+
+        Assert.Contains("no longer the file that was checked", ex.Message);
+        Assert.False(Directory.Exists(target));
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithACarriedChecksumItCannotRecompute_RecordsItAsUnverified()
+    {
+        // A payload naming an algorithm this build does not compute cannot be checked
+        // against the archive, so its Verified claim is worth nothing and must not
+        // reach the registry. The install still proceeds — it is an unverified local
+        // archive, which is an ordinary thing to install.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var target = Path.Combine(_fixture.TempRoot, "unknown-algorithm-target");
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, target, false, false, false,
+            Known: new KnownChecksum(new string('c', 32), "md5", Verified: true)));
+
+        Assert.False(result.ChecksumVerified);
+        Assert.Equal(ComputeSha512(mockArchive), result.Checksum);
+        Assert.Equal("sha512", result.ChecksumAlgorithm);
 
         File.Delete(mockArchive);
     }

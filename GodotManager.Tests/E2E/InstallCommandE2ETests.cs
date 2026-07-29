@@ -129,6 +129,42 @@ public class InstallCommandE2ETests : IDisposable
         System.IO.File.Delete(mockArchive);
     }
 
+    [Fact]
+    public async Task Install_WhenTheDownloadIsVerified_DoesNotWarn()
+    {
+        // The command-layer half of the elevated-install gate. A Windows global install
+        // resolves its plan in the unelevated parent and writes its registry entry in
+        // the elevated child; if that entry comes back with ChecksumVerified = false the
+        // user is told a verified download could not be verified. Paired with
+        // Install_WhenAnAutoUrlInstallCannotBeVerified_WarnsTheUser above, this pins the
+        // message to the flag rather than to the mere presence of a ChecksumSource.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = System.IO.File.ReadAllBytes(mockArchive);
+        var httpClient = new HttpClient(new MockSumsHttpHandler(
+            archiveBytes, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt"));
+        var app = CliTestHarness.Create(_fixture, httpClient);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("could not be verified", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.True(Assert.Single(registry.Installs).ChecksumVerified);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
     /// <summary>
     /// Serves a real Godot-shaped archive for any request except the published
     /// SHA512-SUMS.txt, which answers 404 — the common upstream case of a release

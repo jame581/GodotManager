@@ -44,17 +44,7 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             return Fail("Invalid payload.");
         }
 
-        var request = new InstallRequest(
-            payload.Version,
-            payload.Edition,
-            payload.Platform,
-            payload.Scope,
-            DownloadUri: null,
-            payload.ArchivePath,
-            payload.InstallPath,
-            payload.Activate,
-            payload.Force,
-            DryRun: false);
+        var request = BuildRequest(payload);
 
         try
         {
@@ -71,6 +61,30 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             return Fail(ex.Message);
         }
     }
+
+    /// <summary>
+    /// Rebuilds the request the unelevated parent resolved. The checksum fields carry
+    /// the parent's verification result, which only it could obtain — it is the process
+    /// that downloaded the archive and compared it against the published sums. Without
+    /// them this install re-hashes the archive and records it as unverified, which is a
+    /// false statement about a download that was verified. InstallerService re-checks
+    /// the hash against the archive before honouring the claimed status.
+    /// </summary>
+    internal static InstallRequest BuildRequest(ElevatedInstallPayload payload) =>
+        new(
+            payload.Version,
+            payload.Edition,
+            payload.Platform,
+            payload.Scope,
+            DownloadUri: null,
+            payload.ArchivePath,
+            payload.InstallPath,
+            payload.Activate,
+            payload.Force,
+            DryRun: false,
+            Known: payload.Checksum is null
+                ? null
+                : new KnownChecksum(payload.Checksum, payload.ChecksumAlgorithm ?? "sha512", payload.ChecksumVerified));
 
     private static int Fail(string message)
     {

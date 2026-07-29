@@ -11,6 +11,14 @@ using System.Text.Json;
 
 namespace GodotManager.Services;
 
+/// <summary>
+/// A checksum some other process already computed for the archive being installed,
+/// together with whether that process matched it against the published sums. Set only
+/// on the Windows elevated install, the one flow where the process that downloads is
+/// not the process that installs.
+/// </summary>
+internal sealed record KnownChecksum(string Value, string Algorithm, bool Verified);
+
 internal sealed record InstallRequest(
     string Version,
     InstallEdition Edition,
@@ -22,7 +30,8 @@ internal sealed record InstallRequest(
     bool Activate,
     bool Force,
     bool DryRun = false,
-    ChecksumSource? Checksums = null);
+    ChecksumSource? Checksums = null,
+    KnownChecksum? Known = null);
 
 internal sealed record InstallPlan(
     InstallRequest Request,
@@ -40,7 +49,10 @@ internal sealed record ElevatedInstallPayload(
     string? ArchivePath,
     string? InstallPath,
     bool Activate,
-    bool Force);
+    bool Force,
+    string? Checksum = null,
+    string? ChecksumAlgorithm = null,
+    bool ChecksumVerified = false);
 
 internal sealed class InstallerService
 {
@@ -195,8 +207,38 @@ internal sealed class InstallerService
         }
 
         var plan = await ResolvePlanAsync(request, progress, cancellationToken);
-        var elevatedRequest = plan.Request with { DownloadUri = null, DryRun = false, InstallPath = plan.TargetDirectory };
-        await RunElevatedInstallAsync(elevatedRequest, cancellationToken);
+
+        // This process did the downloading and so is the only one that could compare
+        // the bytes against the published sums. Carrying that result across is what
+        // keeps the child's registry entry — and the marker `list` renders from it —
+        // an account of what actually happened rather than of what the child could
+        // still measure for itself.
+        var elevatedRequest = plan.Request with
+        {
+            DownloadUri = null,
+            DryRun = false,
+            InstallPath = plan.TargetDirectory,
+            Known = plan.Checksum is null
+                ? null
+                : new KnownChecksum(plan.Checksum, plan.ChecksumAlgorithm ?? "sha512", plan.ChecksumVerified)
+        };
+
+        try
+        {
+            await RunElevatedInstallAsync(elevatedRequest, cancellationToken);
+        }
+        finally
+        {
+            // The download happened here, so the cache entry is this process's to clean
+            // up: the child took the local-archive branch and its plan has no
+            // CacheFilePath at all. It has to happen after the child has exited, since
+            // the archive it is extracting is that very file. Non-null only for
+            // downloads, so a user-supplied --archive is never touched.
+            if (plan.CacheFilePath is not null)
+            {
+                _download.DeleteCacheEntry(plan.CacheFilePath);
+            }
+        }
 
         var registry = await _registry.LoadAsync(cancellationToken);
         var match = registry.Installs
@@ -233,6 +275,11 @@ internal sealed class InstallerService
             if (request.ArchivePath is not null && File.Exists(request.ArchivePath))
             {
                 checksum = await ComputeChecksumAsync(request.ArchivePath, cancellationToken);
+            }
+
+            if (request.Known is not null)
+            {
+                return ReconcileKnownChecksum(request, targetDir, checksum, request.Known);
             }
         }
         else if (request.ArchivePath is not null)
@@ -272,9 +319,53 @@ internal sealed class InstallerService
         return new InstallPlan(request, targetDir, checksum, checksum is null ? null : "sha512");
     }
 
-    private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
+    /// <summary>
+    /// Adopts a checksum another process computed for this archive.
+    /// </summary>
+    /// <remarks>
+    /// The claim arrives base64 on the command line of a process running as
+    /// administrator, so on its own it is an assertion, not evidence. The one thing
+    /// this process can establish for itself is that the archive it is about to
+    /// extract is the archive that was measured, so the hash is recomputed and
+    /// compared and a disagreement aborts the install. That window is real rather than
+    /// theoretical: the download lands in a cache directory the unelevated parent can
+    /// write, and the child extracts it with administrator rights.
+    ///
+    /// What stays taken on trust is <c>Verified</c> itself — proving it would mean
+    /// re-fetching the published sums inside the elevated process, turning a network
+    /// hiccup into a downgrade of an install that was verified. Accepting it costs
+    /// nothing extra, because a payload able to lie about <c>Verified</c> can equally
+    /// point <c>ArchivePath</c> and <c>InstallPath</c> anywhere, which the elevated
+    /// install already grants. Everything this method cannot check fails closed.
+    /// </remarks>
+    private InstallPlan ReconcileKnownChecksum(
+        InstallRequest request, string targetDir, string? computed, KnownChecksum known)
     {
-        var payload = new ElevatedInstallPayload(
+        if (computed is null || !string.Equals(known.Algorithm, "sha512", StringComparison.OrdinalIgnoreCase))
+        {
+            // Nothing to compare against: no readable archive, or an algorithm this
+            // build does not compute. Keep whatever was measured here and drop the
+            // claimed status rather than record a claim that was never checked.
+            _diagnostics?.Warn(
+                $"Ignoring a carried {known.Algorithm} checksum that could not be re-checked against the archive.");
+            return new InstallPlan(request, targetDir, computed, computed is null ? null : "sha512");
+        }
+
+        if (!string.Equals(known.Value, computed, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new GodmanException(
+                "The archive changed after it was downloaded, so it is no longer the file that was checked.",
+                "Re-run the install. If it happens again, something else on this machine is writing to the download cache.");
+        }
+
+        return new InstallPlan(request, targetDir, computed, "sha512", known.Verified);
+    }
+
+    /// <summary>
+    /// Projects a request onto the wire format the elevated child is launched with.
+    /// </summary>
+    internal static ElevatedInstallPayload BuildElevatedPayload(InstallRequest request) =>
+        new(
             request.Version,
             request.Edition,
             request.Platform,
@@ -282,7 +373,14 @@ internal sealed class InstallerService
             request.ArchivePath,
             request.InstallPath,
             request.Activate,
-            request.Force);
+            request.Force,
+            request.Known?.Value,
+            request.Known?.Algorithm,
+            request.Known?.Verified ?? false);
+
+    private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
+    {
+        var payload = BuildElevatedPayload(request);
 
         var json = JsonSerializer.Serialize(payload);
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
