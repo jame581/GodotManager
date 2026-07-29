@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -163,7 +164,10 @@ public class InstallerServiceIntegrationTests : IDisposable
 
         var customPath = Path.Combine(_fixture.TempRoot, "custom-install");
         Directory.CreateDirectory(customPath);
-        File.WriteAllText(Path.Combine(customPath, "existing.txt"), "old content");
+
+        // The archive also contains README.txt, so this stale copy must be replaced.
+        var readme = Path.Combine(customPath, "README.txt");
+        File.WriteAllText(readme, "old content");
 
         var request = new InstallRequest(
             Version: "4.5.1",
@@ -184,6 +188,7 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(customPath, result.Path);
         Assert.True(Directory.Exists(result.Path));
+        Assert.Equal("Mock Godot Engine", (await File.ReadAllTextAsync(readme)).Trim());
 
         // Cleanup
         File.Delete(mockArchive);
@@ -445,6 +450,143 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.Equal(128, result.Checksum!.Length);
         Assert.Equal("sha512", result.ChecksumAlgorithm);
         Assert.False(result.ChecksumVerified);   // a local archive has nothing to verify against
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenExtractionFails_LeavesNoTargetOrStagingDirectory()
+    {
+        var corrupt = Path.Combine(_fixture.TempRoot, "corrupt.zip");
+        await File.WriteAllTextAsync(corrupt, "this is not a zip file");
+
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, corrupt, null, false, false, false)));
+
+        Assert.Empty(Directory.GetDirectories(_fixture.Paths.GetInstallRoot(InstallScope.User)));
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenCancelledDuringExtraction_LeavesNoTargetOrStagingDirectory()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        using var cts = new CancellationTokenSource();
+
+        // Extraction reports progress per entry and then honours the token, so
+        // cancelling from the callback aborts mid-extraction.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => installer.InstallAsync(
+            new InstallRequest(
+                "4.5.1",
+                InstallEdition.Standard,
+                OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+                InstallScope.User,
+                null, mockArchive, null, false, false, false),
+            _ => cts.Cancel(),
+            cts.Token));
+
+        Assert.Empty(Directory.GetDirectories(_fixture.Paths.GetInstallRoot(InstallScope.User)));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithForce_PreservesUnrelatedFilesInTheTarget()
+    {
+        // --path accepts any directory. Replacing rather than merging would delete
+        // whatever else lives there.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var customPath = Path.Combine(_fixture.TempRoot, "shared-dir");
+        Directory.CreateDirectory(customPath);
+        var unrelated = Path.Combine(customPath, "my-notes.txt");
+        await File.WriteAllTextAsync(unrelated, "do not delete me");
+
+        var nestedUnrelated = Path.Combine(customPath, "projects", "notes.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(nestedUnrelated)!);
+        await File.WriteAllTextAsync(nestedUnrelated, "do not delete me either");
+
+        await installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, customPath, false, Force: true, DryRun: false));
+
+        Assert.True(File.Exists(unrelated), "--force must merge, not replace");
+        Assert.Equal("do not delete me", (await File.ReadAllTextAsync(unrelated)).Trim());
+        Assert.True(File.Exists(nestedUnrelated), "--force must not remove unrelated subdirectories");
+        Assert.Equal("do not delete me either", (await File.ReadAllTextAsync(nestedUnrelated)).Trim());
+
+        // ...and the archive still landed.
+        Assert.True(File.Exists(Path.Combine(customPath, "README.txt")));
+
+        // The merge must not leave its staging directory beside the target.
+        Assert.Empty(Directory.GetDirectories(_fixture.TempRoot, ".staging-*"));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithForcedExtractionFailure_LeavesExistingInstallIntact()
+    {
+        var goodArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var first = await installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, goodArchive, null, false, false, false));
+
+        var sentinel = Path.Combine(first.Path, "sentinel.txt");
+        await File.WriteAllTextAsync(sentinel, "original install");
+
+        var corrupt = Path.Combine(_fixture.TempRoot, "corrupt2.zip");
+        await File.WriteAllTextAsync(corrupt, "not a zip");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, corrupt, first.Path, false, Force: true, DryRun: false)));
+
+        Assert.True(File.Exists(sentinel), "a failed forced install must not damage the existing one");
+        Assert.Equal("original install", (await File.ReadAllTextAsync(sentinel)).Trim());
+
+        // The failed attempt must not leave staging behind next to the install either.
+        Assert.Single(Directory.GetDirectories(_fixture.Paths.GetInstallRoot(InstallScope.User)));
+
+        File.Delete(goodArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithPathWhoseParentDoesNotExist_Succeeds()
+    {
+        // Directory.CreateDirectory used to build the whole chain; Directory.Move
+        // does not, so the parent must be created explicitly.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var nested = Path.Combine(_fixture.TempRoot, "tools", "godot", "4.5.1");
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, nested, false, false, false));
+
+        Assert.Equal(nested, result.Path);
+        Assert.NotEmpty(Directory.GetFiles(nested, "*", SearchOption.AllDirectories));
+
+        // A fresh install swaps staging into place; nothing may be left beside it.
+        Assert.Equal(
+            new[] { nested },
+            Directory.GetDirectories(Path.GetDirectoryName(nested)!));
 
         File.Delete(mockArchive);
     }

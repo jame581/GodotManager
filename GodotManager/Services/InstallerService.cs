@@ -76,56 +76,68 @@ internal sealed class InstallerService
             throw new IOException($"Install directory already exists: {targetDir}. Use --force to overwrite.");
         }
 
-        Directory.CreateDirectory(targetDir);
-
         // Get archive path if not already set from earlier download
-        string archivePath;
-        if (request.ArchivePath is not null)
-        {
-            archivePath = request.ArchivePath;
-        }
-        else
+        if (request.ArchivePath is null)
         {
             throw new InvalidOperationException("Archive path was not resolved.");
         }
 
-        await ExtractAsync(archivePath, targetDir, progress, cancellationToken);
+        var archivePath = request.ArchivePath;
 
-        // Ensure Linux Godot binary is executable after extraction
-        if (request.Platform == InstallPlatform.Linux)
+        var targetParent = Path.GetDirectoryName(targetDir);
+        if (string.IsNullOrEmpty(targetParent))
         {
-            try
+            throw new GodmanException(
+                $"Cannot determine the parent directory of {targetDir}",
+                "Pass an absolute path to --path.");
+        }
+
+        // Directory.Move requires the destination's parent to exist, and requires
+        // both ends on one volume. Deriving staging from the target's own parent
+        // satisfies both for any --path, not just the default install root.
+        Directory.CreateDirectory(targetParent);
+        var stagingDir = Path.Combine(targetParent, $".staging-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
+
+        try
+        {
+            await ExtractAsync(archivePath, stagingDir, progress, cancellationToken);
+
+            if (Directory.Exists(targetDir))
             {
-                string? binary = null;
-                var candidates = new[]
-                {
-                    Path.Combine(targetDir, "godot"),
-                    Path.Combine(targetDir, "Godot"),
-                    Path.Combine(targetDir, "Godot_v4"),
-                    Path.Combine(targetDir, "Godot_v3")
-                };
-
-                binary = Array.Find(candidates, File.Exists);
-
-                if (binary == null)
-                {
-                    var files = Directory.EnumerateFiles(targetDir, "*", SearchOption.AllDirectories);
-                    binary = files.FirstOrDefault(f =>
-                    {
-                        var name = Path.GetFileName(f);
-                        return name.StartsWith("Godot") || name.StartsWith("godot");
-                    });
-                }
-
-                if (binary != null)
-                {
-                    UnixFilePermissions.MakeExecutable(binary, _diagnostics);
-                }
+                // --force onto an existing directory merges. Replacing would delete
+                // unrelated files, because --path accepts an arbitrary directory.
+                MergeDirectory(stagingDir, targetDir);
+                TryDeleteStagingDirectory(stagingDir);
             }
-            catch (Exception ex)
+            else
             {
-                _diagnostics?.Warn($"Failed to set executable permission on Godot binary: {ex.Message}");
+                Directory.Move(stagingDir, targetDir);
             }
+
+            // Ensure the Linux Godot binary is executable. This runs on targetDir
+            // after the swap or merge, so it applies to both branches and is not
+            // undone by File.Copy.
+            if (request.Platform == InstallPlatform.Linux)
+            {
+                MakeGodotBinaryExecutable(targetDir);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            TryDeleteStagingDirectory(stagingDir);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            TryDeleteStagingDirectory(stagingDir);
+
+            throw new GodmanException(
+                $"Installation failed while extracting to {targetDir}: {ex.Message}",
+                Directory.Exists(targetDir)
+                    ? "The existing install was left in place."
+                    : "No partial install was left behind.",
+                ex);
         }
 
         var entry = new InstallEntry
@@ -416,6 +428,75 @@ internal sealed class InstallerService
         await using var stream = File.OpenRead(filePath);
         var hash = await sha512.ComputeHashAsync(stream, cancellationToken);
         return Convert.ToHexStringLower(hash);
+    }
+
+    /// <summary>
+    /// Copies <paramref name="source"/> over <paramref name="destination"/>, overwriting
+    /// collisions and leaving everything else in the destination untouched.
+    /// </summary>
+    private static void MergeDirectory(string source, string destination)
+    {
+        foreach (var dir in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, dir)));
+        }
+
+        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target, overwrite: true);
+        }
+    }
+
+    private void MakeGodotBinaryExecutable(string directory)
+    {
+        try
+        {
+            var candidates = new[]
+            {
+                Path.Combine(directory, "godot"),
+                Path.Combine(directory, "Godot"),
+                Path.Combine(directory, "Godot_v4"),
+                Path.Combine(directory, "Godot_v3")
+            };
+
+            var binary = Array.Find(candidates, File.Exists);
+
+            if (binary == null)
+            {
+                var files = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories);
+                binary = files.FirstOrDefault(f =>
+                {
+                    var name = Path.GetFileName(f);
+                    return name.StartsWith("Godot") || name.StartsWith("godot");
+                });
+            }
+
+            if (binary != null)
+            {
+                UnixFilePermissions.MakeExecutable(binary, _diagnostics);
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Failed to set executable permission on Godot binary: {ex.Message}");
+        }
+    }
+
+    private void TryDeleteStagingDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Failed to clean up staging directory {path}: {ex.Message}");
+        }
     }
 
     private static async Task ExtractAsync(string archivePath, string destination, Action<double>? progress, CancellationToken cancellationToken)
