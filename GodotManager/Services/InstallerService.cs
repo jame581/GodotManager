@@ -21,7 +21,8 @@ internal sealed record InstallRequest(
     string? InstallPath,
     bool Activate,
     bool Force,
-    bool DryRun = false);
+    bool DryRun = false,
+    ChecksumSource? Checksums = null);
 
 internal sealed record InstallPlan(
     InstallRequest Request,
@@ -47,15 +48,21 @@ internal sealed class InstallerService
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
     private readonly DiagnosticContext? _diagnostics;
-    private readonly HttpClient _httpClient;
+    private readonly DownloadService _download;
 
-    public InstallerService(AppPaths paths, RegistryService registry, EnvironmentService environment, HttpClient? httpClient = null, DiagnosticContext? diagnostics = null)
+    public InstallerService(
+        AppPaths paths,
+        RegistryService registry,
+        EnvironmentService environment,
+        HttpClient? httpClient = null,
+        DiagnosticContext? diagnostics = null,
+        DownloadService? downloadService = null)
     {
         _paths = paths;
         _registry = registry;
         _environment = environment;
         _diagnostics = diagnostics;
-        _httpClient = httpClient ?? new HttpClient();
+        _download = downloadService ?? new DownloadService(paths, httpClient, diagnostics);
     }
 
     public async Task<InstallEntry> InstallAsync(InstallRequest request, Action<double>? progress = null, CancellationToken cancellationToken = default)
@@ -170,6 +177,13 @@ internal sealed class InstallerService
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+
+        // Non-null only for downloads, so a user-supplied --archive is never touched.
+        if (plan.CacheFilePath is not null)
+        {
+            _download.DeleteCacheEntry(plan.CacheFilePath);
+        }
+
         return entry;
     }
 
@@ -204,7 +218,6 @@ internal sealed class InstallerService
             throw new InvalidOperationException("Provide either a download URL or a local archive path.");
         }
 
-        string? archiveName = null;
         string? checksum = null;
         string targetDir;
 
@@ -224,8 +237,7 @@ internal sealed class InstallerService
         }
         else if (request.ArchivePath is not null)
         {
-            archiveName = Path.GetFileName(request.ArchivePath);
-            var folderName = BuildInstallFolderName(request, archiveName);
+            var folderName = BuildInstallFolderName(request, Path.GetFileName(request.ArchivePath));
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
             if (File.Exists(request.ArchivePath))
             {
@@ -234,12 +246,23 @@ internal sealed class InstallerService
         }
         else if (request.DownloadUri is not null)
         {
-            var (tempPath, downloadedName, downloadChecksum) = await DownloadAsync(request.DownloadUri, cancellationToken, progress);
-            archiveName = downloadedName;
-            checksum = downloadChecksum;
-            var folderName = BuildInstallFolderName(request, archiveName);
+            var outcome = await _download.DownloadAsync(
+                request.DownloadUri, request.Checksums, progress, cancellationToken);
+
+            // Folder naming uses the PRE-redirect name, exactly as before 1.3.0.
+            // outcome.ResolvedFileName is the post-redirect name and is only ever the
+            // SHA512-SUMS.txt lookup key; using it here would rename every install.
+            var folderName = BuildInstallFolderName(request, outcome.ArchiveName);
             targetDir = Path.Combine(_paths.GetInstallRoot(request.Scope), folderName);
-            request = request with { ArchivePath = tempPath };
+            request = request with { ArchivePath = outcome.FilePath };
+
+            return new InstallPlan(
+                request,
+                targetDir,
+                outcome.Sha512,
+                "sha512",
+                outcome.Status == ChecksumStatus.Verified,
+                outcome.FilePath);
         }
         else
         {
@@ -393,46 +416,6 @@ internal sealed class InstallerService
         }
 
         return (result, removedSuffix);
-    }
-
-    private async Task<(string TempPath, string ArchiveName, string Checksum)> DownloadAsync(Uri uri, CancellationToken cancellationToken, Action<double>? progress)
-    {
-        using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        // Extract filename from Content-Disposition header or URL
-        var archiveName = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
-                         ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
-                         ?? Path.GetFileName(uri.LocalPath);
-
-        var total = response.Content.Headers.ContentLength ?? -1;
-        var tempFile = Path.GetTempFileName();
-
-        using var sha512 = SHA512.Create();
-        await using var network = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var file = File.Create(tempFile);
-        var buffer = new byte[81920];
-        long read = 0;
-        int r;
-
-        while ((r = await network.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
-        {
-            await file.WriteAsync(buffer.AsMemory(0, r), cancellationToken);
-            sha512.TransformBlock(buffer, 0, r, null, 0);
-            read += r;
-
-            if (total > 0)
-            {
-                var pct = (double)read / total * 100d;
-                progress?.Invoke(pct);
-            }
-        }
-
-        sha512.TransformFinalBlock([], 0, 0);
-        var checksum = Convert.ToHexStringLower(sha512.Hash!);
-
-        progress?.Invoke(100);
-        return (tempFile, archiveName, checksum);
     }
 
     internal static async Task<string> ComputeChecksumAsync(string filePath, CancellationToken cancellationToken = default)

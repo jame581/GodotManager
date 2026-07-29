@@ -26,6 +26,7 @@ internal static class CliTestHarness
         services.AddSingleton(fixture.Registry);
         services.AddSingleton(fixture.Environment);
         services.AddSingleton(httpClient ?? new HttpClient());
+        services.AddSingleton<DownloadService>();
         services.AddSingleton<InstallerService>();
         services.AddSingleton<GodotDownloadUrlBuilder>();
         services.AddSingleton<GodotVersionFetcher>();

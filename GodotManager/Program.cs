@@ -14,6 +14,7 @@ services.AddSingleton(diagnostics);
 services.AddSingleton<AppPaths>();
 services.AddSingleton<RegistryService>();
 services.AddSingleton<EnvironmentService>();
+services.AddSingleton<DownloadService>();
 services.AddSingleton<InstallerService>();
 services.AddSingleton<HttpClient>();
 services.AddSingleton<GodotDownloadUrlBuilder>();

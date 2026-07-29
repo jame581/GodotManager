@@ -40,6 +40,12 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 }
             }
 
+            // Verification is only possible when we built the URL ourselves and so
+            // know which upstream release it belongs to.
+            var checksums = (string.IsNullOrWhiteSpace(settings.Url) && string.IsNullOrWhiteSpace(settings.ArchivePath))
+                ? new ChecksumSource(settings.Version)
+                : null;
+
             var request = new InstallRequest(
                 settings.Version,
                 settings.Edition,
@@ -50,7 +56,8 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 settings.InstallPath,
                 settings.Activate,
                 settings.Force,
-                settings.DryRun);
+                settings.DryRun,
+                checksums);
 
             if (settings.DryRun)
             {
@@ -84,6 +91,19 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                     return await _installer.InstallWithElevationAsync(request, progress);
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
+
+            // Only when verification was attempted and could not be completed. A --url
+            // or --archive install has no published sums by definition, and saying so
+            // every time would be noise. The reason itself is a verbose-only diagnostic
+            // from DownloadService: unconditional writes belong here, in the command
+            // layer, not in a service the TUI also runs in-process.
+            if (checksums is not null && !result.ChecksumVerified)
+            {
+                DiagnosticContext.WarnAlways(
+                    "this download could not be verified against the checksums published " +
+                    "upstream. Re-run with --verbose to see why.");
+            }
+
             return 0;
         }
         catch (GodmanException ex)

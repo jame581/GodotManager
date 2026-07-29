@@ -6,6 +6,7 @@ using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading;
@@ -700,6 +701,174 @@ public class InstallerServiceIntegrationTests : IDisposable
         Assert.Equal(
             new[] { nested },
             Directory.GetDirectories(Path.GetDirectoryName(nested)!));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_AfterSuccessfulDownload_EmptiesTheDownloadCache()
+    {
+        // Downloads now land in the managed cache rather than a temp file, so the
+        // install has to clean up after itself or every install leaks an archive.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive, "Godot_v4.5.1-stable_linux.x86_64.zip"));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
+
+        await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            new Uri("https://test.invalid/godot.zip"),
+            null, null, false, false, false));
+
+        Assert.Empty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithLocalArchive_DoesNotDeleteTheUsersFile()
+    {
+        // The cache cleanup keys off the plan's CacheFilePath, which is null for a
+        // local archive. Cleaning up the resolved ArchivePath instead would delete
+        // the file the user pointed at.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, null, false, false, false));
+
+        Assert.True(File.Exists(mockArchive), "a user-supplied --archive must never be deleted");
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_FromDownload_KeepsTheExistingFolderNamingScheme()
+    {
+        // The sums lookup needs the post-redirect filename, but folder naming must
+        // keep using the request URI or every existing install directory is orphaned.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            InstallPlatform.Linux,
+            InstallScope.User,
+            new Uri("https://downloads.godotengine.org/?version=4.5.1&flavor=stable&slug=linux.x86_64.zip"),
+            null, null, false, false, false));
+
+        // No filename in the request URI and no Content-Disposition => deterministic fallback.
+        Assert.EndsWith("4.5.1-standard-linux-user", result.Path);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithPublishedSums_RecordsAVerifiedChecksum()
+    {
+        // The registry's ChecksumVerified flag is only worth anything if it reflects
+        // a real comparison against SHA512-SUMS.txt rather than defaulting.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+        var handler = new MockSumsHttpHandler(archiveBytes, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt");
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(handler));
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            InstallPlatform.Linux,
+            InstallScope.User,
+            new Uri("https://test.invalid/godot.zip"),
+            null, null, false, false, false,
+            Checksums: new ChecksumSource("4.5.1")));
+
+        Assert.True(result.ChecksumVerified, "a download matching the published sums must be recorded as verified");
+        Assert.Equal("sha512", result.ChecksumAlgorithm);
+        Assert.Equal(Convert.ToHexStringLower(SHA512.HashData(archiveBytes)), result.Checksum);
+
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.True(Assert.Single(registry.Installs).ChecksumVerified);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_FromACustomUrl_RecordsTheChecksumAsUnverified()
+    {
+        // No ChecksumSource means no upstream sums exist to compare against, so the
+        // hash is recorded but must not claim to have been verified.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            InstallPlatform.Linux,
+            InstallScope.User,
+            new Uri("https://test.invalid/godot.zip"),
+            null, null, false, false, false));
+
+        Assert.NotNull(result.Checksum);
+        Assert.Equal("sha512", result.ChecksumAlgorithm);
+        Assert.False(result.ChecksumVerified);
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenTheResolvedNameDiffers_UsesEachNameForItsOwnPurpose()
+    {
+        // DownloadOutcome carries two names for two jobs: ArchiveName (pre-redirect)
+        // decides the install folder, ResolvedFileName (post-redirect) is the sums
+        // lookup key. The mock deliberately makes them disagree — the response has no
+        // Content-Disposition and reports a CDN blob as its final URI, while the sums
+        // file is keyed on that blob. Swapping the two fails both assertions: the
+        // folder would be named after the blob, and the lookup would miss.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+        var sums = $"{Convert.ToHexStringLower(SHA512.HashData(archiveBytes))}  9f2c1ab4.bin\n";
+
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(sums) };
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(archiveBytes),
+                RequestMessage = new HttpRequestMessage(
+                    HttpMethod.Get, new Uri("https://cdn.invalid/objects/9f2c1ab4.bin"))
+            };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            return ok;
+        });
+
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, new HttpClient(handler));
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            InstallPlatform.Linux,
+            InstallScope.User,
+            new Uri("https://downloads.godotengine.org/Godot_v4.5.1-stable_linux.x86_64.zip"),
+            null, null, false, false, false,
+            Checksums: new ChecksumSource("4.5.1")));
+
+        Assert.Equal(
+            Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "Godot_v4.5.1-stable_linux"),
+            result.Path);
+        Assert.True(result.ChecksumVerified, "the sums lookup must use the post-redirect name");
 
         File.Delete(mockArchive);
     }

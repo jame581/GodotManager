@@ -299,9 +299,30 @@ public class DownloadServiceTests : IDisposable
         var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
         var service = CreateService(handler);
 
-        await Assert.ThrowsAsync<TransientDownloadException>(() => service.DownloadAsync(TestUri, checksums: null, progress: null));
+        await Assert.ThrowsAsync<GodmanException>(() => service.DownloadAsync(TestUri, checksums: null, progress: null));
 
         Assert.Equal(3, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenTransientFailurePersists_SurfacesAnActionableFailure()
+    {
+        // TransientDownloadException is not a GodmanException, so letting it escape
+        // means GodmanExceptionRenderer does not recognise it and a persistent 503
+        // reaches the user as a raw stack trace. Retry exhaustion is a normal,
+        // expected outcome and has to read like one.
+        var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var service = CreateService(handler);
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(
+            () => service.DownloadAsync(TestUri, checksums: null, progress: null));
+
+        Assert.False(string.IsNullOrWhiteSpace(ex.Hint), "an exhausted download must name a remedy");
+        Assert.Contains("503", ex.Message);
+
+        // The transient is preserved rather than swallowed, so --verbose and any
+        // future programmatic caller can still see what actually failed.
+        Assert.IsType<TransientDownloadException>(ex.InnerException);
     }
 
     [Fact]

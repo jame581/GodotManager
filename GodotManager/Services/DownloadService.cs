@@ -161,6 +161,21 @@ internal sealed class DownloadService
                 _diagnostics?.Warn($"Download attempt {attempt + 1} failed ({ex.Message}); retrying.");
                 await Task.Delay(_backoff[attempt], cancellationToken);
             }
+            catch (Exception ex) when (IsRetryable(ex, cancellationToken))
+            {
+                // Retries are exhausted. Everything IsRetryable accepts —
+                // TransientDownloadException included — is outside the GodmanException
+                // hierarchy, so escaping here would reach the user as a stack trace
+                // instead of a rendered message plus hint. Wrapping at the throw site
+                // rather than at one call site covers every caller of this service, and
+                // the original rides along as InnerException so nothing is lost.
+                throw new GodmanException(
+                    $"Download failed after {_backoff.Length + 1} attempts: {ex.Message}",
+                    "Check your network connection and try again. If the server keeps " +
+                    "returning an error, wait and retry later, or pass --url to install " +
+                    "from a mirror.",
+                    ex);
+            }
         }
     }
 

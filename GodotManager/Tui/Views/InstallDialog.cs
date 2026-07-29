@@ -141,10 +141,14 @@ internal sealed class InstallDialog : Dialog
         _statusLabel.Text = "Starting install...";
         _installButton.Visible = false;
 
+        // TryBuildUri above always produces an upstream release URL, so a
+        // ChecksumSource is always correct here. Named, because a positional
+        // argument in this position would bind to DryRun.
         var request = new InstallRequest(
             version, edition, platform, scope,
             uri, null, null,
-            Activate: true, Force: false);
+            Activate: true, Force: false,
+            Checksums: new ChecksumSource(version));
 
         try
         {

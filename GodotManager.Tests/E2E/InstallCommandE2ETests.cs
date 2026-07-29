@@ -1,5 +1,7 @@
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Xunit;
@@ -74,6 +76,114 @@ public class InstallCommandE2ETests : IDisposable
         Assert.Single(registry.Installs);
 
         System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WhenAnAutoUrlInstallCannotBeVerified_WarnsTheUser()
+    {
+        // Only an auto-built URL identifies an upstream release, so only it gets a
+        // ChecksumSource — and only then is "could not verify" worth saying.
+        var app = CliTestHarness.Create(_fixture, ArchiveWithoutSums(out var mockArchive));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("could not be verified", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithACustomUrl_DoesNotWarnAboutVerification()
+    {
+        // A --url install has no published sums by definition. Warning here would
+        // fire on every such install and train the user to ignore the warning.
+        var app = CliTestHarness.Create(_fixture, ArchiveWithoutSums(out var mockArchive));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--url", "https://test.invalid/godot.zip", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("could not be verified", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    /// <summary>
+    /// Serves a real Godot-shaped archive for any request except the published
+    /// SHA512-SUMS.txt, which answers 404 — the common upstream case of a release
+    /// with no published checksums.
+    /// </summary>
+    private static HttpClient ArchiveWithoutSums(out string mockArchive)
+    {
+        mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = System.IO.File.ReadAllBytes(mockArchive);
+
+        return new HttpClient(new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            return ok;
+        }));
+    }
+
+    [Fact]
+    public async Task Install_WhenTheServerKeepsFailing_RendersAnActionableErrorNotAStackTrace()
+    {
+        // Now that installs actually go through DownloadService, an exhausted retry
+        // loop is a live user-facing path. TransientDownloadException is outside the
+        // GodmanException hierarchy, so an unwrapped one renders as a stack trace.
+        var httpClient = new HttpClient(new SequencedHttpHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+        var app = CliTestHarness.Create(_fixture, httpClient);
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console, so it has to be redirected to capture the rendered failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--url", "https://test.invalid/godot.zip", "--platform", platform]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Install failed:", result.Output);
+            Assert.Contains("hint:", result.Output);
+            Assert.DoesNotContain("TransientDownloadException", result.Output);
+            Assert.DoesNotContain("GodotManager.Services.DownloadService", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
     }
 
     [Fact]
