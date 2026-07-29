@@ -124,6 +124,16 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 var partFiles = cacheFiles.Where(f => f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)).ToList();
                 var partials = partFiles.Count;
 
+                // A completed archive with no partial sitting next to it is the
+                // normal outcome of an install that failed after the download
+                // finished but before extraction succeeded: ResolvePlanAsync runs
+                // the download (and the promotion from .part to .archive) before
+                // InstallAsync's target-exists check, so a pre-existing target
+                // without --force, or a failure during extraction, leaves exactly
+                // this behind with no .part anywhere in sight.
+                var completedArchives = cacheFiles.Count(
+                    f => f.EndsWith(".archive", StringComparison.OrdinalIgnoreCase));
+
                 // A .part is only resumable when its .json sidecar (URL + ETag) is
                 // still present -- see the cache-lifecycle invariant in DownloadService:
                 // without it there is no If-Range guard, so DownloadAsync discards the
@@ -144,6 +154,19 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                     {
                         AnsiConsole.MarkupLineInterpolated(
                             $"[yellow]  {partials} incomplete download(s)[/], {resumablePartials} resumable.");
+                    }
+
+                    if (completedArchives > 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"[yellow]  {completedArchives} completed archive(s)[/] left over from an install that did not finish.");
+                    }
+
+                    // Any leftover cache file, partial or completed, is safe to
+                    // discard -- gating this hint on partials alone missed the
+                    // completed-archive case, which is now the more common one.
+                    if (partials > 0 || completedArchives > 0)
+                    {
                         AnsiConsole.MarkupLine("[grey]  Run 'godman clean' to discard them.[/]");
                     }
                 }

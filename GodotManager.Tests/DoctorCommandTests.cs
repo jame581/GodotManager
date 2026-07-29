@@ -108,8 +108,11 @@ public class DoctorCommandTests : IDisposable
             var result = await app.RunAsync(["doctor"]);
 
             Assert.Equal(0, result.ExitCode);
-            // Positive assertion proving the redirected channel actually carried
-            // doctor's output, not just that "1 resumable" is absent by luck.
+            // Three positive assertions on the redirected channel, ending with the
+            // specific "0 resumable" count: together they prove doctor actually
+            // rendered a report naming this orphaned .part as unresumable, rather
+            // than the assertions merely passing because the redirect captured
+            // nothing at all.
             Assert.Contains("Download cache", result.Output);
             Assert.Contains("incomplete download", result.Output, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("0 resumable", result.Output);
@@ -144,6 +147,40 @@ public class DoctorCommandTests : IDisposable
             Assert.Contains("Download cache", result.Output);
             Assert.Contains("incomplete download", result.Output, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("1 resumable", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithOnlyACompletedArchive_StillOffersTheCleanupHint()
+    {
+        // A completed .archive with no .part next to it is the normal outcome of an
+        // install that failed after the download finished but before extraction
+        // succeeded: ResolvePlanAsync promotes the .part to .archive before
+        // InstallAsync's own target-exists check ever runs. Gating the cleanup hint
+        // on "partials > 0" alone missed this case entirely -- a cache holding only
+        // a stale multi-hundred-MB archive was reported in yellow with no remedy.
+        await File.WriteAllBytesAsync(
+            Path.Combine(_fixture.Paths.DownloadCacheDirectory, "deadbeefdeadbeef.archive"),
+            new byte[4096]);
+
+        var app = CliTestHarness.Create(_fixture);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Download cache", result.Output);
+            Assert.Contains("completed archive", result.Output, StringComparison.OrdinalIgnoreCase);
+            // The point of this test: no partials exist, yet the remedy still shows.
+            Assert.DoesNotContain("incomplete download", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("godman clean", result.Output);
         }
         finally
         {
