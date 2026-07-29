@@ -1,6 +1,7 @@
 using GodotManager.Tests.Helpers;
 using Spectre.Console;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -299,5 +300,71 @@ public class InstallCommandE2ETests : IDisposable
         Assert.NotNull(registry.ActiveId);
 
         System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithMismatchedSums_FailsAndRegistersNothing()
+    {
+        // Every other install test passes --url or --archive, so the auto-URL path --
+        // the only one that supplies a ChecksumSource -- has had no coverage through
+        // the real CLI entry point until this test and the one below.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+
+        // Auto-URL install (no --url, no --archive) => a ChecksumSource is supplied,
+        // so the sums file is fetched and must match.
+        var handler = new MockSumsHttpHandler(
+            archiveBytes,
+            "Godot_v4.5.1-stable_linux.x86_64.zip",
+            "SHA512-SUMS.txt",
+            overrideHash: new string('a', 128));
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console (CommandAppTester wires TestConsole into Settings.Console, a
+        // separate field), so it has to be redirected here to capture the
+        // rendered failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", "Linux"]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Checksum mismatch", result.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+        Assert.Empty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithMatchingSums_RecordsVerified()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+
+        var handler = new MockSumsHttpHandler(
+            archiveBytes, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt");
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", "Linux"]);
+
+        Assert.Equal(0, result.ExitCode);
+
+        var registry = await _fixture.Registry.LoadAsync();
+        var entry = Assert.Single(registry.Installs);
+        Assert.True(entry.ChecksumVerified, "an auto-URL install with matching sums must record ChecksumVerified");
+        Assert.Equal("sha512", entry.ChecksumAlgorithm);
+
+        File.Delete(mockArchive);
     }
 }

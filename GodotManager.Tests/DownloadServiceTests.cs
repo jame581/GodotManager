@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
+using Spectre.Console.Testing;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -42,8 +44,8 @@ public class DownloadServiceTests : IDisposable
         return bytes;
     }
 
-    private DownloadService CreateService(HttpMessageHandler handler) =>
-        new(_fixture.Paths, new HttpClient(handler), diagnostics: null, backoff: NoBackoff);
+    private DownloadService CreateService(HttpMessageHandler handler, DiagnosticContext? diagnostics = null) =>
+        new(_fixture.Paths, new HttpClient(handler), diagnostics, backoff: NoBackoff);
 
     private string CacheFile(string extension) =>
         Path.Combine(_fixture.Paths.DownloadCacheDirectory, DownloadService.ComputeCacheKey(TestUri) + extension);
@@ -619,5 +621,233 @@ public class DownloadServiceTests : IDisposable
 
         Assert.False(File.Exists(outcome.FilePath));
         Assert.Empty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+    }
+
+    // --- Warn / WarnAlways routing ---------------------------------------------
+    //
+    // Every service above is constructed with diagnostics: null, so none of the
+    // verbose-only branches in VerifyAsync ever ran with a live DiagnosticContext,
+    // even in principle. These tests pin the routing a human ruling settled on:
+    // DownloadService may only ever call DiagnosticContext.Warn (verbose-gated),
+    // never the static WarnAlways -- an unconditional write from a shared service
+    // would corrupt the screen when the TUI runs an install in-process.
+    //
+    // Every "did not warn" assertion below is paired, in the same test, with a
+    // positive assertion on the same TestConsole proving the channel is actually
+    // live -- otherwise a silently-broken redirect would make the negative
+    // assertion vacuously true.
+
+    /// <summary>
+    /// Runs a download scenario guaranteed to produce a verbose warning (404 sums,
+    /// the ordinary "no published checksums" case) against whatever console is
+    /// currently wired to AnsiConsole.Console, and leaves the diagnostics instance
+    /// as it found it. A fresh URI is used so this never collides with cache
+    /// entries the calling test already created for TestUri.
+    /// </summary>
+    private async Task AssertWarnChannelIsLiveAsync(DiagnosticContext diagnostics)
+    {
+        var wasVerbose = diagnostics.Verbose;
+        diagnostics.Verbose = true;
+        try
+        {
+            var livenessUri = new Uri($"https://test.invalid/liveness-{Guid.NewGuid():N}.zip");
+            var handler = new SequencedHttpHandler(req =>
+            {
+                if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+
+                var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+                ok.Content.Headers.ContentLength = Payload.Length;
+                return ok;
+            });
+
+            var service = CreateService(handler, diagnostics);
+            await service.DownloadAsync(livenessUri, new ChecksumSource("4.5.1"), progress: null);
+        }
+        finally
+        {
+            diagnostics.Verbose = wasVerbose;
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithNullChecksumSource_EmitsNoDiagnosticOutput()
+    {
+        // No ChecksumSource: VerifyAsync returns before any Warn call exists to be
+        // reached. Verbose=true rules out "would have warned but the Verbose guard
+        // ate it" as the explanation for the silence -- there is truly nothing here.
+        var diagnostics = new DiagnosticContext { Verbose = true };
+        var service = CreateService(new MockRangeHttpHandler(Payload), diagnostics);
+
+        var console = new TestConsole();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            await service.DownloadAsync(TestUri, checksums: null, progress: null);
+
+            Assert.DoesNotContain("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+
+            await AssertWarnChannelIsLiveAsync(diagnostics);
+            Assert.Contains("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithNoPublishedSums_StaysSilentWithoutVerbose()
+    {
+        // The scenario the human ruling exists for: a version with no published
+        // checksums answers 404, which is the ORDINARY case, not an error. A
+        // non-verbose user must see nothing here -- nothing currently stops a
+        // future refactor from reintroducing an unconditional write.
+        var diagnostics = new DiagnosticContext(); // Verbose = false: default CLI mode
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            return ok;
+        });
+        var service = CreateService(handler, diagnostics);
+
+        var console = new TestConsole();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+            Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+            Assert.DoesNotContain("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+
+            await AssertWarnChannelIsLiveAsync(diagnostics);
+            Assert.Contains("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WithNoPublishedSums_WarnsUnderVerbose()
+    {
+        // The other half of the pair above: the same 404 case must actually reach
+        // the console under --verbose, or a user who opts in to diagnostics would
+        // see nothing either and have no way to learn why a download is Unverified.
+        var diagnostics = new DiagnosticContext { Verbose = true };
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            return ok;
+        });
+        var service = CreateService(handler, diagnostics);
+
+        var console = new TestConsole();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+            Assert.Contains("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenArchiveIsNotListedInSums_WarnsOnlyUnderVerbose()
+    {
+        // A distinct call site from the 404 case: the sums file fetched fine but
+        // does not cover this asset (ParseSums returns null). Same verbose-gated
+        // routing applies, and a separate call site means a separate place the
+        // WarnAlways-vs-Warn mistake could be reintroduced.
+        var diagnostics = new DiagnosticContext(); // Verbose = false
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{new string('a', 128)}  some-other-asset.zip\n")
+                };
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Payload) };
+            ok.Content.Headers.ContentLength = Payload.Length;
+            ok.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = "Godot_v4.5.1-stable_linux.x86_64.zip" };
+            return ok;
+        });
+        var service = CreateService(handler, diagnostics);
+
+        var console = new TestConsole();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            var outcome = await service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null);
+
+            Assert.Equal(ChecksumStatus.Unverified, outcome.Status);
+            Assert.DoesNotContain("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+
+            await AssertWarnChannelIsLiveAsync(diagnostics);
+            Assert.Contains("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenChecksumMismatches_ThrowsWithoutWarning()
+    {
+        // A mismatch is a hard failure: it throws ChecksumMismatchException and
+        // deletes the partial download. Nothing on that path should also print a
+        // "warn:" line -- that would be a redundant, confusing message alongside
+        // the thrown (and rendered) exception. Verbose=true maximizes the chance
+        // of catching a stray warning if one were ever added.
+        var diagnostics = new DiagnosticContext { Verbose = true };
+        var handler = new MockSumsHttpHandler(
+            Payload, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt", overrideHash: new string('a', 128));
+        var service = CreateService(handler, diagnostics);
+
+        var console = new TestConsole();
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            await Assert.ThrowsAsync<ChecksumMismatchException>(
+                () => service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null));
+
+            Assert.DoesNotContain("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+
+            await AssertWarnChannelIsLiveAsync(diagnostics);
+            Assert.Contains("warn:", console.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
     }
 }
