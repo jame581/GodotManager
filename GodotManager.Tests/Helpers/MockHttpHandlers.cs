@@ -241,7 +241,10 @@ internal sealed class MockRangeHttpHandler : HttpMessageHandler
 
         var response = RangeAwareContent.BuildResponse(_content, request, _etag, _honorRange, _misalignedRangeStart);
 
-        if (!string.IsNullOrWhiteSpace(_fileName) && response.Content is not null)
+        // HttpResponseMessage.Content is never null -- BuildResponse always sets it
+        // explicitly, and the property itself lazily defaults to empty content
+        // rather than null when unset.
+        if (!string.IsNullOrWhiteSpace(_fileName))
         {
             response.Content.Headers.ContentDisposition =
                 new ContentDispositionHeaderValue("attachment") { FileName = _fileName };
@@ -331,11 +334,9 @@ internal sealed class MockSumsHttpHandler : HttpMessageHandler
 
         var response = RangeAwareContent.BuildResponse(_archiveContent, request, _archiveETag);
 
-        if (response.Content is not null)
-        {
-            response.Content.Headers.ContentDisposition =
-                new ContentDispositionHeaderValue("attachment") { FileName = _archiveFileName };
-        }
+        // See the same note in MockRangeHttpHandler: response.Content is never null.
+        response.Content.Headers.ContentDisposition =
+            new ContentDispositionHeaderValue("attachment") { FileName = _archiveFileName };
 
         return Task.FromResult(response);
     }

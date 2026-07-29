@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.Reflection;
+using System.Threading;
 
 var diagnostics = new DiagnosticContext();
 
@@ -16,7 +17,12 @@ services.AddSingleton<RegistryService>();
 services.AddSingleton<EnvironmentService>();
 services.AddSingleton<DownloadService>();
 services.AddSingleton<InstallerService>();
-services.AddSingleton<HttpClient>();
+// HttpClient's default 100s timeout applies to the whole body read under
+// ResponseHeadersRead, not just the headers -- a 70+ MB archive would need
+// sustained ~700 KB/s just to avoid it timing out mid-download. Now that
+// DownloadService resumes partial transfers, there is no reason to time out an
+// otherwise-healthy slow connection instead of letting it finish.
+services.AddSingleton(new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
 services.AddSingleton<GodotDownloadUrlBuilder>();
 services.AddSingleton<GodotVersionFetcher>();
 

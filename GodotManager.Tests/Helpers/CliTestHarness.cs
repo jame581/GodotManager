@@ -26,7 +26,9 @@ internal static class CliTestHarness
         services.AddSingleton(fixture.Registry);
         services.AddSingleton(fixture.Environment);
         services.AddSingleton(diagnostics ?? new DiagnosticContext());
-        services.AddSingleton(httpClient ?? new HttpClient());
+        // Same infinite timeout as Program.cs, for consistency: tests that don't
+        // pass their own HttpClient still get one shaped like the real one.
+        services.AddSingleton(httpClient ?? new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan });
         services.AddSingleton<DownloadService>();
         services.AddSingleton<InstallerService>();
         services.AddSingleton<GodotDownloadUrlBuilder>();
