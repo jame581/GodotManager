@@ -99,6 +99,10 @@ internal sealed class InstallerService
         var stagingDir = Path.Combine(targetParent, $".staging-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDir);
 
+        // The merge branch is the one non-atomic step; if it throws part-way the target
+        // is a mixture of old and new files and the user must be told so.
+        var mergeStarted = false;
+
         try
         {
             await ExtractAsync(archivePath, stagingDir, progress, cancellationToken);
@@ -107,6 +111,7 @@ internal sealed class InstallerService
             {
                 // --force onto an existing directory merges. Replacing would delete
                 // unrelated files, because --path accepts an arbitrary directory.
+                mergeStarted = true;
                 MergeDirectory(stagingDir, targetDir);
                 TryDeleteStagingDirectory(stagingDir);
             }
@@ -134,9 +139,11 @@ internal sealed class InstallerService
 
             throw new GodmanException(
                 $"Installation failed while extracting to {targetDir}: {ex.Message}",
-                Directory.Exists(targetDir)
-                    ? "The existing install was left in place."
-                    : "No partial install was left behind.",
+                mergeStarted
+                    ? "The install directory was partially updated; re-run with --force once the cause is fixed."
+                    : Directory.Exists(targetDir)
+                        ? "The existing install was left in place."
+                        : "No partial install was left behind.",
                 ex);
         }
 
@@ -203,7 +210,13 @@ internal sealed class InstallerService
 
         if (request.InstallPath is not null)
         {
-            targetDir = request.InstallPath;
+            // Normalize once, here. Staging derives the target's parent via
+            // Path.GetDirectoryName, which returns "" for a bare relative name like
+            // "mydir" and returns the directory itself for a trailing separator.
+            // GetFullPath fixes the former; it preserves trailing separators, so the
+            // latter needs the explicit trim. A root path trims to itself and still
+            // falls into the "no parent directory" guard below, which is correct.
+            targetDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.InstallPath));
             if (request.ArchivePath is not null && File.Exists(request.ArchivePath))
             {
                 checksum = await ComputeChecksumAsync(request.ArchivePath, cancellationToken);

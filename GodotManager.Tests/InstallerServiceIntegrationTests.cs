@@ -1,5 +1,6 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using GodotManager.Tests.Helpers;
 using System;
@@ -530,6 +531,118 @@ public class InstallerServiceIntegrationTests : IDisposable
 
         // The merge must not leave its staging directory beside the target.
         Assert.Empty(Directory.GetDirectories(_fixture.TempRoot, ".staging-*"));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithForce_MergesNestedArchiveEntries()
+    {
+        // Godot's .NET builds ship a GodotSharp/ tree. A merge that only walked the
+        // archive's top level would silently produce a broken --force refresh on
+        // exactly the builds most likely to be refreshed.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchiveWithNestedEntry();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        // Pre-creating the target is what selects the merge branch over the atomic swap.
+        var customPath = Path.Combine(_fixture.TempRoot, "dotnet-install");
+        Directory.CreateDirectory(customPath);
+
+        await installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.DotNet, platform, InstallScope.User,
+            null, mockArchive, customPath, false, Force: true, DryRun: false));
+
+        var nested = Path.Combine(customPath, "GodotSharp", "Api", "GodotSharp.dll");
+        Assert.True(File.Exists(nested), "--force must merge entries nested inside the archive");
+        Assert.Equal("Mock GodotSharp assembly", (await File.ReadAllTextAsync(nested)).Trim());
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WhenMergeFailsPartWay_ReportsThatTheTargetWasPartiallyUpdated()
+    {
+        // The merge is the one non-atomic step. Telling the user the install was
+        // "left in place" here would point them at a half-overwritten directory.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var platform = OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux;
+
+        var customPath = Path.Combine(_fixture.TempRoot, "half-merged");
+        Directory.CreateDirectory(customPath);
+
+        // A directory where the archive carries a file makes File.Copy fail mid-merge.
+        Directory.CreateDirectory(Path.Combine(customPath, "README.txt"));
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => installer.InstallAsync(new InstallRequest(
+            "4.5.1", InstallEdition.Standard, platform, InstallScope.User,
+            null, mockArchive, customPath, false, Force: true, DryRun: false)));
+
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("partially updated", ex.Hint);
+        Assert.DoesNotContain("left in place", ex.Hint);
+
+        // Staging is still cleaned up on this path.
+        Assert.Empty(Directory.GetDirectories(_fixture.TempRoot, ".staging-*"));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithRelativePath_ResolvesAgainstCurrentDirectory()
+    {
+        // A bare relative --path has no directory component, so the target's parent
+        // can only be derived once the path has been made absolute.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(_fixture.TempRoot);
+
+            var result = await installer.InstallAsync(new InstallRequest(
+                "4.5.1",
+                InstallEdition.Standard,
+                OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+                InstallScope.User,
+                null, mockArchive, "relative-target", false, false, false));
+
+            Assert.Equal(Path.GetFullPath("relative-target"), result.Path);
+            Assert.True(Path.IsPathRooted(result.Path), "the registry must record an absolute path");
+            Assert.True(File.Exists(Path.Combine(result.Path, "README.txt")));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task InstallAsync_WithTrailingSeparatorPath_StillSwapsAtomically()
+    {
+        // A trailing separator used to make the target its own parent, which quietly
+        // took the merge branch and put staging *inside* the directory being installed to.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+
+        var target = Path.Combine(_fixture.TempRoot, "trailing-sep");
+
+        var result = await installer.InstallAsync(new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.User,
+            null, mockArchive, target + Path.DirectorySeparatorChar, false, false, false));
+
+        Assert.Equal(target, result.Path);
+        Assert.True(File.Exists(Path.Combine(target, "README.txt")));
+
+        // The atomic swap leaves nothing beside or inside the target.
+        Assert.Empty(Directory.GetDirectories(target));
 
         File.Delete(mockArchive);
     }
