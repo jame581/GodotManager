@@ -209,11 +209,21 @@ internal sealed class DownloadService
                 "Check the version number, and that this edition and platform exist for it upstream.");
         }
 
-        // Both conditions matter. A 200 means the server ignored Range (or If-Range
+        // All three conditions matter. A 200 means the server ignored Range (or If-Range
         // failed), so the bytes on disk are worthless. An unsolicited 206 with nothing
         // on disk would open a nonexistent file for FileMode.Open, raising a
-        // FileNotFoundException that IsRetryable treats as transient.
-        var append = response.StatusCode == HttpStatusCode.PartialContent && existing > 0;
+        // FileNotFoundException that IsRetryable treats as transient. And the status code
+        // alone does not establish where the body starts: a range-rewriting proxy can
+        // answer "bytes=50000-" with "Content-Range: bytes 0-199999/200000" and the whole
+        // body, which appended blind would splice a duplicate prefix into the archive and
+        // then hash, rename and return it with no error. So the server's own account of
+        // what it sent must match the offset we asked for; a 206 carrying no Content-Range
+        // at all is likewise untrustworthy. Anything that fails this restarts from zero,
+        // which FileMode.Create below makes safe by truncating the stale prefix.
+        var contentRange = response.Content.Headers.ContentRange;
+        var append = response.StatusCode == HttpStatusCode.PartialContent
+            && existing > 0
+            && contentRange?.From == existing;
         if (!append)
         {
             existing = 0;
@@ -271,7 +281,12 @@ internal sealed class DownloadService
         {
             if (append)
             {
-                file.Seek(0, SeekOrigin.End);
+                // Seek to the offset actually sent in the Range header rather than to
+                // the file's end. The two agree today, but they are sourced
+                // independently, so writing from the requested offset keeps the
+                // invariant explicit instead of silently gapping or overlapping if
+                // they ever diverge.
+                file.Seek(existing, SeekOrigin.Begin);
             }
 
             await using var network = await response.Content.ReadAsStreamAsync(cancellationToken);

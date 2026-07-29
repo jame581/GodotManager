@@ -117,8 +117,19 @@ internal static class RangeAwareContent
     ///   (the client's cached range would be spliced onto a different resource otherwise).
     /// - Range present and satisfiable: 206 with Content-Range and the requested slice.
     /// - Range present but starts at or past the end of the content: 416.
+    ///
+    /// <paramref name="misalignedRangeStart"/> models a range-rewriting proxy: when set,
+    /// the 206 is served from that offset instead of the requested one, with a matching
+    /// Content-Range. Body and Content-Range stay consistent with each other and only
+    /// disagree with the request, which is what a client must detect. Defaults to null,
+    /// i.e. the correct, aligned answer.
     /// </summary>
-    public static HttpResponseMessage BuildResponse(byte[] content, HttpRequestMessage request, string? etag, bool honorRange = true)
+    public static HttpResponseMessage BuildResponse(
+        byte[] content,
+        HttpRequestMessage request,
+        string? etag,
+        bool honorRange = true,
+        int? misalignedRangeStart = null)
     {
         var range = request.Headers.Range;
 
@@ -136,14 +147,15 @@ internal static class RangeAwareContent
         }
 
         var to = requested.To.HasValue ? Math.Min((int)requested.To.Value, content.Length - 1) : content.Length - 1;
-        var slice = content.Skip(from).Take(to - from + 1).ToArray();
+        var servedFrom = Math.Clamp(misalignedRangeStart ?? from, 0, to);
+        var slice = content.Skip(servedFrom).Take(to - servedFrom + 1).ToArray();
 
         var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
         {
             Content = new ByteArrayContent(slice)
         };
         response.Content.Headers.ContentLength = slice.Length;
-        response.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, to, content.Length);
+        response.Content.Headers.ContentRange = new ContentRangeHeaderValue(servedFrom, to, content.Length);
         ApplyETag(response, etag);
 
         return response;
@@ -195,7 +207,9 @@ internal static class RangeAwareContent
 
 /// <summary>
 /// Serves a fixed byte payload with HTTP Range support. Set honorRange: false
-/// to simulate a server that ignores Range and returns 200 with the full body.
+/// to simulate a server that ignores Range and returns 200 with the full body,
+/// or misalignedRangeStart to simulate a proxy that answers a 206 for a range
+/// other than the one requested.
 /// </summary>
 internal sealed class MockRangeHttpHandler : HttpMessageHandler
 {
@@ -203,22 +217,29 @@ internal sealed class MockRangeHttpHandler : HttpMessageHandler
     private readonly string? _fileName;
     private readonly string? _etag;
     private readonly bool _honorRange;
+    private readonly int? _misalignedRangeStart;
 
     public List<string?> ReceivedRangeHeaders { get; } = new();
 
-    public MockRangeHttpHandler(byte[] content, string? fileName = null, string? etag = null, bool honorRange = true)
+    public MockRangeHttpHandler(
+        byte[] content,
+        string? fileName = null,
+        string? etag = null,
+        bool honorRange = true,
+        int? misalignedRangeStart = null)
     {
         _content = content;
         _fileName = fileName;
         _etag = etag;
         _honorRange = honorRange;
+        _misalignedRangeStart = misalignedRangeStart;
     }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         ReceivedRangeHeaders.Add(request.Headers.Range?.ToString());
 
-        var response = RangeAwareContent.BuildResponse(_content, request, _etag, _honorRange);
+        var response = RangeAwareContent.BuildResponse(_content, request, _etag, _honorRange, _misalignedRangeStart);
 
         if (!string.IsNullOrWhiteSpace(_fileName) && response.Content is not null)
         {

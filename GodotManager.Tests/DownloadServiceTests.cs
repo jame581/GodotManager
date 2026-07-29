@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -159,6 +160,26 @@ public class DownloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadAsync_When206StartsAtADifferentOffsetThanRequested_RestartsFromZero()
+    {
+        // A range-rewriting proxy answers "bytes=50000-" with the whole body and
+        // "Content-Range: bytes 0-199999/200000". Inferring the body's start from the
+        // 206 status alone would append 200 KB onto the 50 KB prefix and hand back a
+        // 250 KB archive, hashed and renamed, with no error anywhere. The stale prefix
+        // is 0xEE, so the payload and hash assertions detect the splice; equality with
+        // Payload is also what proves the .part was truncated, not appended to.
+        await SeedPartialAsync(50_000, staleContent: true);
+        var handler = new MockRangeHttpHandler(Payload, misalignedRangeStart: 0);
+        var service = CreateService(handler);
+
+        var outcome = await service.DownloadAsync(TestUri, progress: null);
+
+        Assert.Equal("bytes=50000-", handler.ReceivedRangeHeaders.Single());
+        Assert.Equal(Payload, await File.ReadAllBytesAsync(outcome.FilePath));
+        Assert.Equal(Convert.ToHexStringLower(SHA512.HashData(Payload)), outcome.Sha512);
+    }
+
+    [Fact]
     public async Task DownloadAsync_WhenServerIgnoresRange_TruncatesAndStillSucceeds()
     {
         await SeedPartialAsync(50_000, staleContent: true);
@@ -222,7 +243,9 @@ public class DownloadServiceTests : IDisposable
     {
         // FileMode.Open on a nonexistent .part raises FileNotFoundException, which
         // is an IOException and therefore classified retryable — burning every
-        // attempt on a guaranteed failure.
+        // attempt on a guaranteed failure. The Content-Range is well formed and
+        // starts at 0, so the offset check cannot stand in for the "is there
+        // anything on disk to append to" check: only the latter rejects this.
         var handler = new SequencedHttpHandler(_ =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
@@ -230,6 +253,7 @@ public class DownloadServiceTests : IDisposable
                 Content = new ByteArrayContent(Payload)
             };
             response.Content.Headers.ContentLength = Payload.Length;
+            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, Payload.Length - 1, Payload.Length);
             return response;
         });
 

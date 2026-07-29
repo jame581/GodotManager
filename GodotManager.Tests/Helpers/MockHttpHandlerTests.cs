@@ -61,6 +61,40 @@ public class MockHttpHandlerTests
     }
 
     [Fact]
+    public async Task MockRangeHttpHandler_WithMisalignedRangeStart_Serves206FromADifferentOffset()
+    {
+        var handler = new MockRangeHttpHandler(Payload, misalignedRangeStart: 0);
+        using var client = new HttpClient(handler);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://test.invalid/thing.zip");
+        request.Headers.Range = new RangeHeaderValue(10, null);
+
+        var response = await client.SendAsync(request);
+
+        // Still a 206, but for a range nobody asked for. Body and Content-Range agree
+        // with each other and disagree with the request, which is the shape a client
+        // has to detect from Content-Range rather than from the status code.
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal(0, response.Content.Headers.ContentRange?.From);
+        Assert.Equal(Payload, await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task MockRangeHttpHandler_WithoutMisalignedRangeStart_Serves206FromTheRequestedOffset()
+    {
+        var handler = new MockRangeHttpHandler(Payload);
+        using var client = new HttpClient(handler);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://test.invalid/thing.zip");
+        request.Headers.Range = new RangeHeaderValue(10, null);
+
+        var response = await client.SendAsync(request);
+
+        // The knob defaults to correct behaviour, so no existing test changes meaning.
+        Assert.Equal(10, response.Content.Headers.ContentRange?.From);
+    }
+
+    [Fact]
     public async Task MockRangeHttpHandler_WithRangePastEnd_Returns416()
     {
         var handler = new MockRangeHttpHandler(Payload);
