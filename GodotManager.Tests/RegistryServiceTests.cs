@@ -252,6 +252,106 @@ public class RegistryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_WithDivergentDuplicateAcrossFiles_UnrelatedSave_NeverTouchesGlobalFileAndKeepsTheEntry()
+    {
+        // Round-2 review finding: the round-1 stray filter (Scope == Global &&
+        // present in the user file) misclassified exactly this state -- a same-Id
+        // duplicate left by a partial migration failure -- as a stray, excluding the
+        // legitimate global copy from desiredGlobal and silently dropping it from
+        // the next global-file write. The fix requires the duplicate to ALSO be
+        // absent from the global file before it counts as a stray.
+        var id = Guid.NewGuid();
+        var canonicalInGlobalFile = InstallEntryFactory.Create(
+            version: "4.7.1",
+            scope: InstallScope.Global,
+            path: "/usr/local/bin/godman/current");
+        canonicalInGlobalFile.Id = id;
+
+        var staleDuplicateInUserFile = InstallEntryFactory.Create(
+            version: "4.5.0",
+            scope: InstallScope.Global,
+            path: "/tmp/stale-leftover");
+        staleDuplicateInUserFile.Id = id;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.GlobalRegistryFile)!);
+        await File.WriteAllTextAsync(
+            _fixture.Paths.GlobalRegistryFile,
+            JsonSerializer.Serialize(new InstallRegistry { Installs = { canonicalInGlobalFile } }, RawJsonOptions));
+        await WriteOwnFileAsync(staleDuplicateInUserFile);
+        var globalWriteTimeBefore = File.GetLastWriteTimeUtc(_fixture.Paths.GlobalRegistryFile);
+
+        await Task.Delay(20); // Ensure a distinguishable timestamp if it gets rewritten.
+
+        // What a real caller would actually pass to SaveAsync: LoadAsync's merge has
+        // already deduped the two rows down to the single global-sourced copy, plus
+        // whatever unrelated User-scope change this save is actually making.
+        var unrelatedUserEntry = InstallEntryFactory.Create(
+            version: "4.4.0",
+            scope: InstallScope.User,
+            path: Path.Combine(_fixture.TempRoot, "unrelated-user-install"));
+        var toSave = new InstallRegistry { Installs = { canonicalInGlobalFile, unrelatedUserEntry } };
+
+        var unprivileged = new RegistryService(_fixture.Paths, isPrivilegedProcess: () => false);
+        await unprivileged.SaveAsync(toSave); // Must not throw.
+
+        // Nothing about the global set actually changed, so no write is attempted --
+        // and the entry is not lost.
+        var globalWriteTimeAfter = File.GetLastWriteTimeUtc(_fixture.Paths.GlobalRegistryFile);
+        Assert.Equal(globalWriteTimeBefore, globalWriteTimeAfter);
+
+        var globalOnDisk = await ReadRawAsync(_fixture.Paths.GlobalRegistryFile);
+        Assert.Contains(globalOnDisk.Installs, x => x.Id == id && x.Version == "4.7.1");
+
+        // The stale duplicate row is cleaned out of the user file as a side effect
+        // (a write to the user's own file, no elevation needed) since the entry is
+        // already safely recorded in the global file.
+        var userOnDisk = await ReadRawAsync(_fixture.Paths.RegistryFile);
+        Assert.DoesNotContain(userOnDisk.Installs, x => x.Id == id);
+        Assert.Contains(userOnDisk.Installs, x => x.Id == unrelatedUserEntry.Id);
+    }
+
+    [Fact]
+    public async Task SaveAsync_WithDivergentDuplicateAcrossFiles_WhenGlobalSetGenuinelyChanges_PreservesTheDuplicateEntry()
+    {
+        // Same starting state as the test above, but this save genuinely does add a
+        // new global entry, forcing the global file to actually be rewritten. The
+        // pre-fix bug: the misclassified "stray" was excluded from desiredGlobal, so
+        // this write would have contained only the new entry and silently deleted
+        // the pre-existing one from the machine-wide registry.
+        var id = Guid.NewGuid();
+        var canonicalInGlobalFile = InstallEntryFactory.Create(
+            version: "4.7.1",
+            scope: InstallScope.Global,
+            path: "/usr/local/bin/godman/current");
+        canonicalInGlobalFile.Id = id;
+
+        var staleDuplicateInUserFile = InstallEntryFactory.Create(
+            version: "4.5.0",
+            scope: InstallScope.Global,
+            path: "/tmp/stale-leftover");
+        staleDuplicateInUserFile.Id = id;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.GlobalRegistryFile)!);
+        await File.WriteAllTextAsync(
+            _fixture.Paths.GlobalRegistryFile,
+            JsonSerializer.Serialize(new InstallRegistry { Installs = { canonicalInGlobalFile } }, RawJsonOptions));
+        await WriteOwnFileAsync(staleDuplicateInUserFile);
+
+        var newGlobalEntry = InstallEntryFactory.Create(
+            version: "4.7.2",
+            scope: InstallScope.Global,
+            path: "/usr/local/bin/godman/new-install");
+        var toSave = new InstallRegistry { Installs = { canonicalInGlobalFile, newGlobalEntry } };
+
+        await _fixture.Registry.SaveAsync(toSave);
+
+        var globalOnDisk = await ReadRawAsync(_fixture.Paths.GlobalRegistryFile);
+        Assert.Contains(globalOnDisk.Installs, x => x.Id == id && x.Version == "4.7.1");
+        Assert.Contains(globalOnDisk.Installs, x => x.Id == newGlobalEntry.Id);
+        Assert.Equal(2, globalOnDisk.Installs.Count);
+    }
+
+    [Fact]
     public async Task SaveAsync_WhenGlobalWriteFails_ThrowsGodmanExceptionWithHint()
     {
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess)

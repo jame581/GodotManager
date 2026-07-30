@@ -71,6 +71,13 @@ internal sealed class RegistryService
 
     public async Task SaveAsync(InstallRegistry registry, CancellationToken cancellationToken = default)
     {
+        // Read the global file once, up front. It settles two separate questions
+        // below: which Global-scope entries are strays (next comment) and, later,
+        // whether the global file needs rewriting at all. Reading it only once
+        // keeps both questions answered from the same snapshot.
+        var currentGlobal = await LoadGlobalBestEffortAsync(cancellationToken);
+        var currentGlobalIds = currentGlobal.Installs.Select(x => x.Id).ToHashSet();
+
         // Scope alone doesn't say which file a Global-scope entry actually lives in
         // on disk right now. It can be a stray sitting in *this file's own* user
         // registry rather than the global one -- a pre-1.3.0 install recorded before
@@ -81,19 +88,40 @@ internal sealed class RegistryService
         // merges such a stray into `registry.Installs` regardless, so every caller of
         // SaveAsync -- including an ordinary unprivileged save with no interest in
         // global scope at all -- would otherwise see it and try to write it into the
-        // real global file. Ask the disk directly which Global-scope entries are
-        // homed in the user file right now, and leave those exactly where they are.
+        // real global file.
+        //
+        // Physical presence in the user file is necessary but not sufficient to call
+        // an entry a stray, though: a partial migration failure (global write
+        // succeeded, own-file removal did not -- see MigrateGlobalOrphansAsync) also
+        // leaves a same-Id row physically sitting in the user file for an entry that
+        // is already a legitimate global entry. MergeInstalls already resolves that
+        // duplicate to the global copy for the merged view LoadAsync hands callers,
+        // so treating "also present in the user file" alone as "stray" would take
+        // that already-global entry back out of desiredGlobal below and silently
+        // drop it from the next global-file write -- an earlier version of this fix
+        // did exactly that. "Already recorded in the global file" always wins over
+        // "also has a leftover row in the user file": an entry only counts as a
+        // stray when it is in the user file and NOT already in the global file.
         var rawUserIds = (await LoadFileAsync(_paths.RegistryFile, cancellationToken))
             .Installs.Select(x => x.Id).ToHashSet();
 
-        var strayGlobalInUserFile = registry.Installs
-            .Where(x => x.Scope == InstallScope.Global && rawUserIds.Contains(x.Id))
-            .ToList();
+        bool IsStrayInUserFile(InstallEntry entry) =>
+            entry.Scope == InstallScope.Global
+            && rawUserIds.Contains(entry.Id)
+            && !currentGlobalIds.Contains(entry.Id);
+
+        var strayGlobalInUserFile = registry.Installs.Where(IsStrayInUserFile).ToList();
 
         var desiredGlobal = registry.Installs
-            .Where(x => x.Scope == InstallScope.Global && !rawUserIds.Contains(x.Id))
+            .Where(x => x.Scope == InstallScope.Global && !IsStrayInUserFile(x))
             .ToList();
 
+        // An entry already recorded in the global file is written back to the user
+        // file only if it's a stray (i.e. not already global). A same-Id row that's
+        // present in both files but resolved as "already global" is deliberately
+        // dropped from the user-file write here -- self-healing the leftover
+        // duplicate a partial migration failure left behind, using only a write to
+        // the user's own file, no elevation required.
         var userEntries = registry.Installs
             .Where(x => x.Scope != InstallScope.Global)
             .Concat(strayGlobalInUserFile)
@@ -106,8 +134,6 @@ internal sealed class RegistryService
         // (LoadAsync merges them in), so writing the global file unconditionally
         // would demand elevation for operations that never intended to touch global
         // scope at all.
-        var currentGlobal = await LoadGlobalBestEffortAsync(cancellationToken);
-        var currentGlobalIds = currentGlobal.Installs.Select(x => x.Id).ToHashSet();
         var desiredGlobalIds = desiredGlobal.Select(x => x.Id).ToHashSet();
 
         if (!currentGlobalIds.SetEquals(desiredGlobalIds))
