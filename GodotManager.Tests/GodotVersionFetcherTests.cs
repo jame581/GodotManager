@@ -1,7 +1,10 @@
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using GodotManager.Tests.Helpers;
 using System;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -44,6 +47,35 @@ public class GodotVersionFetcherTests : IDisposable
         // Should include well-known stable versions
         Assert.Contains(stableReleases, r => r.Version.StartsWith("4."));
         Assert.Contains(stableReleases, r => r.Version.StartsWith("3."));
+    }
+
+    [Fact]
+    public async Task FetchReleasesAsync_WhenGitHubReturnsForbidden_ThrowsWithRateLimitHint()
+    {
+        // 403 from the GitHub releases API is almost always rate limiting, not an
+        // outage, so the hint must say so rather than pointing at the network.
+        var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden));
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, new HttpClient(handler));
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => fetcher.FetchReleasesAsync(skipCache: true));
+
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("rate limiting", ex.Hint!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FetchReleasesAsync_WhenGitHubIsUnreachable_ThrowsWithGenericNetworkHint()
+    {
+        // Anything other than a 403 falls back to the generic "check your
+        // connection" hint, not the rate-limit-specific one.
+        var handler = new SequencedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var fetcher = new GodotVersionFetcher(_fixture.Paths, new HttpClient(handler));
+
+        var ex = await Assert.ThrowsAsync<GodmanException>(() => fetcher.FetchReleasesAsync(skipCache: true));
+
+        Assert.NotNull(ex.Hint);
+        Assert.Contains("network connection", ex.Hint!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("rate limiting", ex.Hint!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact(Skip = "Integration test - requires network access")]

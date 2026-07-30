@@ -44,7 +44,34 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             return Fail("Invalid payload.");
         }
 
-        var request = new InstallRequest(
+        var request = BuildRequest(payload);
+
+        try
+        {
+            var result = await _installer.InstallAsync(request);
+            AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
+            return 0;
+        }
+        catch (GodmanException ex)
+        {
+            return GodmanExceptionRenderer.Render("Install failed:", ex);
+        }
+        catch (Exception ex)
+        {
+            return Fail(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the request the unelevated parent resolved. The checksum fields carry
+    /// the parent's verification result, which only it could obtain — it is the process
+    /// that downloaded the archive and compared it against the published sums. Without
+    /// them this install re-hashes the archive and records it as unverified, which is a
+    /// false statement about a download that was verified. InstallerService re-checks
+    /// the hash against the archive before honouring the claimed status.
+    /// </summary>
+    internal static InstallRequest BuildRequest(ElevatedInstallPayload payload) =>
+        new(
             payload.Version,
             payload.Edition,
             payload.Platform,
@@ -54,24 +81,14 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             payload.InstallPath,
             payload.Activate,
             payload.Force,
-            DryRun: false);
-
-        try
-        {
-            var result = await _installer.InstallAsync(request);
-            AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            return Fail(ex.Message);
-        }
-    }
+            DryRun: false,
+            Known: payload.Checksum is null
+                ? null
+                : new KnownChecksum(payload.Checksum, payload.ChecksumAlgorithm ?? "sha512", payload.ChecksumVerified));
 
     private static int Fail(string message)
     {
-        AnsiConsole.MarkupLineInterpolated($"[red]Install failed:[/] {message}");
-        return -1;
+        return GodmanExceptionRenderer.Render("Install failed:", message);
     }
 
     internal sealed class Settings : CommandSettings

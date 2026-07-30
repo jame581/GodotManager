@@ -40,6 +40,12 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 }
             }
 
+            // Verification is only possible when we built the URL ourselves and so
+            // know which upstream release it belongs to.
+            var checksums = (string.IsNullOrWhiteSpace(settings.Url) && string.IsNullOrWhiteSpace(settings.ArchivePath))
+                ? new ChecksumSource(settings.Version)
+                : null;
+
             var request = new InstallRequest(
                 settings.Version,
                 settings.Edition,
@@ -50,7 +56,8 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 settings.InstallPath,
                 settings.Activate,
                 settings.Force,
-                settings.DryRun);
+                settings.DryRun,
+                checksums);
 
             if (settings.DryRun)
             {
@@ -61,6 +68,9 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             {
                 AnsiConsole.MarkupLine("[yellow]Administrator access is required for global installs. A UAC prompt will appear.[/]");
             }
+
+            var verificationStatus = ChecksumStatus.NotApplicable;
+            string? verificationReason = null;
 
             var result = await AnsiConsole.Progress()
                 .AutoClear(true)
@@ -81,10 +91,39 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                         task.Value = clamped;
                     });
 
-                    return await _installer.InstallWithElevationAsync(request, progress);
+                    return await _installer.InstallWithElevationAsync(
+                        request,
+                        progress,
+                        onVerified: (status, reason) =>
+                        {
+                            verificationStatus = status;
+                            verificationReason = reason;
+                        });
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
+
+            // Only when verification was actually attempted and did not succeed.
+            // NotApplicable covers both "no published sums to check against" (--url
+            // or --archive, which never carry a ChecksumSource) and "this release
+            // publishes none" (upstream 404, the ordinary case for many releases) --
+            // neither is an error, so neither should print a warning on every such
+            // install and train the user to ignore it. The reason names what
+            // actually went wrong instead of sending the user on a second ~70 MB
+            // download via --verbose just to find out. Unconditional writes belong
+            // here, in the command layer, not in a service the TUI also runs
+            // in-process.
+            if (verificationStatus == ChecksumStatus.Unverified)
+            {
+                DiagnosticContext.WarnAlways(
+                    "this download could not be verified against the checksums published " +
+                    $"upstream: {verificationReason}");
+            }
+
             return 0;
+        }
+        catch (GodmanException ex)
+        {
+            return GodmanExceptionRenderer.Render("Install failed:", ex);
         }
         catch (Exception ex)
         {
@@ -139,8 +178,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
     private static int Fail(string message)
     {
-        AnsiConsole.MarkupLineInterpolated($"[red]Install failed:[/] {message}");
-        return -1;
+        return GodmanExceptionRenderer.Render("Install failed:", message);
     }
 
     internal sealed class Settings : GlobalSettings

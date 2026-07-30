@@ -1,3 +1,4 @@
+using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
@@ -101,5 +102,34 @@ public class CleanCommandTests : IDisposable
         Assert.False(Directory.Exists(globalInstall));
         // On Linux, only the shim file is removed, not the directory
         Assert.False(File.Exists(Path.Combine(globalShim, "godot")));
+    }
+
+    [Fact]
+    public void CleanupAll_RemovesTheGlobalRegistryFile()
+    {
+        // On Windows GlobalRegistryFile sits one level above GetInstallRoot(Global)
+        // (beside installs\ and bin\, not inside installs\), so the recursive delete
+        // of the install root alone would never reach it. This runs on both CI
+        // platforms (ubuntu-latest + windows-latest) and pins the fix regardless of
+        // which directory shape is under test.
+        var globalRegistryPath = _fixture.Paths.GlobalRegistryFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(globalRegistryPath)!);
+        File.WriteAllText(globalRegistryPath, "{}");
+
+        CleanCommand.CleanupAll(_fixture.Paths);
+
+        Assert.False(File.Exists(globalRegistryPath));
+    }
+
+    [Fact]
+    public void CleanupAll_RemovesTheDownloadCache()
+    {
+        File.WriteAllText(
+            Path.Combine(_fixture.Paths.DownloadCacheDirectory, "abc123.archive"),
+            "cached archive");
+
+        CleanCommand.CleanupAll(_fixture.Paths);
+
+        Assert.False(Directory.Exists(_fixture.Paths.DownloadCacheDirectory));
     }
 }

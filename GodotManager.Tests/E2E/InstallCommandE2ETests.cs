@@ -1,6 +1,10 @@
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
 using System;
+using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -77,6 +81,271 @@ public class InstallCommandE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Install_WhenNoSumsArePublished_DoesNotWarn()
+    {
+        // ArchiveWithoutSums models the ordinary case: an upstream release with no
+        // SHA512-SUMS.txt at all (a real example: godot-builds' 4.0-stable answers
+        // 404 for it, while 4.5.1's does not). This used to warn on every such
+        // install — the exact regression the settled human ruling exists to
+        // prevent — because the command layer could not tell "nothing to check"
+        // apart from "checked and failed". Paired with
+        // Install_WhenSumsFetchGenuinelyFails_WarnsAndNamesTheReason below, which
+        // is the genuine-failure case that must still warn.
+        var app = CliTestHarness.Create(_fixture, ArchiveWithoutSums(out var mockArchive));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            // Positive assertion on the same channel, so the DoesNotContain below
+            // is not vacuously true because the redirect captured nothing at all.
+            Assert.Contains("Installed", result.Output);
+            Assert.DoesNotContain("warn:", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("could not be verified", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.False(Assert.Single(registry.Installs).ChecksumVerified);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WhenSumsFetchGenuinelyFails_WarnsAndNamesTheReason()
+    {
+        // The counterpart to the test above: this is not "no sums published", it is
+        // an actual failure to check them (HTTP 500, not 404), so it must still
+        // warn — and the message must name what went wrong rather than sending the
+        // user on a second ~70 MB download via --verbose just to find out.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await System.IO.File.ReadAllBytesAsync(mockArchive);
+
+        var handler = new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            ok.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = "Godot_v4.5.1-stable_linux.x86_64.zip" };
+            return ok;
+        });
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("warn:", result.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("HTTP 500", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.False(Assert.Single(registry.Installs).ChecksumVerified);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithACustomUrl_DoesNotWarnAboutVerification()
+    {
+        // A --url install has no published sums by definition. Warning here would
+        // fire on every such install and train the user to ignore the warning.
+        var app = CliTestHarness.Create(_fixture, ArchiveWithoutSums(out var mockArchive));
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--url", "https://test.invalid/godot.zip", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("could not be verified", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WhenTheDownloadIsVerified_DoesNotWarn()
+    {
+        // The command-layer half of the elevated-install gate. A Windows global install
+        // resolves its plan in the unelevated parent and writes its registry entry in
+        // the elevated child; if that entry comes back with ChecksumVerified = false the
+        // user is told a verified download could not be verified. Paired with
+        // Install_WhenAnAutoUrlInstallCannotBeVerified_WarnsTheUser above, this pins the
+        // message to the flag rather than to the mere presence of a ChecksumSource.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = System.IO.File.ReadAllBytes(mockArchive);
+        var httpClient = new HttpClient(new MockSumsHttpHandler(
+            archiveBytes, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt"));
+        var app = CliTestHarness.Create(_fixture, httpClient);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--platform", platform]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("could not be verified", result.Output);
+
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.True(Assert.Single(registry.Installs).ChecksumVerified);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    /// <summary>
+    /// Serves a real Godot-shaped archive for any request except the published
+    /// SHA512-SUMS.txt, which answers 404 — the common upstream case of a release
+    /// with no published checksums.
+    /// </summary>
+    private static HttpClient ArchiveWithoutSums(out string mockArchive)
+    {
+        mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = System.IO.File.ReadAllBytes(mockArchive);
+
+        return new HttpClient(new SequencedHttpHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archiveBytes) };
+            ok.Content.Headers.ContentLength = archiveBytes.Length;
+            return ok;
+        }));
+    }
+
+    [Fact]
+    public async Task Install_WhenTheServerKeepsFailing_RendersAnActionableErrorNotAStackTrace()
+    {
+        // Now that installs actually go through DownloadService, an exhausted retry
+        // loop is a live user-facing path. TransientDownloadException is outside the
+        // GodmanException hierarchy, so an unwrapped one renders as a stack trace.
+        var httpClient = new HttpClient(new SequencedHttpHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+        var app = CliTestHarness.Create(_fixture, httpClient);
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console, so it has to be redirected to capture the rendered failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var platform = OperatingSystem.IsWindows() ? "windows" : "linux";
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--url", "https://test.invalid/godot.zip", "--platform", platform]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Install failed:", result.Output);
+            Assert.Contains("hint:", result.Output);
+            Assert.DoesNotContain("TransientDownloadException", result.Output);
+            Assert.DoesNotContain("GodotManager.Services.DownloadService", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+    }
+
+    [Fact]
+    public async Task Install_WhenTargetExists_RendersMessageAndHint()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var app = CliTestHarness.Create(_fixture);
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console (CommandAppTester wires TestConsole into Settings.Console, a
+        // separate field), so it has to be redirected here to capture the
+        // rendered failure. Proven live by asserting the success path's own
+        // output below, on the same channel, before triggering the failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var first = await app.RunAsync(["install", "--version", "4.5.1", "--archive", mockArchive]);
+            Assert.Equal(0, first.ExitCode);
+            Assert.Contains("Installed", first.Output);
+
+            var second = await app.RunAsync(["install", "--version", "4.5.1", "--archive", mockArchive]);
+
+            Assert.NotEqual(0, second.ExitCode);
+            Assert.Contains("Install failed:", second.Output);
+            Assert.Contains("hint:", second.Output);
+            Assert.Contains("--force", second.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithEmptyPath_RendersActionableErrorNotAStackTrace()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var app = CliTestHarness.Create(_fixture);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(
+                ["install", "--version", "4.5.1", "--archive", mockArchive, "--path", ""]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Install failed:", result.Output);
+            Assert.Contains("hint:", result.Output);
+            Assert.DoesNotContain("ArgumentException", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
     public async Task Install_WithActivate_SetsActive()
     {
         var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
@@ -93,5 +362,71 @@ public class InstallCommandE2ETests : IDisposable
         Assert.NotNull(registry.ActiveId);
 
         System.IO.File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithMismatchedSums_FailsAndRegistersNothing()
+    {
+        // Every other install test passes --url or --archive, so the auto-URL path --
+        // the only one that supplies a ChecksumSource -- has had no coverage through
+        // the real CLI entry point until this test and the one below.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+
+        // Auto-URL install (no --url, no --archive) => a ChecksumSource is supplied,
+        // so the sums file is fetched and must match.
+        var handler = new MockSumsHttpHandler(
+            archiveBytes,
+            "Godot_v4.5.1-stable_linux.x86_64.zip",
+            "SHA512-SUMS.txt",
+            overrideHash: new string('a', 128));
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        // Commands write through the static AnsiConsole, not the tester's own
+        // console (CommandAppTester wires TestConsole into Settings.Console, a
+        // separate field), so it has to be redirected here to capture the
+        // rendered failure.
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["install", "--version", "4.5.1"]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("Checksum mismatch", result.Output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+
+        Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+        Assert.Empty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
+    public async Task Install_WithMatchingSums_RecordsVerified()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var archiveBytes = await File.ReadAllBytesAsync(mockArchive);
+
+        var handler = new MockSumsHttpHandler(
+            archiveBytes, "Godot_v4.5.1-stable_linux.x86_64.zip", "SHA512-SUMS.txt");
+
+        var app = CliTestHarness.Create(_fixture, new HttpClient(handler));
+
+        var result = await app.RunAsync(["install", "--version", "4.5.1"]);
+
+        Assert.Equal(0, result.ExitCode);
+
+        var registry = await _fixture.Registry.LoadAsync();
+        var entry = Assert.Single(registry.Installs);
+        Assert.True(entry.ChecksumVerified, "an auto-URL install with matching sums must record ChecksumVerified");
+        Assert.Equal("sha512", entry.ChecksumAlgorithm);
+
+        File.Delete(mockArchive);
     }
 }

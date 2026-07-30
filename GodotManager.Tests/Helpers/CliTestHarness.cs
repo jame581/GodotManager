@@ -19,13 +19,17 @@ internal static class CliTestHarness
     /// Build a CommandAppTester with test DI. Uses the fixture's services
     /// and optionally overrides HttpClient with a custom one.
     /// </summary>
-    public static CommandAppTester Create(GodmanTestFixture fixture, HttpClient? httpClient = null)
+    public static CommandAppTester Create(GodmanTestFixture fixture, HttpClient? httpClient = null, DiagnosticContext? diagnostics = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(fixture.Paths);
         services.AddSingleton(fixture.Registry);
         services.AddSingleton(fixture.Environment);
-        services.AddSingleton(httpClient ?? new HttpClient());
+        services.AddSingleton(diagnostics ?? new DiagnosticContext());
+        // Same infinite timeout as Program.cs, for consistency: tests that don't
+        // pass their own HttpClient still get one shaped like the real one.
+        services.AddSingleton(httpClient ?? new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan });
+        services.AddSingleton<DownloadService>();
         services.AddSingleton<InstallerService>();
         services.AddSingleton<GodotDownloadUrlBuilder>();
         services.AddSingleton<GodotVersionFetcher>();

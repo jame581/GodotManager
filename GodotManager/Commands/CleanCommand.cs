@@ -51,14 +51,33 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         CleanupDirectory(paths.ConfigDirectory, "config");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
-        CleanupDirectory(paths.GetInstallRoot(InstallScope.Global), "global installs");
+
+        // On Linux GlobalRegistryFile lives inside GetInstallRoot(Global) itself, so the
+        // directory delete below already sweeps it up -- reporting it here too would
+        // just print two "Removed" lines for one recursive delete. On Windows it sits
+        // one level up, beside installs\ and bin\, where the directory delete below
+        // never reaches it, so it has to be removed explicitly or `clean` leaves a
+        // stale installs.json behind in %ProgramFiles%\godman.
+        var globalInstallRoot = paths.GetInstallRoot(InstallScope.Global);
+        var globalRegistryIsInsideInstallRoot = string.Equals(
+            Path.GetDirectoryName(paths.GlobalRegistryFile),
+            globalInstallRoot,
+            StringComparison.OrdinalIgnoreCase);
+
+        if (!globalRegistryIsInsideInstallRoot)
+        {
+            CleanupFile(paths.GlobalRegistryFile, "global registry");
+        }
+
+        CleanupDirectory(globalInstallRoot, "global installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 
     private static bool HasGlobalCleanupTargets(AppPaths paths)
     {
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
-            || Directory.Exists(paths.GetShimDirectory(InstallScope.Global));
+            || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
+            || File.Exists(paths.GlobalRegistryFile);
     }
 
     private static int RunElevatedCleanup()
@@ -153,6 +172,26 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: no shim found in {shimDir}");
+        }
+    }
+
+    private static void CleanupFile(string path, string label)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {label}: {path}");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: {path} (missing)");
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] {label} at {path}: {ex.Message}");
         }
     }
 

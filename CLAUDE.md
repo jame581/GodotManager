@@ -20,7 +20,7 @@ CI runs `dotnet test -v minimal` on ubuntu-latest + windows-latest (.github/work
 
 - `GodotManager/Program.cs` — DI wiring + Spectre.Console.Cli command registration (entry point).
 - `GodotManager/Commands/` — one class per CLI verb (`install`, `activate`, `fetch`, …).
-- `GodotManager/Services/` — `InstallerService`, `RegistryService`, `EnvironmentService`, `GodotVersionFetcher`, `GodotDownloadUrlBuilder`, `WindowsElevationHelper`.
+- `GodotManager/Services/` — `InstallerService`, `RegistryService`, `EnvironmentService`, `GodotVersionFetcher`, `GodotDownloadUrlBuilder`, `WindowsElevationHelper`, `DownloadService` (transport: managed cache under `<ConfigDirectory>/downloads`, HTTP Range resume, retry, SHA-512 verification against `godotengine/godot-builds`).
 - `GodotManager/Domain/` — `InstallEntry`, `InstallRegistry` (persisted JSON model).
 - `GodotManager/Config/AppPaths.cs` — resolves all on-disk paths; honors env-var overrides.
 - `GodotManager/Infrastructure/` — DI glue (`TypeRegistrar`), `DiagnosticContext`, `VerboseInterceptor`, `GlobalSettings`, `ProcessHelpers`.
@@ -29,14 +29,28 @@ CI runs `dotnet test -v minimal` on ubuntu-latest + windows-latest (.github/work
 
 ## Elevation / re-entry pattern
 
-Global-scope `install`, `activate`, and `clean` need admin rights. Instead of failing,
-the user-scope command re-launches itself elevated and dispatches to a hidden mirror
-command: `install-elevated`, `activate-elevated`, `clean-elevated` (registered with
+Global-scope `install`, `activate`, `clean`, `remove`, and `deactivate` need admin
+rights. Instead of failing, the user-scope command re-launches itself elevated and
+dispatches to a hidden mirror command: `install-elevated`, `activate-elevated`,
+`clean-elevated`, `remove-elevated`, `deactivate-elevated` (registered with
 `.IsHidden()` in Program.cs, implemented in `Commands/Elevated*Command.cs`).
 
 On Windows this triggers UAC via `WindowsElevationHelper`; on Linux the user must
 already be running under `sudo`. When adding a new command that touches global paths,
 follow the same split.
+
+Two rules learned the hard way, both from bugs that shipped past a green suite:
+
+- **Decide elevation before the first machine-wide write, not after it fails.** The
+  predicate lives in `Services/Elevated{Activator,Remover,Deactivator}.cs` as
+  `TouchesMachineState` (pure, unit-tested) wrapped by `IsRequired` (adds the OS and
+  elevation probe). Note that `activate` needs elevation when the install being
+  *deactivated* is global, not just the one being activated.
+- **Both front-ends must go through the same predicate.** Every TUI handler in
+  `Tui/TuiApp.cs` has a CLI counterpart in `Commands/`; four separate bugs came from a
+  TUI handler reimplementing one and dropping its elevation or error handling. The
+  launchers return an `ElevatedOperationResult` rather than printing, because the TUI
+  calls them while Terminal.Gui owns the screen.
 
 ## Path resolution & test isolation
 
@@ -63,7 +77,7 @@ the fixture's services. See `GodotManager.Tests/Helpers/`.
 ## Release & packaging
 
 - Version is set in `GodotManager/GodotManager.csproj` (`<Version>`/`<AssemblyVersion>`).
-- WinGet manifests: `manifests/j/JanMesarc/`.
+- WinGet publishing: automated from `.github/workflows/release.yml` (`publish-winget` job); no manifests are checked into this repo.
 - RPM spec: `packaging/rpm/godman.spec`.
 - Linux one-liner installer: `install.sh`.
 - Release pipeline: `.github/workflows/release.yml`.

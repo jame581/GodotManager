@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -15,11 +16,13 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly AppPaths _paths;
 
-    public ActivateCommand(RegistryService registry, EnvironmentService environment)
+    public ActivateCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
     {
         _registry = registry;
         _environment = environment;
+        _paths = paths;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -39,18 +42,13 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 
         var currentActive = registry.GetActive();
 
-        if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated())
+        // Elevation is needed when activating a global install OR switching away from
+        // one, because cleaning up a global shim/PATH entry writes machine-wide state.
+        // The rule lives in ElevatedActivator so the TUI applies exactly the same one.
+        if (ElevatedActivator.IsRequired(install.Scope, currentActive?.Scope))
         {
-            // Need elevation if activating a global install OR switching away from a global install
-            // (cleaning up a global shim/PATH entry requires administrator access)
-            var needsElevation = install.Scope == InstallScope.Global
-                || (currentActive != null && currentActive.Scope == InstallScope.Global);
-
-            if (needsElevation)
-            {
-                AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
-                return await RunElevatedActivateAsync(settings.Id, settings.CreateDesktopShortcut);
-            }
+            AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
+            return await RunElevatedActivateAsync(settings.Id, settings.CreateDesktopShortcut);
         }
 
         // Clean up previous activation to avoid stale shims/PATH entries
@@ -72,13 +70,17 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         }
         catch (UnauthorizedAccessException)
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] Access denied while updating environment for this scope.");
-            return -1;
+            return GodmanExceptionRenderer.Render(
+                "Activation failed:",
+                "Access denied while updating environment for this scope.",
+                GodmanException.ElevationHint);
         }
         catch (SecurityException)
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] This scope requires elevated privileges.");
-            return -1;
+            return GodmanExceptionRenderer.Render(
+                "Activation failed:",
+                "This scope requires elevated privileges.",
+                GodmanException.ElevationHint);
         }
 
         registry.MarkActive(install.Id);
@@ -89,67 +91,60 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
+            WarnIfShadowedByGlobalShim(_paths, install.Scope);
         }
 
         return 0;
     }
 
-    private static async Task<int> RunElevatedActivateAsync(Guid id, bool createDesktopShortcut)
+    /// <summary>
+    /// Reports a leftover machine-wide shim that will outrank this activation.
+    /// Rendered here rather than in EnvironmentService because the TUI runs the same
+    /// service in-process under Terminal.Gui, where an unconditional AnsiConsole
+    /// write would paint over a screen it does not own.
+    /// </summary>
+    internal static void WarnIfShadowedByGlobalShim(AppPaths paths, InstallScope activatedScope)
     {
-        var payload = new ElevatedActivatePayload(id, createDesktopShortcut);
-        var json = JsonSerializer.Serialize(payload);
-        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
-
-        var args = Environment.GetCommandLineArgs();
-        var fileName = Environment.ProcessPath ?? args.First();
-
-        var argumentBuilder = new StringBuilder();
-        if (args.Length > 1 && args[1].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-        {
-            argumentBuilder.Append(ProcessHelpers.QuoteArg(args[1]));
-            argumentBuilder.Append(' ');
-        }
-
-        argumentBuilder.Append("activate-elevated --payload ");
-        argumentBuilder.Append(ProcessHelpers.QuoteArg(encoded));
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = argumentBuilder.ToString(),
-            UseShellExecute = true,
-            Verb = "runas",
-            WorkingDirectory = Path.GetDirectoryName(fileName) ?? Environment.CurrentDirectory
-        };
-
+        // Best-effort throughout: this runs *after* MarkActive and SaveAsync have
+        // committed, and reading the machine PATH can throw SecurityException on a
+        // locked-down host. Letting that escape would report a failure for an
+        // activation that already succeeded and was persisted.
         try
         {
-            // Remove Mark of the Web so SmartScreen won't silently block runas
-            WindowsElevationHelper.TryRemoveZoneIdentifier(fileName);
+            var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot.cmd");
 
-            using var process = Process.Start(psi);
-            if (process == null)
+            if (ShimShadowing.WouldShadow(
+                    activatedScope,
+                    File.Exists(globalShim),
+                    paths.GetShimDirectory(InstallScope.Global),
+                    Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)))
             {
-                AnsiConsole.MarkupLine("[red]Activation failed:[/] Unable to start elevated activation process.");
-                return -1;
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{ShimShadowing.BuildWarning(globalShim)}[/]");
             }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticContext.WarnAlways($"Could not check for a shadowing global shim: {ex.Message}");
+        }
+    }
 
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0)
-            {
-                AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] Elevated activation failed with exit code {process.ExitCode}.");
-                return -1;
-            }
-
+    private static async Task<int> RunElevatedActivateAsync(Guid id, bool createDesktopShortcut)
+    {
+        // The launch itself lives in ElevatedActivator so TuiApp can reuse it; this
+        // is only the CLI's rendering of the result.
+        var result = await ElevatedActivator.RunAsync(id, createDesktopShortcut);
+        if (result.Succeeded)
+        {
             return 0;
         }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+
+        AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {result.Error}");
+        if (result.Hint is { } hint)
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] Elevation was canceled or blocked.");
-            AnsiConsole.MarkupLine("[grey]Tip: If you downloaded this executable, right-click it → Properties → Unblock, or run:[/]");
-            AnsiConsole.MarkupLineInterpolated($"[grey]  Unblock-File '{fileName}'[/]");
-            return -1;
+            AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
         }
+
+        return -1;
     }
 
     private static int PreviewActivate(InstallEntry install, InstallRegistry registry)

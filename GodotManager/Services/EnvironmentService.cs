@@ -88,11 +88,14 @@ internal sealed class EnvironmentService
 
         var exe = Path.Combine(entry.Path, expectedExe);
 
-        // Fallback: search for any Godot executable if expected name not found
+        // Fallback: search for any Godot executable if expected name not found.
+        // This covers .NET/mono installs, whose archive nests the binary inside its
+        // own Godot_vX-stable_mono_win64/ directory -- the folder-name guess above
+        // can never match those, so without the nested lookup the shim is written
+        // pointing at a path that does not exist.
         if (!File.Exists(exe))
         {
-            var files = Directory.GetFiles(entry.Path, "Godot*.exe", SearchOption.TopDirectoryOnly);
-            exe = files.FirstOrDefault() ?? exe;
+            exe = GodotExecutableLocator.Find(entry.Path, windows: true, _diagnostics) ?? exe;
         }
 
         var shimPath = Path.Combine(shimDir, "godot.cmd");
@@ -166,23 +169,13 @@ internal sealed class EnvironmentService
         var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var target = Path.Combine(entry.Path, folderName);
 
-        // Fallback: search for any Godot binary if expected name not found
+        // Fallback: search for any Godot binary if expected name not found. Same
+        // nesting problem as the Windows branch -- the mono tarball extracts into
+        // its own Godot_vX-stable_mono_linux_x86_64/ directory, so a top-level-only
+        // search leaves the shim pointing at a path that was never written.
         if (!File.Exists(target))
         {
-            try
-            {
-                var files = Directory.EnumerateFiles(entry.Path, "*", SearchOption.TopDirectoryOnly);
-                var found = files.FirstOrDefault(f =>
-                {
-                    var name = Path.GetFileName(f);
-                    return name.StartsWith("Godot", StringComparison.OrdinalIgnoreCase);
-                });
-                target = found ?? target;
-            }
-            catch (Exception ex)
-            {
-                _diagnostics?.Warn($"Could not enumerate files in {entry.Path}: {ex.Message}");
-            }
+            target = GodotExecutableLocator.Find(entry.Path, windows: false, _diagnostics) ?? target;
         }
 
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";

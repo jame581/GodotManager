@@ -365,6 +365,38 @@ internal sealed class TuiApp
         {
             var registry = await _registry.LoadAsync();
             var previous = registry.GetActive();
+
+            // Activating a global install -- or switching away from one -- writes
+            // machine-wide state. RemoveActiveAsync below clears GODOT_HOME with an
+            // EnvironmentVariableTarget.Machine write for a global entry, which throws
+            // SecurityException ("Requested registry access is not allowed") when this
+            // process is not elevated. Without this branch the TUI could activate a
+            // global install and then never activate anything again, because every
+            // later attempt threw before MarkActive could move the pointer off it.
+            if (ElevatedActivator.IsRequired(entry.Scope, previous?.Scope))
+            {
+                var elevated = await ElevatedActivator.RunAsync(entry.Id, createDesktopShortcut: false);
+                if (!elevated.Succeeded)
+                {
+                    app.Invoke(() => MessageBox.ErrorQuery(
+                        app,
+                        "Error",
+                        $"Activation failed: {elevated.Error}"
+                            + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+                        "OK"));
+                    return;
+                }
+
+                // The elevated child performed the activation and saved the registry.
+                await RefreshRegistryAsync(app);
+                app.Invoke(() =>
+                {
+                    MessageBox.Query(app, "Activated", $"Activated {entry.Version} ({entry.Edition})", "OK");
+                    SetStatus($"Activated {entry.Version}");
+                });
+                return;
+            }
+
             if (previous is not null)
             {
                 await _environment.RemoveActiveAsync(previous);
@@ -374,9 +406,20 @@ internal sealed class TuiApp
             registry.MarkActive(entry.Id);
             await _registry.SaveAsync(registry);
 
+            // A leftover machine-wide shim outranks this activation on PATH, so
+            // `godot` would keep launching the previous install with nothing on
+            // screen explaining why. Surfaced in the dialog rather than written to
+            // AnsiConsole, which Terminal.Gui owns while the TUI is running.
+            var shadowWarning = BuildShimShadowWarning(entry.Scope);
+
             app.Invoke(() =>
             {
-                MessageBox.Query(app, "Activated", $"Activated {entry.Version} ({entry.Edition})", "OK");
+                MessageBox.Query(
+                    app,
+                    "Activated",
+                    $"Activated {entry.Version} ({entry.Edition})"
+                        + (shadowWarning is null ? "" : $"\n\n{shadowWarning}"),
+                    "OK");
             });
             await RefreshRegistryAsync(app);
             app.Invoke(() => SetStatus($"Activated {entry.Version}"));
@@ -385,8 +428,42 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Activation failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Activation failed", ex), "OK");
             });
+        }
+    }
+
+    /// <summary>
+    /// Null when nothing shadows the activation, otherwise the message to append to
+    /// the confirmation dialog.
+    /// </summary>
+    private string? BuildShimShadowWarning(InstallScope activatedScope)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        // Best-effort: this runs after the activation has been committed, and reading
+        // the machine PATH can throw SecurityException on a locked-down host. An
+        // informational warning must not turn a successful activation into an error
+        // dialog.
+        try
+        {
+            var globalShimDir = _paths.GetShimDirectory(InstallScope.Global);
+            var globalShim = Path.Combine(globalShimDir, "godot.cmd");
+
+            return ShimShadowing.WouldShadow(
+                activatedScope,
+                File.Exists(globalShim),
+                globalShimDir,
+                Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
+                ? ShimShadowing.BuildWarning(globalShim)
+                : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -401,6 +478,32 @@ internal sealed class TuiApp
                 app.Invoke(() =>
                 {
                     MessageBox.Query(app, "Info", "No active install to deactivate.", "OK");
+                });
+                return;
+            }
+
+            // Clearing GODOT_HOME for a global entry is a machine-scope write that
+            // throws SecurityException unelevated, so without this the TUI could not
+            // deactivate a global install at all -- the same hole the CLI had.
+            if (ElevatedDeactivator.IsRequired(active.Scope))
+            {
+                var elevated = await ElevatedDeactivator.RunAsync(active.Id);
+                if (!elevated.Succeeded)
+                {
+                    app.Invoke(() => MessageBox.ErrorQuery(
+                        app,
+                        "Error",
+                        $"Deactivate failed: {elevated.Error}"
+                            + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+                        "OK"));
+                    return;
+                }
+
+                await RefreshRegistryAsync(app);
+                app.Invoke(() =>
+                {
+                    MessageBox.Query(app, "Deactivated", $"Deactivated {active.Version} ({active.Edition})", "OK");
+                    SetStatus($"Deactivated {active.Version}");
                 });
                 return;
             }
@@ -420,7 +523,7 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Deactivation failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Deactivation failed", ex), "OK");
             });
         }
     }
@@ -445,6 +548,38 @@ internal sealed class TuiApp
 
         try
         {
+            // A global-scope removal writes the machine-wide registry and deletes
+            // files under %ProgramFiles%. Elevate for the whole operation instead of
+            // failing on the first write, which previously left the TUI user with a
+            // "re-run elevated" hint they could only act on by quitting the TUI.
+            if (ElevatedRemover.IsRequired(entry.Scope))
+            {
+                var elevated = await ElevatedRemover.RunAsync(entry.Id, deleteFiles);
+                if (!elevated.Succeeded)
+                {
+                    app.Invoke(() => MessageBox.ErrorQuery(
+                        app,
+                        "Error",
+                        $"Remove failed: {elevated.Error}"
+                            + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+                        "OK"));
+                    return;
+                }
+
+                await RefreshRegistryAsync(app);
+                app.Invoke(() =>
+                {
+                    MessageBox.Query(
+                        app,
+                        "Removed",
+                        TuiErrorPresentation.BuildRemovedBody(
+                            entry.Version, entry.Edition, entry.Path, elevated.Warning),
+                        "OK");
+                    SetStatus($"Removed {entry.Version}");
+                });
+                return;
+            }
+
             var registry = await _registry.LoadAsync();
 
             if (entry.IsActive)
@@ -453,9 +588,22 @@ internal sealed class TuiApp
                 registry.ClearActive();
             }
 
+            string? deleteFailure = null;
             if (deleteFiles && Directory.Exists(entry.Path))
             {
-                Directory.Delete(entry.Path, recursive: true);
+                try
+                {
+                    Directory.Delete(entry.Path, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort, exactly as RemoveCommand treats it. Letting this
+                    // throw aborts the removal before SaveAsync runs, and SaveAsync is
+                    // what raises the hinted GodmanException for a global-scope entry --
+                    // so throwing here replaces an actionable "re-run elevated" with a
+                    // bare access-denied and leaves the install still registered.
+                    deleteFailure = ex.Message;
+                }
             }
 
             registry.Installs.RemoveAll(x => x.Id == entry.Id);
@@ -463,7 +611,11 @@ internal sealed class TuiApp
 
             app.Invoke(() =>
             {
-                MessageBox.Query(app, "Removed", $"Removed {entry.Version} ({entry.Edition})", "OK");
+                MessageBox.Query(
+                    app,
+                    "Removed",
+                    TuiErrorPresentation.BuildRemovedBody(entry.Version, entry.Edition, entry.Path, deleteFailure),
+                    "OK");
             });
             await RefreshRegistryAsync(app);
             app.Invoke(() => SetStatus($"Removed {entry.Version}"));
@@ -472,7 +624,7 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Remove failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Remove failed", ex), "OK");
             });
         }
     }

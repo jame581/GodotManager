@@ -1,6 +1,7 @@
 using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -24,6 +25,7 @@ internal sealed class InstallDialog : Dialog
     private readonly Button _cancelButton;
 
     private bool _installing;
+    private CancellationTokenSource? _cancellationSource;
 
     /// <summary>
     /// True only after an install completed successfully. Stays false if the
@@ -101,7 +103,25 @@ internal sealed class InstallDialog : Dialog
         _cancelButton.Accepting += (_, args) =>
         {
             args.Handled = true;
-            if (!_installing) RequestStop();
+
+            // Both branches are intended to run on the UI thread: this handler fires
+            // there directly, and _installing/_cancellationSource are only ever
+            // mutated from inside an _app.Invoke callback in DoInstallAsync, which is
+            // also meant to run there -- so by Terminal.Gui's own single-threaded
+            // main-loop model there should be no race between "cancel mid-install"
+            // and "the install just finished and cleared _installing out from under
+            // this click". That model is argued from Terminal.Gui's documented
+            // design, not observed: InstallDialog cannot be instantiated under the
+            // xunit host in this environment, so this reasoning has not actually
+            // been exercised against a live main loop.
+            if (_installing)
+            {
+                _cancellationSource?.Cancel();
+            }
+            else
+            {
+                RequestStop();
+            }
         };
 
         Add(versionLabel, _versionField, editionLabel, _editionSelector,
@@ -136,46 +156,112 @@ internal sealed class InstallDialog : Dialog
         }
 
         _installing = true;
+        _cancellationSource = new CancellationTokenSource();
         _progressBar.Visible = true;
+        _progressBar.Fraction = 0f;
         _statusLabel.Visible = true;
         _statusLabel.Text = "Starting install...";
         _installButton.Visible = false;
 
+        // TryBuildUri above always produces an upstream release URL, so a
+        // ChecksumSource is always correct here. Named, because a positional
+        // argument in this position would bind to DryRun.
         var request = new InstallRequest(
             version, edition, platform, scope,
             uri, null, null,
-            Activate: true, Force: false);
+            Activate: true, Force: false,
+            Checksums: new ChecksumSource(version));
+
+        var verificationStatus = ChecksumStatus.NotApplicable;
+        string? verificationReason = null;
+        var cancellationToken = _cancellationSource.Token;
 
         try
         {
-            await _installer.InstallWithElevationAsync(request, progress =>
-            {
-                _app.Invoke(() =>
+            InstallEntry result = await _installer.InstallWithElevationAsync(
+                request,
+                progress =>
                 {
-                    _progressBar.Fraction = (float)progress;
-                    _statusLabel.Text = progress < 1.0
-                        ? $"Installing... {progress:P0}"
-                        : "Finalizing...";
+                    _app.Invoke(() =>
+                    {
+                        _progressBar.Fraction = InstallProgressPresentation.ToFraction(progress);
+                        _statusLabel.Text = InstallProgressPresentation.FormatProgressLabel(progress);
+                    });
+                },
+                cancellationToken,
+                onVerified: (status, reason) =>
+                {
+                    verificationStatus = status;
+                    verificationReason = reason;
                 });
-            });
+
+            // NotApplicable covers both "no published sums to check against" and
+            // "this release publishes none upstream" -- neither is an error, so
+            // neither should be surfaced as though the download were suspect. Only
+            // Unverified -- an attempt that was actually made and did not succeed --
+            // is worth telling the user about. The TUI owns the whole screen during
+            // an install, so this is surfaced in the dialog's own widgets rather
+            // than by writing to AnsiConsole, mirroring InstallCommand's own
+            // --verbose-gated warning for the CLI.
+            var unverified = verificationStatus == ChecksumStatus.Unverified;
 
             _app.Invoke(() =>
             {
                 Success = true;
-                _statusLabel.Text = "Install complete!";
-                MessageBox.Query(_app, "Success", $"Installed Godot {version} ({edition})", "OK");
+                _installing = false;
+                DisposeCancellationSource();
+                _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
+                MessageBox.Query(
+                    _app, "Success",
+                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason),
+                    "OK");
                 RequestStop();
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // Not an install failure: the user asked for this. InstallerService's
+            // own OperationCanceledException handler (Task 7b) has already cleaned
+            // up any staging directory; the partial download in the cache is
+            // deliberately left alone so a retry can resume it rather than
+            // restart from zero. Stay in the dialog -- do not RequestStop -- and
+            // put it back in a state where Install can be pressed again.
+            _app.Invoke(() =>
+            {
+                _installing = false;
+                DisposeCancellationSource();
+                _progressBar.Visible = false;
+                _statusLabel.Text = InstallProgressPresentation.BuildCancelledStatus();
+                _installButton.Visible = true;
             });
         }
         catch (Exception ex)
         {
             _app.Invoke(() =>
             {
-                _statusLabel.Text = "Install failed.";
-                MessageBox.ErrorQuery(_app, "Error", $"Install failed: {ex.Message}", "OK");
                 _installing = false;
+                DisposeCancellationSource();
+                _statusLabel.Text = "Install failed.";
+
+                MessageBox.ErrorQuery(_app, "Error", TuiErrorPresentation.BuildErrorBody("Install failed", ex), "OK");
                 _installButton.Visible = true;
             });
         }
+    }
+
+    /// <summary>
+    /// Disposal is intended to happen only from within an _app.Invoke callback
+    /// (i.e. on the UI thread), matching where the Cancel button's Accepting
+    /// handler reads and calls <see cref="_cancellationSource"/> -- otherwise a
+    /// click racing the install's completion could call Cancel() on an
+    /// already-disposed source. As with the Cancel handler's own comment, this is
+    /// reasoned from Terminal.Gui's single-threaded main-loop model, not verified
+    /// by a test: InstallDialog cannot be instantiated under the xunit host in
+    /// this environment.
+    /// </summary>
+    private void DisposeCancellationSource()
+    {
+        _cancellationSource?.Dispose();
+        _cancellationSource = null;
     }
 }

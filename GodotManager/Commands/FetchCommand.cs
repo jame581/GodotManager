@@ -86,10 +86,13 @@ internal sealed class FetchCommand : AsyncCommand<FetchCommand.Settings>
 
             return 0;
         }
+        catch (GodmanException ex)
+        {
+            return GodmanExceptionRenderer.Render("Failed to fetch releases:", ex);
+        }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Failed to fetch releases:[/] {ex.Message}");
-            return -1;
+            return GodmanExceptionRenderer.Render("Failed to fetch releases:", ex.Message);
         }
     }
 

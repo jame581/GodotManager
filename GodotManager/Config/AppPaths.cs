@@ -15,13 +15,16 @@ internal sealed class AppPaths
 
     public string ConfigDirectory { get; }
     public string RegistryFile { get; }
+    public string GlobalRegistryFile { get; }
     public string EnvScriptPath { get; }
+    public string DownloadCacheDirectory { get; }
     public string EnvVarName => "GODOT_HOME";
 
     private readonly string _userInstallRoot;
     private readonly string _globalInstallRoot;
     private readonly string _userShimDirectory;
     private readonly string _globalShimDirectory;
+    private readonly string _globalConfigRoot;
 
     public AppPaths()
     {
@@ -63,6 +66,9 @@ internal sealed class AppPaths
             // Global scope for Windows: C:\Program Files\godman
             _globalInstallRoot = System.IO.Path.Combine(globalRoot, "installs");
             _globalShimDirectory = System.IO.Path.Combine(globalRoot, "bin");
+            // Installs live in a subdirectory of the global root on Windows, so the
+            // registry belongs in the root itself, beside installs\ and bin\.
+            _globalConfigRoot = globalRoot;
         }
         else
         {
@@ -100,10 +106,15 @@ internal sealed class AppPaths
             _globalShimDirectory = globalShim;
             _userInstallRoot = userInstallRoot;
             _globalInstallRoot = globalInstallRoot;
+            // On Linux the global install root IS the shared directory (installs sit
+            // directly inside it), so the registry belongs there too.
+            _globalConfigRoot = globalInstallRoot;
         }
 
         RegistryFile = System.IO.Path.Combine(ConfigDirectory, "installs.json");
+        GlobalRegistryFile = System.IO.Path.Combine(_globalConfigRoot, "installs.json");
         EnvScriptPath = System.IO.Path.Combine(ConfigDirectory, "env.sh");
+        DownloadCacheDirectory = System.IO.Path.Combine(ConfigDirectory, "downloads");
 
         EnsureDirectories();
     }
@@ -148,6 +159,7 @@ internal sealed class AppPaths
     private void EnsureDirectories()
     {
         System.IO.Directory.CreateDirectory(ConfigDirectory);
+        System.IO.Directory.CreateDirectory(DownloadCacheDirectory);
         System.IO.Directory.CreateDirectory(_userShimDirectory);
         System.IO.Directory.CreateDirectory(_userInstallRoot);
 

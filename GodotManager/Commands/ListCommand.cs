@@ -1,3 +1,4 @@
+using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
@@ -27,16 +28,27 @@ internal sealed class ListCommand : AsyncCommand<ListCommand.Settings>
         }
 
         var table = new Table().Border(TableBorder.Rounded);
-        table.AddColumns("Active", "Id", "Version", "Edition", "Platform", "Path", "SHA256", "Added");
+        table.AddColumns("Active", "Id", "Version", "Edition", "Platform", "Path", "Checksum", "Added");
 
         foreach (var install in registry.Installs.OrderByDescending(x => x.AddedAt))
         {
             var active = install.IsActive ? "[green]*[/]" : string.Empty;
-            var checksum = install.Checksum is not null ? install.Checksum[..Math.Min(12, install.Checksum.Length)] : "[grey]-[/]";
+            var checksum = FormatChecksum(install);
             table.AddRow(active, install.Id.ToString("N"), install.Version, install.Edition.ToString(), install.Platform.ToString(), install.Path, checksum, install.AddedAt.ToString("u"));
         }
 
         AnsiConsole.Write(table);
         return 0;
+    }
+
+    private static string FormatChecksum(InstallEntry install)
+    {
+        if (install.Checksum is null)
+        {
+            return "[grey]-[/]";
+        }
+
+        var shortHash = install.Checksum[..Math.Min(12, install.Checksum.Length)];
+        return install.ChecksumVerified ? $"[green]✓[/] {shortHash}" : shortHash;
     }
 }

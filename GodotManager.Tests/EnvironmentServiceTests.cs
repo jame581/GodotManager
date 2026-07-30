@@ -45,6 +45,41 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Fixture_DoesNotLeakItsShimDirectoryIntoThePersistedUserPath()
+    {
+        // Windows-only by construction: ApplyWindows is the branch that appends the
+        // shim directory to the persisted User PATH. Guarded rather than asserted
+        // cross-platform so this makes no claim about how the User target behaves
+        // on Unix.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // GODMAN_HOME redirects where files land, but not where EnvironmentService
+        // writes PATH -- that always went to the real registry. Every activating test
+        // therefore appended its own temp shim directory permanently, which is how a
+        // real machine ended up with 49 dead godman-test entries in its User PATH.
+        var before = System.Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User);
+
+        using (var fixture = new GodmanTestFixture())
+        {
+            var installDir = Path.Combine(fixture.TempRoot, "path-leak");
+            Directory.CreateDirectory(installDir);
+            File.WriteAllText(Path.Combine(installDir, "Godot_v4.5.1-stable_win64.exe"), "fake executable");
+
+            await fixture.Environment.ApplyActiveAsync(
+                InstallEntryFactory.Create(path: installDir), dryRun: false, createDesktopShortcut: false);
+
+            Assert.Contains(
+                fixture.Paths.GetShimDirectory(InstallScope.User),
+                System.Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "");
+        }
+
+        Assert.Equal(before, System.Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User));
+    }
+
+    [Fact]
     public async Task ApplyActiveAsync_CreatesShimFile()
     {
         // Arrange

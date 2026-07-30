@@ -11,11 +11,13 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public DoctorCommand(RegistryService registry, AppPaths paths)
+    public DoctorCommand(RegistryService registry, AppPaths paths, DiagnosticContext? diagnostics = null)
     {
         _registry = registry;
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     internal sealed class Settings : GlobalSettings { }
@@ -108,6 +110,71 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 AnsiConsole.MarkupLineInterpolated($"[yellow]Legacy directory found[/]: {legacyPath} ({description})");
                 AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
             }
+        }
+
+        // Surface abandoned partials, which can be hundreds of megabytes.
+        // Best-effort: doctor must survive a cache directory that is missing,
+        // unreadable, or holds something unexpected rather than throwing.
+        try
+        {
+            if (Directory.Exists(_paths.DownloadCacheDirectory))
+            {
+                var cacheFiles = Directory.GetFiles(_paths.DownloadCacheDirectory);
+                var totalBytes = cacheFiles.Sum(f => new FileInfo(f).Length);
+                var partFiles = cacheFiles.Where(f => f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)).ToList();
+                var partials = partFiles.Count;
+
+                // A completed archive with no partial sitting next to it is the
+                // normal outcome of an install that failed after the download
+                // finished but before extraction succeeded: ResolvePlanAsync runs
+                // the download (and the promotion from .part to .archive) before
+                // InstallAsync's target-exists check, so a pre-existing target
+                // without --force, or a failure during extraction, leaves exactly
+                // this behind with no .part anywhere in sight.
+                var completedArchives = cacheFiles.Count(
+                    f => f.EndsWith(".archive", StringComparison.OrdinalIgnoreCase));
+
+                // A .part is only resumable when its .json sidecar (URL + ETag) is
+                // still present -- see the cache-lifecycle invariant in DownloadService:
+                // without it there is no If-Range guard, so DownloadAsync discards the
+                // bytes and restarts from zero instead of resuming.
+                var cacheFileSet = new HashSet<string>(cacheFiles, StringComparer.OrdinalIgnoreCase);
+                var resumablePartials = partFiles.Count(f => cacheFileSet.Contains(Path.ChangeExtension(f, ".json")));
+
+                if (cacheFiles.Length == 0)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[green]Download cache[/] empty: {_paths.DownloadCacheDirectory}");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[yellow]Download cache[/]: {cacheFiles.Length} file(s), {totalBytes / 1024d / 1024d:F1} MB in {_paths.DownloadCacheDirectory}");
+
+                    if (partials > 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"[yellow]  {partials} incomplete download(s)[/], {resumablePartials} resumable.");
+                    }
+
+                    if (completedArchives > 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"[yellow]  {completedArchives} completed archive(s)[/] left over from an install that did not finish.");
+                    }
+
+                    // Any leftover cache file, partial or completed, is safe to
+                    // discard -- gating this hint on partials alone missed the
+                    // completed-archive case, which is now the more common one.
+                    if (partials > 0 || completedArchives > 0)
+                    {
+                        AnsiConsole.MarkupLine("[grey]  Run 'godman clean' to discard them.[/]");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Could not inspect download cache at {_paths.DownloadCacheDirectory}: {ex.Message}");
         }
 
         return 0;

@@ -29,6 +29,19 @@ internal sealed class InstallEntry
     public InstallScope Scope { get; set; } = InstallScope.User;
     public string Path { get; set; } = string.Empty;
     public string? Checksum { get; set; }
+
+    /// <summary>
+    /// Hash algorithm backing <see cref="Checksum"/>. Null means sha256, which is
+    /// what godman &lt;= 1.2.0 wrote. New installs record "sha512".
+    /// </summary>
+    public string? ChecksumAlgorithm { get; set; }
+
+    /// <summary>
+    /// True when <see cref="Checksum"/> was matched against the checksums published
+    /// upstream, rather than merely computed locally.
+    /// </summary>
+    public bool ChecksumVerified { get; set; }
+
     public DateTimeOffset AddedAt { get; set; } = DateTimeOffset.UtcNow;
 
     [JsonIgnore]
