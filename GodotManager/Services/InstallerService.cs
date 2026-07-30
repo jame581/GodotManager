@@ -536,12 +536,16 @@ internal sealed class InstallerService
     /// returning.
     /// </summary>
     /// <remarks>
-    /// Unverified on Linux: this method is only ever reached from the Windows +
-    /// Global-scope + unelevated elevation branch (see the guard at the top of
-    /// InstallWithElevationAsync), which cannot be exercised on this development
-    /// platform. It has not been run against a real elevated child process.
+    /// <c>internal</c> rather than <c>private</c> purely so
+    /// InstallerServiceInternalsTests (via this assembly's
+    /// InternalsVisibleTo("GodotManager.Tests")) can spawn a real child process and
+    /// drive this directly. This method itself has no Windows/elevation dependency
+    /// -- it operates on any <see cref="Process"/> -- only the production call site
+    /// in <see cref="RunElevatedInstallAsync"/> is gated to the Windows +
+    /// Global-scope + unelevated branch. Do not call this from outside that call
+    /// site and the tests that cover it directly.
     /// </remarks>
-    private static async Task TryKillProcessTreeAsync(Process process)
+    internal static async Task TryKillProcessTreeAsync(Process process)
     {
         try
         {

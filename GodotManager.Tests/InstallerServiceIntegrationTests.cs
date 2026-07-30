@@ -504,18 +504,22 @@ public class InstallerServiceIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// task-13 Bug C follow-up (Windows-elevated Global cancel deleting the
-    /// completed download): this test cannot exercise
-    /// InstallWithElevationAsync/RunElevatedInstallAsync/TryKillProcessTreeAsync at
-    /// all -- that whole branch is gated by a hard <c>OperatingSystem.IsWindows()</c>
-    /// check with no injection seam, so it is structurally unreachable in this test
-    /// suite regardless of platform. What this pins instead is the same underlying
-    /// contract on the one path that *is* reachable everywhere: a cancelled
-    /// InstallAsync must never call DeleteCacheEntry, because DeleteCacheEntry is
-    /// only ever invoked from the success branch below where the CancellationToken
-    /// is thrown past instead of reached. This is a parallel proof, not a test of
-    /// the Windows-only code -- see the fix report for what remains genuinely
-    /// unverified.
+    /// Correction (review, round 2): this test does NOT cover the task-13 Bug C
+    /// follow-up fix (InstallWithElevationAsync's `finally`-runs-on-exception
+    /// structure, its `!cancellationToken.IsCancellationRequested` guard, the
+    /// kill-before-cache ordering, or TryKillProcessTreeAsync). Plain InstallAsync's
+    /// own cache cleanup (below, in the success path) is a bare unconditional
+    /// statement that runs *after* a successful registry save, entirely outside any
+    /// try/finally -- cancellation simply never reaches it, and never had the bug
+    /// this fix addresses. Reverting the actual fix in InstallWithElevationAsync
+    /// would not touch this method at all, and this test would keep passing.
+    /// See InstallerServiceInternalsTests for the test that does cover the fixed
+    /// code directly (TryKillProcessTreeAsync, made `internal` for exactly that
+    /// purpose). This test is kept only for its own, narrower and genuinely
+    /// unrelated value: pinning that a cancelled plain InstallAsync -- the ordinary,
+    /// always-reachable path -- does not delete a completed download's cache entry
+    /// either, which happens to hold today simply because the delete statement is
+    /// unreached on this path, not because of any guard.
     /// </summary>
     [Fact]
     public async Task InstallAsync_WhenCancelledAfterDownloadCompletes_PreservesTheDownloadCacheEntry()
