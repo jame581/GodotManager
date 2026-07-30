@@ -52,6 +52,12 @@ internal static class ShimShadowing
         "activation, so `godot` will keep launching the globally activated install. " +
         "Re-run activation from an elevated shell, or delete that file, to change it.";
 
-    private static string Normalize(string path) =>
-        path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    /// <summary>
+    /// Separators are hardcoded rather than taken from <see cref="Path"/>: this
+    /// parses a Windows PATH value (it already assumes ';' as the delimiter), and on
+    /// Linux both <c>DirectorySeparatorChar</c> and <c>AltDirectorySeparatorChar</c>
+    /// are '/', so a host-derived trim would leave a trailing backslash in place and
+    /// silently stop matching.
+    /// </summary>
+    private static string Normalize(string path) => path.Trim().TrimEnd('\\', '/');
 }

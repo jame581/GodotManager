@@ -43,7 +43,7 @@ internal static class ElevatedDeactivator
     /// the elevated child can refuse to act if it changed in between rather than
     /// deactivating something the user never selected.
     /// </summary>
-    public static async Task<ElevatedActivationResult> RunAsync(
+    public static async Task<ElevatedOperationResult> RunAsync(
         Guid id, CancellationToken cancellationToken = default)
     {
         var json = JsonSerializer.Serialize(new ElevatedDeactivatePayloadDto(id));
@@ -79,19 +79,19 @@ internal static class ElevatedDeactivator
             using var process = Process.Start(psi);
             if (process is null)
             {
-                return ElevatedActivationResult.Failed("Unable to start elevated deactivation process.");
+                return ElevatedOperationResult.Failed("Unable to start elevated deactivation process.");
             }
 
             await process.WaitForExitAsync(cancellationToken);
 
             return process.ExitCode == 0
-                ? ElevatedActivationResult.Ok()
-                : ElevatedActivationResult.Failed(
+                ? ElevatedOperationResult.Ok()
+                : ElevatedOperationResult.Failed(
                     $"Elevated deactivation failed with exit code {process.ExitCode}.");
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            return ElevatedActivationResult.Failed(
+            return ElevatedOperationResult.Failed(
                 "Elevation was canceled or blocked.",
                 "If you downloaded this executable, right-click it → Properties → Unblock, "
                     + $"or run: Unblock-File '{fileName}'");

@@ -7,8 +7,6 @@ using System.Text.Json;
 
 namespace GodotManager.Commands;
 
-internal sealed record ElevatedActivatePayload(Guid Id, bool CreateDesktopShortcut);
-
 internal sealed class ElevatedActivateCommand : AsyncCommand<ElevatedActivateCommand.Settings>
 {
     private readonly RegistryService _registry;
@@ -32,11 +30,11 @@ internal sealed class ElevatedActivateCommand : AsyncCommand<ElevatedActivateCom
             return Fail("This command must be run as administrator.");
         }
 
-        ElevatedActivatePayload? payload;
+        ElevatedActivatePayloadDto? payload;
         try
         {
             var json = Encoding.UTF8.GetString(Convert.FromBase64String(settings.Payload));
-            payload = JsonSerializer.Deserialize<ElevatedActivatePayload>(json);
+            payload = JsonSerializer.Deserialize<ElevatedActivatePayloadDto>(json);
         }
         catch (Exception ex)
         {

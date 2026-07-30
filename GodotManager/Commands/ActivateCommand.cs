@@ -105,15 +105,26 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
     /// </summary>
     internal static void WarnIfShadowedByGlobalShim(AppPaths paths, InstallScope activatedScope)
     {
-        var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot.cmd");
-
-        if (ShimShadowing.WouldShadow(
-                activatedScope,
-                File.Exists(globalShim),
-                paths.GetShimDirectory(InstallScope.Global),
-                Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)))
+        // Best-effort throughout: this runs *after* MarkActive and SaveAsync have
+        // committed, and reading the machine PATH can throw SecurityException on a
+        // locked-down host. Letting that escape would report a failure for an
+        // activation that already succeeded and was persisted.
+        try
         {
-            AnsiConsole.MarkupLineInterpolated($"[yellow]{ShimShadowing.BuildWarning(globalShim)}[/]");
+            var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot.cmd");
+
+            if (ShimShadowing.WouldShadow(
+                    activatedScope,
+                    File.Exists(globalShim),
+                    paths.GetShimDirectory(InstallScope.Global),
+                    Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{ShimShadowing.BuildWarning(globalShim)}[/]");
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticContext.WarnAlways($"Could not check for a shadowing global shim: {ex.Message}");
         }
     }
 

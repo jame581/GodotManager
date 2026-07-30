@@ -16,11 +16,20 @@ internal sealed record ElevatedActivatePayloadDto(Guid Id, bool CreateDesktopSho
 /// screen, so writing to AnsiConsole from here would paint over it -- the same
 /// reason DownloadOutcome carries UnverifiedReason instead of reporting it itself.
 /// </remarks>
-internal readonly record struct ElevatedActivationResult(bool Succeeded, string? Error, string? Hint)
+internal readonly record struct ElevatedOperationResult(
+    bool Succeeded, string? Error, string? Hint, string? Warning = null)
 {
-    public static ElevatedActivationResult Ok() => new(true, null, null);
+    public static ElevatedOperationResult Ok() => new(true, null, null);
 
-    public static ElevatedActivationResult Failed(string error, string? hint = null) =>
+    /// <summary>
+    /// Succeeded, but with something the user needs told. Only the child process can
+    /// know these, and its own console window closes before anyone can read it, so
+    /// they have to cross back through the exit code.
+    /// </summary>
+    public static ElevatedOperationResult OkWithWarning(string warning) =>
+        new(true, null, null, warning);
+
+    public static ElevatedOperationResult Failed(string error, string? hint = null) =>
         new(false, error, hint);
 }
 
@@ -64,7 +73,7 @@ internal static class ElevatedActivator
         targetScope == Domain.InstallScope.Global
         || currentActiveScope == Domain.InstallScope.Global;
 
-    public static async Task<ElevatedActivationResult> RunAsync(
+    public static async Task<ElevatedOperationResult> RunAsync(
         Guid id, bool createDesktopShortcut, CancellationToken cancellationToken = default)
     {
         var json = JsonSerializer.Serialize(new ElevatedActivatePayloadDto(id, createDesktopShortcut));
@@ -100,19 +109,19 @@ internal static class ElevatedActivator
             using var process = Process.Start(psi);
             if (process is null)
             {
-                return ElevatedActivationResult.Failed("Unable to start elevated activation process.");
+                return ElevatedOperationResult.Failed("Unable to start elevated activation process.");
             }
 
             await process.WaitForExitAsync(cancellationToken);
 
             return process.ExitCode == 0
-                ? ElevatedActivationResult.Ok()
-                : ElevatedActivationResult.Failed(
+                ? ElevatedOperationResult.Ok()
+                : ElevatedOperationResult.Failed(
                     $"Elevated activation failed with exit code {process.ExitCode}.");
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            return ElevatedActivationResult.Failed(
+            return ElevatedOperationResult.Failed(
                 "Elevation was canceled or blocked.",
                 "If you downloaded this executable, right-click it → Properties → Unblock, "
                     + $"or run: Unblock-File '{fileName}'");

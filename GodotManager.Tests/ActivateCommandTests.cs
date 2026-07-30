@@ -186,13 +186,13 @@ public class ActivateCommandTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
-        var payload = new ElevatedActivatePayload(id, CreateDesktopShortcut: true);
+        var payload = new ElevatedActivatePayloadDto(id, CreateDesktopShortcut: true);
 
         // Act
         var json = JsonSerializer.Serialize(payload);
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
         var decodedJson = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-        var deserialized = JsonSerializer.Deserialize<ElevatedActivatePayload>(decodedJson);
+        var deserialized = JsonSerializer.Deserialize<ElevatedActivatePayloadDto>(decodedJson);
 
         // Assert
         Assert.NotNull(deserialized);
@@ -205,13 +205,13 @@ public class ActivateCommandTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
-        var payload = new ElevatedActivatePayload(id, CreateDesktopShortcut: false);
+        var payload = new ElevatedActivatePayloadDto(id, CreateDesktopShortcut: false);
 
         // Act
         var json = JsonSerializer.Serialize(payload);
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
         var decodedJson = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-        var deserialized = JsonSerializer.Deserialize<ElevatedActivatePayload>(decodedJson);
+        var deserialized = JsonSerializer.Deserialize<ElevatedActivatePayloadDto>(decodedJson);
 
         // Assert
         Assert.NotNull(deserialized);

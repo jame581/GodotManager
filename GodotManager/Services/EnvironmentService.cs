@@ -95,7 +95,7 @@ internal sealed class EnvironmentService
         // pointing at a path that does not exist.
         if (!File.Exists(exe))
         {
-            exe = GodotExecutableLocator.Find(entry.Path, windows: true) ?? exe;
+            exe = GodotExecutableLocator.Find(entry.Path, windows: true, _diagnostics) ?? exe;
         }
 
         var shimPath = Path.Combine(shimDir, "godot.cmd");
@@ -175,7 +175,7 @@ internal sealed class EnvironmentService
         // search leaves the shim pointing at a path that was never written.
         if (!File.Exists(target))
         {
-            target = GodotExecutableLocator.Find(entry.Path, windows: false) ?? target;
+            target = GodotExecutableLocator.Find(entry.Path, windows: false, _diagnostics) ?? target;
         }
 
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";

@@ -29,14 +29,28 @@ CI runs `dotnet test -v minimal` on ubuntu-latest + windows-latest (.github/work
 
 ## Elevation / re-entry pattern
 
-Global-scope `install`, `activate`, and `clean` need admin rights. Instead of failing,
-the user-scope command re-launches itself elevated and dispatches to a hidden mirror
-command: `install-elevated`, `activate-elevated`, `clean-elevated` (registered with
+Global-scope `install`, `activate`, `clean`, `remove`, and `deactivate` need admin
+rights. Instead of failing, the user-scope command re-launches itself elevated and
+dispatches to a hidden mirror command: `install-elevated`, `activate-elevated`,
+`clean-elevated`, `remove-elevated`, `deactivate-elevated` (registered with
 `.IsHidden()` in Program.cs, implemented in `Commands/Elevated*Command.cs`).
 
 On Windows this triggers UAC via `WindowsElevationHelper`; on Linux the user must
 already be running under `sudo`. When adding a new command that touches global paths,
 follow the same split.
+
+Two rules learned the hard way, both from bugs that shipped past a green suite:
+
+- **Decide elevation before the first machine-wide write, not after it fails.** The
+  predicate lives in `Services/Elevated{Activator,Remover,Deactivator}.cs` as
+  `TouchesMachineState` (pure, unit-tested) wrapped by `IsRequired` (adds the OS and
+  elevation probe). Note that `activate` needs elevation when the install being
+  *deactivated* is global, not just the one being activated.
+- **Both front-ends must go through the same predicate.** Every TUI handler in
+  `Tui/TuiApp.cs` has a CLI counterpart in `Commands/`; four separate bugs came from a
+  TUI handler reimplementing one and dropping its elevation or error handling. The
+  launchers return an `ElevatedOperationResult` rather than printing, because the TUI
+  calls them while Terminal.Gui owns the screen.
 
 ## Path resolution & test isolation
 

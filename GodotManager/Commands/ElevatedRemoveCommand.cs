@@ -57,6 +57,8 @@ internal sealed class ElevatedRemoveCommand : AsyncCommand<ElevatedRemoveCommand
             return Fail($"No install found with id {payload.Id}");
         }
 
+        var filesSurvived = false;
+
         try
         {
             if (registry.ActiveId == install.Id)
@@ -77,6 +79,7 @@ internal sealed class ElevatedRemoveCommand : AsyncCommand<ElevatedRemoveCommand
                 catch (Exception ex)
                 {
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to delete files:[/] {ex.Message}");
+                    filesSurvived = true;
                 }
             }
 
@@ -89,8 +92,20 @@ internal sealed class ElevatedRemoveCommand : AsyncCommand<ElevatedRemoveCommand
         }
 
         AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {install.Version} ({install.Edition}, {install.Platform})");
-        return 0;
+
+        // This process gets its own console window, which closes the moment it
+        // exits, so nothing written above is readable. The exit code is the only
+        // channel back to the parent -- and reporting a plain success here would
+        // tell the user their files were deleted while a full install remains on
+        // disk with no registry entry left pointing at it.
+        return filesSurvived ? FilesSurvivedExitCode : 0;
     }
+
+    /// <summary>
+    /// The registry entry was removed but its files could not be deleted. Distinct
+    /// from both success and failure: the removal itself did happen.
+    /// </summary>
+    internal const int FilesSurvivedExitCode = 2;
 
     private static int Fail(string message)
     {

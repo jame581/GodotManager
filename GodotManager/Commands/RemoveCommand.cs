@@ -46,6 +46,11 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
                 var elevated = await ElevatedRemover.RunAsync(install.Id, settings.DeleteFiles);
                 if (elevated.Succeeded)
                 {
+                    if (elevated.Warning is { } warning)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[yellow]{warning}[/] {install.Path}");
+                    }
+
                     return 0;
                 }
 

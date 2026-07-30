@@ -444,16 +444,27 @@ internal sealed class TuiApp
             return null;
         }
 
-        var globalShimDir = _paths.GetShimDirectory(InstallScope.Global);
-        var globalShim = Path.Combine(globalShimDir, "godot.cmd");
+        // Best-effort: this runs after the activation has been committed, and reading
+        // the machine PATH can throw SecurityException on a locked-down host. An
+        // informational warning must not turn a successful activation into an error
+        // dialog.
+        try
+        {
+            var globalShimDir = _paths.GetShimDirectory(InstallScope.Global);
+            var globalShim = Path.Combine(globalShimDir, "godot.cmd");
 
-        return ShimShadowing.WouldShadow(
-            activatedScope,
-            File.Exists(globalShim),
-            globalShimDir,
-            Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
-            ? ShimShadowing.BuildWarning(globalShim)
-            : null;
+            return ShimShadowing.WouldShadow(
+                activatedScope,
+                File.Exists(globalShim),
+                globalShimDir,
+                Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
+                ? ShimShadowing.BuildWarning(globalShim)
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task DeactivateAsync(IApplication app)
@@ -558,7 +569,12 @@ internal sealed class TuiApp
                 await RefreshRegistryAsync(app);
                 app.Invoke(() =>
                 {
-                    MessageBox.Query(app, "Removed", $"Removed {entry.Version} ({entry.Edition})", "OK");
+                    MessageBox.Query(
+                        app,
+                        "Removed",
+                        TuiErrorPresentation.BuildRemovedBody(
+                            entry.Version, entry.Edition, entry.Path, elevated.Warning),
+                        "OK");
                     SetStatus($"Removed {entry.Version}");
                 });
                 return;

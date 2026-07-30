@@ -37,7 +37,7 @@ internal static class ElevatedRemover
     /// </summary>
     internal static bool TouchesMachineState(InstallScope scope) => scope == InstallScope.Global;
 
-    public static async Task<ElevatedActivationResult> RunAsync(
+    public static async Task<ElevatedOperationResult> RunAsync(
         Guid id, bool deleteFiles, CancellationToken cancellationToken = default)
     {
         var json = JsonSerializer.Serialize(new ElevatedRemovePayloadDto(id, deleteFiles));
@@ -73,19 +73,30 @@ internal static class ElevatedRemover
             using var process = Process.Start(psi);
             if (process is null)
             {
-                return ElevatedActivationResult.Failed("Unable to start elevated removal process.");
+                return ElevatedOperationResult.Failed("Unable to start elevated removal process.");
             }
 
             await process.WaitForExitAsync(cancellationToken);
 
-            return process.ExitCode == 0
-                ? ElevatedActivationResult.Ok()
-                : ElevatedActivationResult.Failed(
-                    $"Elevated removal failed with exit code {process.ExitCode}.");
+            return process.ExitCode switch
+            {
+                0 => ElevatedOperationResult.Ok(),
+
+                // The entry was removed but its directory could not be deleted. The
+                // child's own console is gone by now, so this is the only way the
+                // user learns their disk was not actually reclaimed.
+                Commands.ElevatedRemoveCommand.FilesSurvivedExitCode =>
+                    ElevatedOperationResult.OkWithWarning(
+                        "The install was unregistered, but its files could not be deleted "
+                            + "and are still on disk."),
+
+                _ => ElevatedOperationResult.Failed(
+                    $"Elevated removal failed with exit code {process.ExitCode}.")
+            };
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            return ElevatedActivationResult.Failed(
+            return ElevatedOperationResult.Failed(
                 "Elevation was canceled or blocked.",
                 "If you downloaded this executable, right-click it → Properties → Unblock, "
                     + $"or run: Unblock-File '{fileName}'");
