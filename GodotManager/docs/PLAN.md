@@ -233,12 +233,47 @@ Replaced the Spectre.Console menu-driven TUI with a persistent two-panel Termina
   rendered in the command catch blocks (Spectre does not propagate to Program.cs).
 - **doctor**: reports download cache size and how many incomplete downloads are
   genuinely resumable.
-- **Not exercised end to end**: the Windows elevated install path (UAC, the
-  `install-elevated` re-entry, parent/child checksum handoff) has unit coverage
-  only — no Windows machine was available during development. The TUI's
-  unverified-checksum banner (`InstallDialog.cs`) has no automated coverage either,
-  because Terminal.Gui's module initializer throws under the xunit test host; only
-  the pure formatting helpers it calls are unit tested. Both need a manual check
-  before release.
+- **Windows verification: done.** The elevated install path (UAC, the
+  `install-elevated` re-entry, parent/child checksum handoff) was exercised by hand
+  on Windows 11, along with cross-process Range resume, corrupt-resume rejection,
+  cache cleanup, the `%ProgramFiles%\godman\installs.json` registry location, and
+  the 1.2.0 → 1.3.0 upgrade path. Note the elevated paths **cannot** be tested with
+  the `GODMAN_*` overrides the rest of the suite isolates with: UAC children are
+  created with a fresh environment block, so an isolated run would install to the
+  temp target while registering in the real `%ProgramFiles%`.
+- **Still not covered**: the TUI's unverified-checksum banner (`InstallDialog.cs`).
+  Terminal.Gui's module initializer throws under the xunit test host, so only the
+  pure formatting helpers are unit tested; rendering the banner needs an induced
+  sums-fetch failure. Shipping as a known gap.
+
+## Phase 7b — Elevation parity, found by Windows verification ✅ COMPLETE
+
+Manual Windows testing found five bugs a green 257-test suite had missed. Four were
+one pattern: **TUI handlers reimplementing their CLI counterpart while dropping its
+elevation and error handling.** `install` was unaffected because it delegates to
+`InstallerService`; `remove`, `activate` and `deactivate` were not.
+
+- **All five machine-state verbs now elevate identically from either front-end**, via
+  one predicate per verb — `TouchesMachineState` (pure, unit-tested) wrapped by
+  `IsRequired` (adds the OS and elevation probe) in
+  `Services/Elevated{Activator,Remover,Deactivator}.cs`. `remove-elevated` and
+  `deactivate-elevated` join the existing three mirrors.
+- The launchers **return an `ElevatedOperationResult` instead of printing**, because
+  the TUI calls them while Terminal.Gui owns the screen. The child's console closes
+  with it, so an outcome the parent must report has to cross back through the exit
+  code — as "unregistered, but the files survived" now does for `remove-elevated`.
+- **`.NET`/mono installs were unusable after activation on both platforms** (a
+  pre-1.2.0-era bug): mono archives extract into a nested
+  `Godot_vX-stable_mono_<platform>/` directory, so a folder-name guess with a
+  top-level-only fallback wrote a shim pointing at a path that never existed.
+  `GodotExecutableLocator` searches root then immediate children, prefers the GUI
+  binary over `_console`, and forces case-insensitive matching (the platform default
+  is case-sensitive on Linux).
+- **A leftover global shim silently outranks a user-scope activation**, since Windows
+  searches the machine `PATH` first. Reported by `ShimShadowing`, not auto-corrected —
+  removing it needs rights the activating user may not have.
+- **The test suite was writing to the real Windows registry.** `AppPaths` redirects
+  files, but `EnvironmentService` appended its shim directory to the persisted User
+  `PATH` regardless; `GodmanTestFixture` now snapshots and restores it.
 
 Spec: `GodotManager/docs/superpowers/specs/2026-07-28-v1.3.0-install-robustness-design.md`

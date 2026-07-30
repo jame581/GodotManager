@@ -24,6 +24,24 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 **Building from source** requires:
 * [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download)
 
+## Screenshots
+
+The interactive TUI (`godman tui`) — installs on the left, details for the selected one on the right, with the active install marked and the per-install actions listed underneath.
+
+![godman TUI main view](Screenshots/tui-default.png)
+
+`F1` opens **Browse Versions**, which lists what is available upstream. Filter as you type, or tick *Stable only* to hide pre-releases.
+
+![godman TUI browsing available Godot versions](Screenshots/tui-browse-version.png)
+
+`F2` opens the **Install** dialog: pick a version, Standard or .NET, and user or global scope. On Windows, choosing Global raises a UAC prompt when you confirm.
+
+![godman TUI install dialog](Screenshots/tui-install-dialog.png)
+
+`?` shows the keyboard shortcuts.
+
+![godman TUI keyboard shortcuts overlay](Screenshots/tui-help.png)
+
 ## Quickstart
 
 ### Install via WinGet (Windows)
@@ -141,12 +159,12 @@ dotnet test -v detailed
 - Isolated test environments with temporary directories
 
 ## Notes
-- **Global installs require elevated privileges**:
-  - Linux: run with `sudo`
-  - Windows: a UAC prompt will appear when global scope is selected
-- **Global activation also requires elevated privileges** (because it updates system-wide environment variables/shims); on Windows, `activate` now shows a UAC prompt automatically.
-- **Global cleanup requires elevated privileges**; on Windows, `clean` shows a UAC prompt automatically when global paths are being removed.
+- **Anything touching a global-scope install requires elevated privileges**, because it writes machine-wide state — the shared install root, the machine-wide registry, system environment variables, and the shared shim.
+  - **Linux**: run the command with `sudo`.
+  - **Windows**: a UAC prompt appears automatically. This covers `install`, `activate`, `deactivate`, `remove`, and `clean`, from both the CLI and the TUI — you never need to quit and relaunch from an elevated shell.
+  - Note that `activate` needs elevation when the install you are switching *away from* is global, even if the one you are switching to is not; deactivating a global install has to clear machine-wide state either way.
 - Global scope sets system-wide environment variables and shims accessible to all users.
+- **A global install's shim takes precedence over a user one.** Windows searches the machine `PATH` before the user `PATH`, so a `godot` shim left behind by an earlier global activation keeps winning even after you activate a user-scope install. `activate` warns when it detects this and names the file to remove; removing it needs administrator rights, so godman reports the condition rather than silently failing to fix it.
 - The `fetch` command queries GitHub API to discover available Godot versions.
 - Auto-URL construction for known Godot version patterns.
 - Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`
