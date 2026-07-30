@@ -503,6 +503,70 @@ public class InstallerServiceIntegrationTests : IDisposable
         File.Delete(mockArchive);
     }
 
+    /// <summary>
+    /// task-13 Bug C follow-up (Windows-elevated Global cancel deleting the
+    /// completed download): this test cannot exercise
+    /// InstallWithElevationAsync/RunElevatedInstallAsync/TryKillProcessTreeAsync at
+    /// all -- that whole branch is gated by a hard <c>OperatingSystem.IsWindows()</c>
+    /// check with no injection seam, so it is structurally unreachable in this test
+    /// suite regardless of platform. What this pins instead is the same underlying
+    /// contract on the one path that *is* reachable everywhere: a cancelled
+    /// InstallAsync must never call DeleteCacheEntry, because DeleteCacheEntry is
+    /// only ever invoked from the success branch below where the CancellationToken
+    /// is thrown past instead of reached. This is a parallel proof, not a test of
+    /// the Windows-only code -- see the fix report for what remains genuinely
+    /// unverified.
+    /// </summary>
+    [Fact]
+    public async Task InstallAsync_WhenCancelledAfterDownloadCompletes_PreservesTheDownloadCacheEntry()
+    {
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var mockHttpClient = new HttpClient(new MockFileHttpHandler(mockArchive, "Godot_v4.5.1-stable_linux.x86_64.zip"));
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment, mockHttpClient);
+
+        using var cts = new CancellationTokenSource();
+
+        // The download's own final report is always exactly 100 (DownloadService
+        // line ~383, unconditionally, after the transfer loop's last real chunk);
+        // extraction's own per-entry progress starts back near zero afterward. Only
+        // cancelling once a 100 has already been seen (rather than on the very
+        // first callback) guarantees the archive has already been promoted out of
+        // .part into the cache's .archive file by the time cancellation lands --
+        // otherwise this would only prove the already-separate DownloadService
+        // resume contract, not this method's own cache-preserving behavior once a
+        // completed download is sitting in hand.
+        var sawDownloadComplete = false;
+        void OnProgress(double pct)
+        {
+            if (pct >= 100d)
+            {
+                sawDownloadComplete = true;
+                return;
+            }
+
+            if (sawDownloadComplete)
+            {
+                cts.Cancel();
+            }
+        }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => installer.InstallAsync(
+            new InstallRequest(
+                "4.5.1",
+                InstallEdition.Standard,
+                OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+                InstallScope.User,
+                new Uri("https://test.invalid/godot.zip"),
+                null, null, false, false, false),
+            OnProgress,
+            cts.Token));
+
+        Assert.True(sawDownloadComplete, "the download must have finished before cancellation for this test to mean anything");
+        Assert.NotEmpty(Directory.GetFiles(_fixture.Paths.DownloadCacheDirectory));
+
+        File.Delete(mockArchive);
+    }
+
     [Fact]
     public async Task InstallAsync_WithForce_PreservesUnrelatedFilesInTheTarget()
     {

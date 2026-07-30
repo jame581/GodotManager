@@ -104,11 +104,16 @@ internal sealed class InstallDialog : Dialog
         {
             args.Handled = true;
 
-            // Both branches run on the UI thread: this handler fires there directly,
-            // and _installing/_cancellationSource are only ever mutated from inside
-            // an _app.Invoke callback in DoInstallAsync, which also runs there. So
-            // there is no race between "cancel mid-install" and "the install just
-            // finished and cleared _installing out from under this click".
+            // Both branches are intended to run on the UI thread: this handler fires
+            // there directly, and _installing/_cancellationSource are only ever
+            // mutated from inside an _app.Invoke callback in DoInstallAsync, which is
+            // also meant to run there -- so by Terminal.Gui's own single-threaded
+            // main-loop model there should be no race between "cancel mid-install"
+            // and "the install just finished and cleared _installing out from under
+            // this click". That model is argued from Terminal.Gui's documented
+            // design, not observed: InstallDialog cannot be instantiated under the
+            // xunit host in this environment, so this reasoning has not actually
+            // been exercised against a live main loop.
             if (_installing)
             {
                 _cancellationSource?.Cancel();
@@ -245,10 +250,14 @@ internal sealed class InstallDialog : Dialog
     }
 
     /// <summary>
-    /// Disposal must happen only from within an _app.Invoke callback (i.e. on the
-    /// UI thread), matching where the Cancel button's Accepting handler reads and
-    /// calls <see cref="_cancellationSource"/> -- otherwise a click racing the
-    /// install's completion could call Cancel() on an already-disposed source.
+    /// Disposal is intended to happen only from within an _app.Invoke callback
+    /// (i.e. on the UI thread), matching where the Cancel button's Accepting
+    /// handler reads and calls <see cref="_cancellationSource"/> -- otherwise a
+    /// click racing the install's completion could call Cancel() on an
+    /// already-disposed source. As with the Cancel handler's own comment, this is
+    /// reasoned from Terminal.Gui's single-threaded main-loop model, not verified
+    /// by a test: InstallDialog cannot be instantiated under the xunit host in
+    /// this environment.
     /// </summary>
     private void DisposeCancellationSource()
     {

@@ -263,19 +263,23 @@ internal sealed class InstallerService
         }
         finally
         {
-            // The download happened here, so the cache entry is this process's to clean
-            // up: the child took the local-archive branch and its plan has no
-            // CacheFilePath at all. This is meant to run after the child has exited,
-            // since the archive it is extracting is that very file (on the
-            // cancellation path that is not guaranteed: WaitForExitAsync(cancellationToken)
-            // throws immediately without killing the child, rather than waiting for
-            // it. That path is unreachable today -- nothing here supplies a live
-            // token -- and would be benign on Windows even if it happened, since
-            // SharpCompress holds FileShare.Read on the archive during extraction,
-            // so the delete would just raise a sharing violation that TryDelete
-            // swallows). Non-null only for downloads, so a user-supplied --archive
+            // The download happened here, so the cache entry is this process's to
+            // clean up: the child took the local-archive branch and its plan has no
+            // CacheFilePath at all. This must run only after the child has actually
+            // exited, since the archive it is extracting is that very file --
+            // RunElevatedInstallAsync's own OperationCanceledException handling now
+            // kills the child (and awaits its exit) before rethrowing, so by the
+            // time this finally runs on the cancellation path, nothing still holds
+            // the file open.
+            //
+            // On cancellation specifically, the entry is deliberately kept rather
+            // than deleted: the whole point of a cancelled elevated install is that
+            // the completed, verified download survives so a retry reuses it
+            // instead of re-downloading (same resume contract as the unelevated
+            // path). Only a genuine outcome -- success or a real failure -- clears
+            // the cache. Non-null only for downloads, so a user-supplied --archive
             // is never touched.
-            if (plan.CacheFilePath is not null)
+            if (plan.CacheFilePath is not null && !cancellationToken.IsCancellationRequested)
             {
                 _download.DeleteCacheEntry(plan.CacheFilePath);
             }
@@ -488,7 +492,25 @@ internal sealed class InstallerService
                 throw new InvalidOperationException("Unable to start elevated installer.");
             }
 
-            await process.WaitForExitAsync(cancellationToken);
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // WaitForExitAsync(cancellationToken) throws immediately on
+                // cancellation without touching the child at all -- left alone, the
+                // elevated process would keep running unobserved (reading, or
+                // possibly still writing into, the very cache archive the caller's
+                // finally block is about to decide whether to delete) while this
+                // process reports "cancelled" and moves on. Actually killing it here
+                // is what makes that report true, and doing it before this method
+                // returns is what lets the caller's finally block safely decide the
+                // cache entry's fate.
+                await TryKillProcessTreeAsync(process);
+                throw;
+            }
+
             if (process.ExitCode != 0)
             {
                 throw new InvalidOperationException($"Elevated installer failed with exit code {process.ExitCode}.");
@@ -500,6 +522,44 @@ internal sealed class InstallerService
                 "Elevation was canceled or blocked. If you downloaded this executable, " +
                 "right-click it → Properties → Unblock, or run: Unblock-File '" + fileName + "'",
                 ex);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort termination of the elevated child and everything it spawned,
+    /// used only from the WaitForExitAsync cancellation path above. Cancellation
+    /// must never fail because of this: the child may have already exited in the
+    /// gap between the token firing and this call (or between the HasExited check
+    /// and Kill itself), and Kill() only requests termination -- it does not wait
+    /// for it -- so this awaits WaitForExitAsync() afterward to confirm the
+    /// process, and whatever file handles it held, are actually gone before
+    /// returning.
+    /// </summary>
+    /// <remarks>
+    /// Unverified on Linux: this method is only ever reached from the Windows +
+    /// Global-scope + unelevated elevation branch (see the guard at the top of
+    /// InstallWithElevationAsync), which cannot be exercised on this development
+    /// platform. It has not been run against a real elevated child process.
+    /// </remarks>
+    private static async Task TryKillProcessTreeAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            await process.WaitForExitAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            // Already exited between the HasExited check and Kill/WaitForExitAsync.
+        }
+        catch (Win32Exception)
+        {
+            // The OS refused the kill request for reasons outside our control
+            // (e.g. the process was already terminating). Best-effort only.
         }
     }
 
