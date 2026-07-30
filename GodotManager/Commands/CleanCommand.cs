@@ -53,12 +53,23 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
 
         // On Linux GlobalRegistryFile lives inside GetInstallRoot(Global) itself, so the
-        // directory delete below already sweeps it up. On Windows it sits one level up,
-        // beside installs\ and bin\, and the directory delete below never reaches it --
-        // removing it explicitly first keeps `clean` complete on both platforms instead
-        // of leaving a stale installs.json behind in %ProgramFiles%\godman.
-        CleanupFile(paths.GlobalRegistryFile, "global registry");
-        CleanupDirectory(paths.GetInstallRoot(InstallScope.Global), "global installs");
+        // directory delete below already sweeps it up -- reporting it here too would
+        // just print two "Removed" lines for one recursive delete. On Windows it sits
+        // one level up, beside installs\ and bin\, where the directory delete below
+        // never reaches it, so it has to be removed explicitly or `clean` leaves a
+        // stale installs.json behind in %ProgramFiles%\godman.
+        var globalInstallRoot = paths.GetInstallRoot(InstallScope.Global);
+        var globalRegistryIsInsideInstallRoot = string.Equals(
+            Path.GetDirectoryName(paths.GlobalRegistryFile),
+            globalInstallRoot,
+            StringComparison.OrdinalIgnoreCase);
+
+        if (!globalRegistryIsInsideInstallRoot)
+        {
+            CleanupFile(paths.GlobalRegistryFile, "global registry");
+        }
+
+        CleanupDirectory(globalInstallRoot, "global installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 

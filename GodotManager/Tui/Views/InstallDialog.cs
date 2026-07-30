@@ -1,7 +1,7 @@
 using GodotManager.Config;
 using GodotManager.Domain;
-using GodotManager.Infrastructure;
 using GodotManager.Services;
+using GodotManager.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -199,14 +199,7 @@ internal sealed class InstallDialog : Dialog
             {
                 _statusLabel.Text = "Install failed.";
 
-                // Every actionable remedy this release added rides on
-                // GodmanException.Hint. Showing only ex.Message would silently drop
-                // it for TUI users, leaving them with a bare failure and no next step.
-                var body = ex is GodmanException { Hint: { } hint }
-                    ? $"Install failed: {ex.Message}\n{hint}"
-                    : $"Install failed: {ex.Message}";
-
-                MessageBox.ErrorQuery(_app, "Error", body, "OK");
+                MessageBox.ErrorQuery(_app, "Error", TuiErrorPresentation.BuildErrorBody("Install failed", ex), "OK");
                 _installing = false;
                 _installButton.Visible = true;
             });

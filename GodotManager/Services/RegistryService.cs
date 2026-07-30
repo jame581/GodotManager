@@ -71,15 +71,41 @@ internal sealed class RegistryService
 
     public async Task SaveAsync(InstallRegistry registry, CancellationToken cancellationToken = default)
     {
-        var desiredGlobal = registry.Installs.Where(x => x.Scope == InstallScope.Global).ToList();
-        var userEntries = registry.Installs.Where(x => x.Scope != InstallScope.Global).ToList();
+        // Scope alone doesn't say which file a Global-scope entry actually lives in
+        // on disk right now. It can be a stray sitting in *this file's own* user
+        // registry rather than the global one -- a pre-1.3.0 install recorded before
+        // scope-aware save existed, or a `sudo -E` elevation that preserved $HOME
+        // instead of switching to root's profile (the migration in LoadAsync only
+        // ever reaches a stray in the *elevated* process's own file; one sitting in a
+        // real, unprivileged user's own file is never touched by it). LoadAsync
+        // merges such a stray into `registry.Installs` regardless, so every caller of
+        // SaveAsync -- including an ordinary unprivileged save with no interest in
+        // global scope at all -- would otherwise see it and try to write it into the
+        // real global file. Ask the disk directly which Global-scope entries are
+        // homed in the user file right now, and leave those exactly where they are.
+        var rawUserIds = (await LoadFileAsync(_paths.RegistryFile, cancellationToken))
+            .Installs.Select(x => x.Id).ToHashSet();
 
-        // Only touch the global file when the set of global-scope entries actually
-        // changed. Every write -- including a plain unprivileged `godman install
-        // --scope User` -- passes through here with the machine's existing global
-        // entries still present in `registry.Installs` (LoadAsync merges them in),
-        // so writing the global file unconditionally would demand elevation for
-        // operations that never intended to touch global scope at all.
+        var strayGlobalInUserFile = registry.Installs
+            .Where(x => x.Scope == InstallScope.Global && rawUserIds.Contains(x.Id))
+            .ToList();
+
+        var desiredGlobal = registry.Installs
+            .Where(x => x.Scope == InstallScope.Global && !rawUserIds.Contains(x.Id))
+            .ToList();
+
+        var userEntries = registry.Installs
+            .Where(x => x.Scope != InstallScope.Global)
+            .Concat(strayGlobalInUserFile)
+            .ToList();
+
+        // Only touch the global file when the set of *legitimately global* entries
+        // actually changed (strays excluded above). Every write -- including a plain
+        // unprivileged `godman install --scope User` -- passes through here with the
+        // machine's existing global entries still present in `registry.Installs`
+        // (LoadAsync merges them in), so writing the global file unconditionally
+        // would demand elevation for operations that never intended to touch global
+        // scope at all.
         var currentGlobal = await LoadGlobalBestEffortAsync(cancellationToken);
         var currentGlobalIds = currentGlobal.Installs.Select(x => x.Id).ToHashSet();
         var desiredGlobalIds = desiredGlobal.Select(x => x.Id).ToHashSet();

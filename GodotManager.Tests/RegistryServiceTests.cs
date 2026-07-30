@@ -171,6 +171,87 @@ public class RegistryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_WithStrayGlobalEntryInOwnUserFile_LeavesItInPlaceAndNeverTouchesGlobalFile()
+    {
+        // Reproduces the code-review finding: a Global-scope entry can end up
+        // recorded in a *real, unprivileged* user's own registry file -- e.g. a
+        // pre-1.3.0 install, or a `sudo -E` elevation that preserved $HOME instead
+        // of switching to root's profile (MigrateGlobalOrphansAsync only ever
+        // reaches a stray sitting in the *elevated* process's own file; this one
+        // never was elevated, so migration never runs for it). LoadAsync merges it
+        // into registry.Installs regardless of where it physically lives, so an
+        // ordinary unprivileged save for something entirely unrelated -- activating
+        // a different, User-scope install -- must not be forced into a
+        // permission-gated global write for state it never touched.
+        var stray = InstallEntryFactory.Create(
+            version: "4.6.0",
+            scope: InstallScope.Global,
+            path: Path.Combine(_fixture.TempRoot, "stray-in-user-file"));
+        await WriteOwnFileAsync(stray);
+
+        var unprivileged = new RegistryService(_fixture.Paths, isPrivilegedProcess: () => false);
+        var loaded = await unprivileged.LoadAsync();
+        Assert.Contains(loaded.Installs, x => x.Id == stray.Id);
+
+        // Entirely unrelated to global scope: add a new User-scope install and
+        // activate it.
+        var userEntry = InstallEntryFactory.Create(
+            version: "4.4.0",
+            scope: InstallScope.User,
+            path: Path.Combine(_fixture.TempRoot, "unrelated-user-install"));
+        loaded.Installs.Add(userEntry);
+        loaded.MarkActive(userEntry.Id);
+
+        // Must not throw -- this is the exact bug: an unprivileged save being
+        // forced into a permission-gated global write for state it never touched.
+        await unprivileged.SaveAsync(loaded);
+
+        Assert.False(
+            File.Exists(_fixture.Paths.GlobalRegistryFile),
+            "an unrelated unprivileged save must never create/touch the global registry file");
+
+        var userOnDisk = await ReadRawAsync(_fixture.Paths.RegistryFile);
+        Assert.Contains(userOnDisk.Installs, x => x.Id == stray.Id && x.Scope == InstallScope.Global);
+        Assert.Contains(userOnDisk.Installs, x => x.Id == userEntry.Id);
+        Assert.Equal(userEntry.Id, userOnDisk.ActiveId);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithDivergentDuplicateId_GlobalEntryWins()
+    {
+        // Pins MergeInstalls's documented "global wins" tie-break against a case
+        // where the two on-disk copies genuinely disagree, not just duplicate each
+        // other -- the state a partial migration failure leaves behind (global
+        // write succeeded, own-file removal did not; see
+        // MigrateGlobalOrphansAsync_LiftsOrphanedGlobalEntry_AndDoesNotDuplicateOnRerun
+        // for the same scenario from the migration side).
+        var id = Guid.NewGuid();
+        var globalCopy = InstallEntryFactory.Create(
+            version: "4.7.1",
+            scope: InstallScope.Global,
+            path: "/usr/local/bin/godman/current");
+        globalCopy.Id = id;
+
+        var staleUserCopy = InstallEntryFactory.Create(
+            version: "4.5.0",
+            scope: InstallScope.Global,
+            path: "/tmp/stale-leftover");
+        staleUserCopy.Id = id;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.GlobalRegistryFile)!);
+        await File.WriteAllTextAsync(
+            _fixture.Paths.GlobalRegistryFile,
+            JsonSerializer.Serialize(new InstallRegistry { Installs = { globalCopy } }, RawJsonOptions));
+        await WriteOwnFileAsync(staleUserCopy);
+
+        var loaded = await _fixture.Registry.LoadAsync();
+
+        var merged = Assert.Single(loaded.Installs, x => x.Id == id);
+        Assert.Equal("4.7.1", merged.Version);
+        Assert.Equal("/usr/local/bin/godman/current", merged.Path);
+    }
+
+    [Fact]
     public async Task SaveAsync_WhenGlobalWriteFails_ThrowsGodmanExceptionWithHint()
     {
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess)
