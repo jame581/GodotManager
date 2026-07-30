@@ -20,44 +20,55 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var registry = await _registry.LoadAsync();
-        var install = registry.Installs.FirstOrDefault(x => x.Id == settings.Id);
-        if (install is null)
+        try
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]No install found with id[/] {settings.Id}");
-            return -1;
-        }
-
-        if (settings.DryRun)
-        {
-            return PreviewRemove(install, registry, settings);
-        }
-
-        registry.Installs.Remove(install);
-
-        // Deactivate if this is the active installation
-        if (registry.ActiveId == install.Id)
-        {
-            await _environment.RemoveActiveAsync(install);
-            registry.ActiveId = null;
-        }
-
-        if (settings.DeleteFiles && Directory.Exists(install.Path))
-        {
-            try
+            var registry = await _registry.LoadAsync();
+            var install = registry.Installs.FirstOrDefault(x => x.Id == settings.Id);
+            if (install is null)
             {
-                Directory.Delete(install.Path, recursive: true);
-                AnsiConsole.MarkupLineInterpolated($"[grey]Deleted files at[/] {install.Path}");
+                AnsiConsole.MarkupLineInterpolated($"[red]No install found with id[/] {settings.Id}");
+                return -1;
             }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to delete files:[/] {ex.Message}");
-            }
-        }
 
-        await _registry.SaveAsync(registry);
-        AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {install.Version} ({install.Edition}, {install.Platform})");
-        return 0;
+            if (settings.DryRun)
+            {
+                return PreviewRemove(install, registry, settings);
+            }
+
+            registry.Installs.Remove(install);
+
+            // Deactivate if this is the active installation
+            if (registry.ActiveId == install.Id)
+            {
+                await _environment.RemoveActiveAsync(install);
+                registry.ActiveId = null;
+            }
+
+            if (settings.DeleteFiles && Directory.Exists(install.Path))
+            {
+                try
+                {
+                    Directory.Delete(install.Path, recursive: true);
+                    AnsiConsole.MarkupLineInterpolated($"[grey]Deleted files at[/] {install.Path}");
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to delete files:[/] {ex.Message}");
+                }
+            }
+
+            await _registry.SaveAsync(registry);
+            AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {install.Version} ({install.Edition}, {install.Platform})");
+            return 0;
+        }
+        catch (GodmanException ex)
+        {
+            return GodmanExceptionRenderer.Render("Remove failed:", ex);
+        }
+        catch (Exception ex)
+        {
+            return GodmanExceptionRenderer.Render("Remove failed:", ex.Message);
+        }
     }
 
     private static int PreviewRemove(InstallEntry install, InstallRegistry registry, Settings settings)

@@ -13,6 +13,17 @@ internal class GodmanException : Exception
     {
         Hint = hint;
     }
+
+    /// <summary>
+    /// The standard remedy for a failure caused by attempting a global-scope
+    /// operation without sufficient privileges. Shared verbatim by
+    /// RegistryService.SaveAsync's global-write failure and ActivateCommand's
+    /// UnauthorizedAccessException/SecurityException catches so the wording
+    /// given to the user does not drift between the two call sites.
+    /// </summary>
+    public static string ElevationHint => OperatingSystem.IsWindows()
+        ? "Global-scope installs require administrator privileges. Re-run elevated."
+        : "Global-scope installs require root privileges. Re-run with sudo.";
 }
 
 /// <summary>

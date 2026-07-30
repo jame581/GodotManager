@@ -146,9 +146,7 @@ internal sealed class RegistryService
             {
                 throw new GodmanException(
                     $"Failed to update the machine-wide registry at {_paths.GlobalRegistryFile}: {ex.Message}",
-                    OperatingSystem.IsWindows()
-                        ? "Global-scope installs require administrator privileges. Re-run elevated."
-                        : "Global-scope installs require root privileges. Re-run with sudo.",
+                    GodmanException.ElevationHint,
                     ex);
             }
         }

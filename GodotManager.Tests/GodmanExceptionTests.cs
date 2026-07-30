@@ -22,6 +22,28 @@ public class GodmanExceptionTests
     }
 
     [Fact]
+    public void ElevationHint_NamesTheRemedyForThisPlatform()
+    {
+        // RegistryService.SaveAsync's global-write failure and ActivateCommand's
+        // UnauthorizedAccessException/SecurityException catches both pull this
+        // same string, so the wording must actually differ per platform rather
+        // than always saying "sudo" (wrong on Windows) or always saying
+        // "administrator" (wrong on Linux/macOS).
+        var hint = GodmanException.ElevationHint;
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Contains("administrator", hint, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("sudo", hint, StringComparison.OrdinalIgnoreCase);
+        }
+        else
+        {
+            Assert.Contains("sudo", hint, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("administrator", hint, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public void ChecksumMismatchException_IsGodmanExceptionAndNamesBothHashes()
     {
         var sumsUri = new Uri("https://example.test/SHA512-SUMS.txt");

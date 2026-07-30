@@ -72,13 +72,17 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         }
         catch (UnauthorizedAccessException)
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] Access denied while updating environment for this scope.");
-            return -1;
+            return GodmanExceptionRenderer.Render(
+                "Activation failed:",
+                "Access denied while updating environment for this scope.",
+                GodmanException.ElevationHint);
         }
         catch (SecurityException)
         {
-            AnsiConsole.MarkupLine("[red]Activation failed:[/] This scope requires elevated privileges.");
-            return -1;
+            return GodmanExceptionRenderer.Render(
+                "Activation failed:",
+                "This scope requires elevated privileges.",
+                GodmanException.ElevationHint);
         }
 
         registry.MarkActive(install.Id);

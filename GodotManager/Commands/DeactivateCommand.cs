@@ -20,26 +20,37 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var registry = await _registry.LoadAsync();
-        var activeInstall = registry.GetActive();
-
-        if (activeInstall is null)
+        try
         {
-            AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
+            var registry = await _registry.LoadAsync();
+            var activeInstall = registry.GetActive();
+
+            if (activeInstall is null)
+            {
+                AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
+                return 0;
+            }
+
+            await _environment.RemoveActiveAsync(activeInstall);
+            registry.ClearActive();
+            await _registry.SaveAsync(registry);
+
+            AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
+
+            if (OperatingSystem.IsWindows())
+            {
+                AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
+            }
+
             return 0;
         }
-
-        await _environment.RemoveActiveAsync(activeInstall);
-        registry.ClearActive();
-        await _registry.SaveAsync(registry);
-
-        AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
-
-        if (OperatingSystem.IsWindows())
+        catch (GodmanException ex)
         {
-            AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
+            return GodmanExceptionRenderer.Render("Deactivate failed:", ex);
         }
-
-        return 0;
+        catch (Exception ex)
+        {
+            return GodmanExceptionRenderer.Render("Deactivate failed:", ex.Message);
+        }
     }
 }
