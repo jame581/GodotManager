@@ -51,6 +51,13 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         CleanupDirectory(paths.ConfigDirectory, "config");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
+
+        // On Linux GlobalRegistryFile lives inside GetInstallRoot(Global) itself, so the
+        // directory delete below already sweeps it up. On Windows it sits one level up,
+        // beside installs\ and bin\, and the directory delete below never reaches it --
+        // removing it explicitly first keeps `clean` complete on both platforms instead
+        // of leaving a stale installs.json behind in %ProgramFiles%\godman.
+        CleanupFile(paths.GlobalRegistryFile, "global registry");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.Global), "global installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
@@ -58,7 +65,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
     private static bool HasGlobalCleanupTargets(AppPaths paths)
     {
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
-            || Directory.Exists(paths.GetShimDirectory(InstallScope.Global));
+            || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
+            || File.Exists(paths.GlobalRegistryFile);
     }
 
     private static int RunElevatedCleanup()
@@ -153,6 +161,26 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: no shim found in {shimDir}");
+        }
+    }
+
+    private static void CleanupFile(string path, string label)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {label}: {path}");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated($"[grey]Skipped[/] {label}: {path} (missing)");
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] {label} at {path}: {ex.Message}");
         }
     }
 

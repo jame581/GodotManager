@@ -385,7 +385,7 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Activation failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Activation failed", ex), "OK");
             });
         }
     }
@@ -420,7 +420,7 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Deactivation failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Deactivation failed", ex), "OK");
             });
         }
     }
@@ -472,7 +472,7 @@ internal sealed class TuiApp
         {
             app.Invoke(() =>
             {
-                MessageBox.ErrorQuery(app, "Error", $"Remove failed: {ex.Message}", "OK");
+                MessageBox.ErrorQuery(app, "Error", TuiErrorPresentation.BuildErrorBody("Remove failed", ex), "OK");
             });
         }
     }

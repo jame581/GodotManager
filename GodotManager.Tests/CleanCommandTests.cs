@@ -105,6 +105,23 @@ public class CleanCommandTests : IDisposable
     }
 
     [Fact]
+    public void CleanupAll_RemovesTheGlobalRegistryFile()
+    {
+        // On Windows GlobalRegistryFile sits one level above GetInstallRoot(Global)
+        // (beside installs\ and bin\, not inside installs\), so the recursive delete
+        // of the install root alone would never reach it. This runs on both CI
+        // platforms (ubuntu-latest + windows-latest) and pins the fix regardless of
+        // which directory shape is under test.
+        var globalRegistryPath = _fixture.Paths.GlobalRegistryFile;
+        Directory.CreateDirectory(Path.GetDirectoryName(globalRegistryPath)!);
+        File.WriteAllText(globalRegistryPath, "{}");
+
+        CleanCommand.CleanupAll(_fixture.Paths);
+
+        Assert.False(File.Exists(globalRegistryPath));
+    }
+
+    [Fact]
     public void CleanupAll_RemovesTheDownloadCache()
     {
         File.WriteAllText(

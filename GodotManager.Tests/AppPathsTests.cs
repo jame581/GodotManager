@@ -45,6 +45,52 @@ public class AppPathsTests
     }
 
     [Fact]
+    public void Linux_GlobalRegistryFile_SitsBesideGlobalInstallRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // On Linux the global install root IS the shared directory (installs sit
+        // directly inside it, per GetInstallRoot(Global) above), so the registry
+        // belongs right there beside them, not in some other parent.
+        var paths = new AppPaths();
+
+        Assert.Equal("/usr/local/bin/godman/installs.json", paths.GlobalRegistryFile);
+    }
+
+    [Fact]
+    public void Windows_GlobalRegistryFile_SitsInGlobalRootParent()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // On Windows the global install root is <globalRoot>\installs, so the
+        // registry has to sit one level up, beside installs\ and bin\ -- not
+        // inside the installs directory itself.
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var paths = new AppPaths();
+
+        Assert.Equal(Path.Combine(programFiles, "godman", "installs.json"), paths.GlobalRegistryFile);
+    }
+
+    [Fact]
+    public void GlobalRegistryFile_IsIsolatedByGodmanGlobalRootOverride()
+    {
+        // Guards the assumption every RegistryService test relies on: GodmanTestFixture's
+        // GODMAN_GLOBAL_ROOT override reaches the registry path too, not just the
+        // install root, so tests never risk touching a real global registry.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.StartsWith(fixture.TempRoot, fixture.Paths.GlobalRegistryFile);
+        Assert.Equal("installs.json", Path.GetFileName(fixture.Paths.GlobalRegistryFile));
+        Assert.NotEqual(fixture.Paths.RegistryFile, fixture.Paths.GlobalRegistryFile);
+    }
+
+    [Fact]
     public void Linux_MigratesOldInstallRoot_WhenDirectoryExists()
     {
         if (OperatingSystem.IsWindows())
