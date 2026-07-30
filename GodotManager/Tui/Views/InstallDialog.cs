@@ -25,6 +25,7 @@ internal sealed class InstallDialog : Dialog
     private readonly Button _cancelButton;
 
     private bool _installing;
+    private CancellationTokenSource? _cancellationSource;
 
     /// <summary>
     /// True only after an install completed successfully. Stays false if the
@@ -102,7 +103,20 @@ internal sealed class InstallDialog : Dialog
         _cancelButton.Accepting += (_, args) =>
         {
             args.Handled = true;
-            if (!_installing) RequestStop();
+
+            // Both branches run on the UI thread: this handler fires there directly,
+            // and _installing/_cancellationSource are only ever mutated from inside
+            // an _app.Invoke callback in DoInstallAsync, which also runs there. So
+            // there is no race between "cancel mid-install" and "the install just
+            // finished and cleared _installing out from under this click".
+            if (_installing)
+            {
+                _cancellationSource?.Cancel();
+            }
+            else
+            {
+                RequestStop();
+            }
         };
 
         Add(versionLabel, _versionField, editionLabel, _editionSelector,
@@ -137,7 +151,9 @@ internal sealed class InstallDialog : Dialog
         }
 
         _installing = true;
+        _cancellationSource = new CancellationTokenSource();
         _progressBar.Visible = true;
+        _progressBar.Fraction = 0f;
         _statusLabel.Visible = true;
         _statusLabel.Text = "Starting install...";
         _installButton.Visible = false;
@@ -153,6 +169,7 @@ internal sealed class InstallDialog : Dialog
 
         var verificationStatus = ChecksumStatus.NotApplicable;
         string? verificationReason = null;
+        var cancellationToken = _cancellationSource.Token;
 
         try
         {
@@ -166,6 +183,7 @@ internal sealed class InstallDialog : Dialog
                         _statusLabel.Text = InstallProgressPresentation.FormatProgressLabel(progress);
                     });
                 },
+                cancellationToken,
                 onVerified: (status, reason) =>
                 {
                     verificationStatus = status;
@@ -185,6 +203,8 @@ internal sealed class InstallDialog : Dialog
             _app.Invoke(() =>
             {
                 Success = true;
+                _installing = false;
+                DisposeCancellationSource();
                 _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
                 MessageBox.Query(
                     _app, "Success",
@@ -193,16 +213,46 @@ internal sealed class InstallDialog : Dialog
                 RequestStop();
             });
         }
+        catch (OperationCanceledException)
+        {
+            // Not an install failure: the user asked for this. InstallerService's
+            // own OperationCanceledException handler (Task 7b) has already cleaned
+            // up any staging directory; the partial download in the cache is
+            // deliberately left alone so a retry can resume it rather than
+            // restart from zero. Stay in the dialog -- do not RequestStop -- and
+            // put it back in a state where Install can be pressed again.
+            _app.Invoke(() =>
+            {
+                _installing = false;
+                DisposeCancellationSource();
+                _progressBar.Visible = false;
+                _statusLabel.Text = InstallProgressPresentation.BuildCancelledStatus();
+                _installButton.Visible = true;
+            });
+        }
         catch (Exception ex)
         {
             _app.Invoke(() =>
             {
+                _installing = false;
+                DisposeCancellationSource();
                 _statusLabel.Text = "Install failed.";
 
                 MessageBox.ErrorQuery(_app, "Error", TuiErrorPresentation.BuildErrorBody("Install failed", ex), "OK");
-                _installing = false;
                 _installButton.Visible = true;
             });
         }
+    }
+
+    /// <summary>
+    /// Disposal must happen only from within an _app.Invoke callback (i.e. on the
+    /// UI thread), matching where the Cancel button's Accepting handler reads and
+    /// calls <see cref="_cancellationSource"/> -- otherwise a click racing the
+    /// install's completion could call Cancel() on an already-disposed source.
+    /// </summary>
+    private void DisposeCancellationSource()
+    {
+        _cancellationSource?.Dispose();
+        _cancellationSource = null;
     }
 }

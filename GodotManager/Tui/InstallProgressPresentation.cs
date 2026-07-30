@@ -37,6 +37,14 @@ internal static class InstallProgressPresentation
             ? $"Installing... {progressPercent:F0}%"
             : "Finalizing...";
 
+    /// <summary>
+    /// Shown in the dialog's status label after the user cancels a mid-flight
+    /// install (InstallDialog.DoInstallAsync's OperationCanceledException catch).
+    /// A cancellation is not a failure, so this is deliberately distinct wording
+    /// from anything install-failure related.
+    /// </summary>
+    internal static string BuildCancelledStatus() => "Install cancelled.";
+
     internal static string BuildCompletionStatus(bool unverified) =>
         unverified ? "Install complete (unverified checksum)." : "Install complete!";
 

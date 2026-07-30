@@ -54,6 +54,19 @@ public class InstallDialogTests
     }
 
     [Fact]
+    public void BuildCancelledStatus_ReadsDistinctlyFromFailureOrSuccess()
+    {
+        // InstallDialog.DoInstallAsync's OperationCanceledException catch (Bug C)
+        // must not read as a failure -- a user who pressed Cancel did not hit an
+        // error -- and must not read as success either.
+        var status = InstallProgressPresentation.BuildCancelledStatus();
+
+        Assert.Contains("cancel", status, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fail", status, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("complete", status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void BuildCompletionStatus_WhenVerified_ReportsPlainSuccess()
     {
         Assert.Equal("Install complete!", InstallProgressPresentation.BuildCompletionStatus(unverified: false));
