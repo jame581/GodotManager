@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -415,6 +416,60 @@ public class DownloadServiceTests : IDisposable
         Assert.Equal(ChecksumStatus.Verified, outcome.Status);
         Assert.Null(outcome.UnverifiedReason);
         Assert.Equal(1, handler.SumsRequestCount);
+    }
+
+    /// <summary>
+    /// Serves the archive normally, then cancels the caller's token and throws
+    /// TaskCanceledException the moment the sums file is requested -- the exact shape
+    /// an in-flight HttpClient request takes when the user cancels mid-verification.
+    /// </summary>
+    private sealed class CancelDuringSumsHandler : HttpMessageHandler
+    {
+        private readonly byte[] _archive;
+        private readonly string _archiveFileName;
+        private readonly CancellationTokenSource _cts;
+
+        public CancelDuringSumsHandler(byte[] archive, string archiveFileName, CancellationTokenSource cts)
+        {
+            _archive = archive;
+            _archiveFileName = archiveFileName;
+            _cts = cts;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.ToString().Contains("SHA512-SUMS.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                _cts.Cancel();
+                throw new TaskCanceledException("cancelled while fetching sums");
+            }
+
+            var response = RangeAwareContent.BuildResponse(_archive, request, "\"archive-etag\"");
+            response.Content.Headers.ContentDisposition =
+                new ContentDispositionHeaderValue("attachment") { FileName = _archiveFileName };
+            return Task.FromResult(response);
+        }
+    }
+
+    [Fact]
+    public async Task DownloadAsync_WhenCancelledDuringSumsFetch_PropagatesInsteadOfReportingUnverified()
+    {
+        // Pins the binding of VerifyAsync's exception filter, which reads
+        //   ex is HttpRequestException or TaskCanceledException or IOException
+        //       && !cancellationToken.IsCancellationRequested
+        // `is` binds tighter than `&&`, and `&&` cannot be absorbed into the pattern
+        // (only `and`/`or`/`not` are pattern combinators), so the guard applies to the
+        // whole type test rather than to IOException alone. A user cancellation
+        // therefore propagates. Were it otherwise, cancelling mid-verification would
+        // be swallowed and the install would proceed, recording the archive as merely
+        // "unverified" -- a silent downgrade of a deliberate abort.
+        using var cts = new CancellationTokenSource();
+        var handler = new CancelDuringSumsHandler(Payload, "Godot_v4.5.1-stable_linux.x86_64.zip", cts);
+        var service = CreateService(handler);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.DownloadAsync(TestUri, new ChecksumSource("4.5.1"), progress: null, cts.Token));
     }
 
     [Fact]

@@ -22,12 +22,6 @@ namespace GodotManager.Services;
 internal static class GodotExecutableLocator
 {
     /// <summary>
-    /// Returns the best Godot binary under <paramref name="installRoot"/>, or null
-    /// when none is found. <paramref name="windows"/> is a parameter rather than an
-    /// <c>OperatingSystem.IsWindows()</c> call so both layouts stay testable on
-    /// either platform.
-    /// </summary>
-    /// <summary>
     /// Matching is forced case-insensitive on every platform. The default is
     /// <c>MatchCasing.PlatformDefault</c>, which is case-sensitive on Linux — that
     /// would silently narrow the behaviour this replaced, whose predecessor compared
@@ -37,6 +31,12 @@ internal static class GodotExecutableLocator
     private static readonly EnumerationOptions MatchOptions =
         new() { MatchCasing = MatchCasing.CaseInsensitive };
 
+    /// <summary>
+    /// Returns the best Godot binary under <paramref name="installRoot"/>, or null
+    /// when none is found. <paramref name="windows"/> is a parameter rather than an
+    /// <c>OperatingSystem.IsWindows()</c> call so both layouts stay testable on
+    /// either platform.
+    /// </summary>
     public static string? Find(string installRoot, bool windows, DiagnosticContext? diagnostics = null)
     {
         if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot))
