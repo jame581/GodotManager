@@ -1,3 +1,4 @@
+using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Tui;
 using System;
@@ -48,5 +49,37 @@ public class TuiErrorPresentationTests
         var body = TuiErrorPresentation.BuildErrorBody("Deactivation failed", ex);
 
         Assert.Equal("Deactivation failed: no active install", body);
+    }
+
+    [Fact]
+    public void BuildRemovedBody_WhenFilesWereDeleted_ReportsOnlyTheRemoval()
+    {
+        var body = TuiErrorPresentation.BuildRemovedBody(
+            "4.3", InstallEdition.Standard, @"C:\Program Files\godman\installs\x", deleteFailure: null);
+
+        Assert.Equal("Removed 4.3 (Standard)", body);
+        Assert.DoesNotContain('\n', body);
+    }
+
+    [Fact]
+    public void BuildRemovedBody_WhenTheFilesCouldNotBeDeleted_SaysSoAndNamesThePath()
+    {
+        // TuiApp.RemoveSelectedAsync deletes the install directory before writing
+        // the registry. Letting that delete throw -- the bug this pins -- aborts the
+        // removal before RegistryService.SaveAsync runs, and SaveAsync is the call
+        // that raises the GodmanException carrying the actionable "re-run elevated"
+        // hint for a global-scope entry. The user is left with a bare access-denied
+        // message, an install that is still registered, and no stated next step.
+        // Downgrading the delete to a reported warning is what lets that hint through.
+        var body = TuiErrorPresentation.BuildRemovedBody(
+            "4.3",
+            InstallEdition.Standard,
+            @"C:\Program Files\godman\installs\Godot_v4.3-stable_win64",
+            deleteFailure: "Access to the path 'Godot_v4.3-stable_win64.exe' is denied.");
+
+        Assert.StartsWith("Removed 4.3 (Standard)", body);
+        Assert.Contains(@"C:\Program Files\godman\installs\Godot_v4.3-stable_win64", body);
+        Assert.Contains("could not be deleted", body);
+        Assert.Contains("Access to the path", body);
     }
 }

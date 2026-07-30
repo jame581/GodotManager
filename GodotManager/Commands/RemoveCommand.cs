@@ -35,6 +35,29 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
                 return PreviewRemove(install, registry, settings);
             }
 
+            // Removing a global install writes the machine-wide registry and deletes
+            // files under %ProgramFiles%. Hand the whole operation to an elevated
+            // process rather than failing partway with a "re-run elevated" hint,
+            // matching how install and activate already behave.
+            if (ElevatedRemover.IsRequired(install.Scope))
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
+
+                var elevated = await ElevatedRemover.RunAsync(install.Id, settings.DeleteFiles);
+                if (elevated.Succeeded)
+                {
+                    return 0;
+                }
+
+                AnsiConsole.MarkupLineInterpolated($"[red]Remove failed:[/] {elevated.Error}");
+                if (elevated.Hint is { } elevationHint)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {elevationHint}[/]");
+                }
+
+                return -1;
+            }
+
             registry.Installs.Remove(install);
 
             // Deactivate if this is the active installation
