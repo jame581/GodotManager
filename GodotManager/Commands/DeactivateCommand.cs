@@ -31,6 +31,29 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
                 return 0;
             }
 
+            // Deactivating a global install clears GODOT_HOME and strips PATH through
+            // machine-scope writes, which throw SecurityException unelevated. Hand the
+            // whole operation over rather than failing on the first write, matching
+            // install, activate and remove.
+            if (ElevatedDeactivator.IsRequired(activeInstall.Scope))
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required. A UAC prompt will appear.[/]");
+
+                var elevated = await ElevatedDeactivator.RunAsync(activeInstall.Id);
+                if (elevated.Succeeded)
+                {
+                    return 0;
+                }
+
+                AnsiConsole.MarkupLineInterpolated($"[red]Deactivate failed:[/] {elevated.Error}");
+                if (elevated.Hint is { } elevationHint)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {elevationHint}[/]");
+                }
+
+                return -1;
+            }
+
             await _environment.RemoveActiveAsync(activeInstall);
             registry.ClearActive();
             await _registry.SaveAsync(registry);

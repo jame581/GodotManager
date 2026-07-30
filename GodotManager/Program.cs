@@ -54,6 +54,9 @@ app.Configure(config =>
     config.AddCommand<ElevatedRemoveCommand>("remove-elevated")
         .WithDescription("Remove with elevated privileges (internal)")
         .IsHidden();
+    config.AddCommand<ElevatedDeactivateCommand>("deactivate-elevated")
+        .WithDescription("Deactivate with elevated privileges (internal)")
+        .IsHidden();
     config.AddCommand<ActivateCommand>("activate").WithDescription("Activate a registered install");
     config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
     config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");

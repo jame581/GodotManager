@@ -471,6 +471,32 @@ internal sealed class TuiApp
                 return;
             }
 
+            // Clearing GODOT_HOME for a global entry is a machine-scope write that
+            // throws SecurityException unelevated, so without this the TUI could not
+            // deactivate a global install at all -- the same hole the CLI had.
+            if (ElevatedDeactivator.IsRequired(active.Scope))
+            {
+                var elevated = await ElevatedDeactivator.RunAsync(active.Id);
+                if (!elevated.Succeeded)
+                {
+                    app.Invoke(() => MessageBox.ErrorQuery(
+                        app,
+                        "Error",
+                        $"Deactivate failed: {elevated.Error}"
+                            + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+                        "OK"));
+                    return;
+                }
+
+                await RefreshRegistryAsync(app);
+                app.Invoke(() =>
+                {
+                    MessageBox.Query(app, "Deactivated", $"Deactivated {active.Version} ({active.Edition})", "OK");
+                    SetStatus($"Deactivated {active.Version}");
+                });
+                return;
+            }
+
             await _environment.RemoveActiveAsync(active);
             registry.ClearActive();
             await _registry.SaveAsync(registry);
