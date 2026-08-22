@@ -277,3 +277,46 @@ elevation and error handling.** `install` was unaffected because it delegates to
   `PATH` regardless; `GodmanTestFixture` now snapshots and restores it.
 
 Spec: `GodotManager/docs/superpowers/specs/2026-07-28-v1.3.0-install-robustness-design.md`
+
+## Phase 8 — Global install root out of the shim directory (1.4.0) ✅ COMPLETE
+
+Global installs lived at `/usr/local/bin/godman`, which claimed the exact filename
+the godman binary needs in `/usr/local/bin` for `sudo godman` to resolve — `sudo`
+replaces PATH with `secure_path`, which never contains the `~/.local/bin` that
+`install.sh` writes to. The documented `sudo godman ...` workflow could not work on a
+default sudo configuration, and the obvious fix was blocked by godman's own directory.
+
+- **The root moved to `/usr/local/lib/godman`**, and `GODMAN_GLOBAL_ROOT` became a
+  *prefix* (shim `<prefix>/bin`, installs `<prefix>/lib/godman`) instead of naming the
+  shim directory. That matches what it already meant on Windows, and keeps one
+  variable redirecting both directories — the property `GodmanTestFixture` relies on.
+  **Breaking**: a value that used to mean `/usr/local/bin` is now `/usr/local`.
+- **A root move orphans absolute registry paths.** `InstallEntry.Path` is absolute, so
+  the move invalidates every entry pointing into the old root.
+  `AppPaths.GetInstallRootRelocations` publishes the old→new map and
+  `RegistryService.RebaseRelocatedInstallPaths` applies it on load — in memory only,
+  since a read command must never write, and for a global entry that would mean
+  writing a file an unprivileged caller cannot touch. Derived and idempotent, so it is
+  recomputed each load rather than persisted.
+- **The machine-wide registry moved with the root**, and moving it needs privileges.
+  Without a read-side fallback every unprivileged `list`, `doctor` and TUI session on a
+  not-yet-migrated machine shows zero global installs — indistinguishable from data
+  loss. Reads fall back to the pre-migration path; writes always target the current
+  one, so the first elevated operation settles the machine on the new layout.
+- **The migration ordering is the whole decision.** `TryMigrateDirectory` no-ops once
+  the destination exists, so on a machine carrying both old roots whichever runs first
+  wins. That lives in the pure, unit-tested `AppPaths.PlanLinuxMigrations` rather than
+  inline in the constructor, for the same reason `TouchesMachineState` does.
+- **`doctor` gained two checks**: an active install whose directory is missing (a shim
+  hard-codes an absolute path, so a blocked migration leaves `godot` resolving to
+  nothing, and nothing but `activate` can repair a shim), and a legacy root that is
+  still in use — the stock "this can be removed" advice would have destroyed installs
+  that had not moved yet. Existence cannot answer "did the migration run", since
+  `AppPaths` best-effort creates both roots on startup; the signal is whether anything
+  landed in the destination.
+- **`install.sh` refuses to install over a directory**, which `cp` would otherwise
+  nest the binary inside — reachable now that the docs point at
+  `GODMAN_INSTALL_DIR=/usr/local/bin`.
+
+Windows paths are unchanged; it picks up the entry rebasing and registry fallback for
+its own older `GodotManager` → `godman` migration for free.
