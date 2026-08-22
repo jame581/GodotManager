@@ -22,6 +22,26 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
     internal sealed class Settings : GlobalSettings { }
 
+    /// <summary>
+    /// Whether anything actually landed in a relocation destination. Existence alone
+    /// does not answer it: <see cref="AppPaths"/> best-effort-creates both install roots
+    /// on every run, so an empty destination is the normal state of a machine whose
+    /// migration has not run. An unreadable directory counts as empty, which keeps the
+    /// advice on the safe side -- never tell someone to delete a directory when we
+    /// cannot confirm its contents were copied somewhere else.
+    /// </summary>
+    private static bool HasContent(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var registry = await _registry.LoadAsync();
@@ -82,6 +102,17 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shimPath}");
         }
 
+        // A shim that exists says nothing about whether it still resolves: it hard-codes
+        // an absolute path into the install directory, so an install root that moved (a
+        // path migration) or vanished leaves `godot` on PATH pointing at nothing. The
+        // registry rebases entries onto a completed migration by itself; what it cannot
+        // repair is a shim, and that only shows up as a missing directory here.
+        if (active is not null && !string.IsNullOrEmpty(active.Path) && !Directory.Exists(active.Path))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[yellow]Active install directory missing[/]: {active.Path}");
+            AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim, or remove the entry.[/]");
+        }
+
         // Check if shim directory is in PATH (Windows only)
         if (OperatingSystem.IsWindows())
         {
@@ -103,11 +134,35 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
         // Check for leftover legacy paths that should have been migrated
         var legacyPaths = _paths.GetLegacyPaths();
+        var relocations = _paths.GetInstallRootRelocations();
         foreach (var (legacyPath, description) in legacyPaths)
         {
-            if (Directory.Exists(legacyPath))
+            if (!Directory.Exists(legacyPath))
             {
-                AnsiConsole.MarkupLineInterpolated($"[yellow]Legacy directory found[/]: {legacyPath} ({description})");
+                continue;
+            }
+
+            AnsiConsole.MarkupLineInterpolated($"[yellow]Legacy directory found[/]: {legacyPath} ({description})");
+
+            // "Delete it" is the right advice only once the migration has actually run.
+            // A root whose destination does not exist yet is not a leftover -- it is
+            // still the live copy of those installs, and the machine-wide one needs
+            // privileges to move. Telling someone to remove that would destroy the
+            // installs it is describing.
+            // A legacy entry names a whole root; a relocation names the install
+            // directory inside it, which on Windows is one level deeper. Match either.
+            var pending = relocations
+                .Where(r => string.Equals(r.OldRoot, legacyPath, StringComparison.Ordinal)
+                    || r.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                .ToList();
+
+            if (pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot)))
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[grey]  Still in use -- these installs have not moved to {pending[0].NewRoot} yet. Run an elevated godman command to complete the move; do not delete this directory.[/]");
+            }
+            else
+            {
                 AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
             }
         }

@@ -4,6 +4,7 @@ using GodotManager.Tests.Helpers;
 using Spectre.Console;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -83,6 +84,147 @@ public class DoctorCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task Doctor_WithActiveInstallDirectoryMissing_SaysSo()
+    {
+        // The shim hard-codes an absolute path into the install directory, so an
+        // install root that moved or vanished leaves `godot` on PATH resolving to
+        // nothing. RegistryService rebases entries onto a migration that completed;
+        // a migration that could not run (the global root needs privileges to move)
+        // is what surfaces here, and doctor is the only thing that tells the user
+        // the shim needs rewriting.
+        var registry = new InstallRegistry();
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1", path: Path.Combine(_fixture.TempRoot, "moved-away"));
+        registry.Installs.Add(entry);
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Active install directory missing", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithActiveInstallDirectoryPresent_DoesNotReportItMissing()
+    {
+        var registry = new InstallRegistry();
+        var installPath = Path.Combine(_fixture.TempRoot, "still-there");
+        Directory.CreateDirectory(installPath);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
+        registry.Installs.Add(entry);
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            // Paired with a positive assertion so this cannot pass on empty output.
+            Assert.Contains("Registry", result.Output);
+            Assert.DoesNotContain("Active install directory missing", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithUnmigratedInstallRoot_WarnsAgainstDeletingIt()
+    {
+        // The stock legacy-directory advice is "this can be removed". For a root whose
+        // destination does not exist yet that advice is actively destructive: the
+        // directory still holds the only copy of those installs, and the machine-wide
+        // one needs privileges to move. Getting this wrong deletes a user's installs.
+        var pending = FirstPendingRelocation();
+        Directory.CreateDirectory(pending.OldRoot);
+        // AppPaths best-effort-creates both install roots on every run, so "not migrated"
+        // shows up as an empty destination, not a missing one.
+        Assert.False(
+            Directory.Exists(pending.NewRoot) && Directory.EnumerateFileSystemEntries(pending.NewRoot).Any(),
+            "precondition: nothing may have landed in the destination yet");
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Still in use", result.Output);
+            Assert.DoesNotContain("can be removed", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithLeftoverRootAfterMigration_SaysItCanBeRemoved()
+    {
+        // Once the destination exists the old directory really is a leftover, and the
+        // original advice applies again.
+        var pending = FirstPendingRelocation();
+        Directory.CreateDirectory(pending.OldRoot);
+        Directory.CreateDirectory(pending.NewRoot);
+        File.WriteAllText(Path.Combine(pending.NewRoot, "4.6.2-standard-linux-global.marker"), "migrated");
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Legacy directory found", result.Output);
+            Assert.Contains("can be removed", result.Output);
+            Assert.DoesNotContain("Still in use", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    /// <summary>
+    /// An old root that doctor reports as legacy AND that the relocation map knows how
+    /// to move -- the pairing the two messages are chosen from.
+    /// </summary>
+    private (string OldRoot, string NewRoot) FirstPendingRelocation()
+    {
+        foreach (var (legacyPath, _) in _fixture.Paths.GetLegacyPaths())
+        {
+            foreach (var relocation in _fixture.Paths.GetInstallRootRelocations())
+            {
+                if (relocation.OldRoot == legacyPath || relocation.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    return (legacyPath, relocation.NewRoot);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("no legacy path is covered by the relocation map");
     }
 
     [Fact]
