@@ -47,6 +47,13 @@ tar -xzf "$TEMP_DIR/$ASSET_NAME" -C "$TEMP_DIR/extract"
 BINARY=$(find "$TEMP_DIR/extract" -name "$BINARY_NAME" -type f | head -1)
 [ -z "$BINARY" ] && error "Could not find $BINARY_NAME in archive."
 
+# godman <= 1.3.0 kept global installs in a directory called <shim>/godman, so on a
+# machine that has not migrated yet, "$INSTALL_DIR/$BINARY_NAME" can be a directory --
+# and `cp` would quietly drop the binary *inside* it rather than failing.
+if [ -d "$INSTALL_DIR/$BINARY_NAME" ]; then
+  error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root; run an elevated godman command to migrate it to <prefix>/lib/godman first, or pick another GODMAN_INSTALL_DIR."
+fi
+
 cp "$BINARY" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
