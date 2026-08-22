@@ -58,6 +58,35 @@ Two rules learned the hard way, both from bugs that shipped past a green suite:
 `GODOT_MANAGER_HOME` / `GODOT_MANAGER_GLOBAL_ROOT` aliases) before falling back to
 platform defaults. Tests rely on this — never hardcode paths.
 
+`GODMAN_GLOBAL_ROOT` is a **prefix** on both platforms: Linux resolves the shim to
+`<prefix>/bin` and installs to `<prefix>/lib/godman` (defaults `/usr/local`), Windows
+to `<prefix>\godman\bin` and `<prefix>\godman\installs` (defaults `%ProgramFiles%`).
+One variable has to redirect both directories or `GodmanTestFixture` loses isolation.
+
+Global installs used to live at `/usr/local/bin/godman`, inside the shim directory.
+That name is the one the godman binary itself needs for `sudo godman` to resolve —
+sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
+`/usr/local/lib/godman`. Two consequences worth knowing before touching paths again:
+
+- **A directory move orphans registry entries.** `InstallEntry.Path` is absolute, so
+  moving a root silently invalidates every entry pointing into it. `AppPaths.
+  GetInstallRootRelocations()` publishes the old→new map and
+  `RegistryService.RebaseRelocatedInstallPaths` applies it on load — in memory only,
+  because a read command must never write (an unprivileged `list` cannot touch the
+  global file). It is derived and idempotent, so it is recomputed every load rather
+  than persisted; note the global write is guarded on the Id set changing, which a
+  path-only fix does not. Any future root move must add itself to that map.
+- **The global registry moves with the root.** It lives inside the global install
+  root on Linux, so it needs the same privileged move. `RegistryService.
+  ResolveGlobalRegistryFileForRead` falls back to `AppPaths.
+  GetLegacyGlobalRegistryFiles()` when the current file is absent — reads only; writes
+  always target the current path. Without that fallback an unprivileged `list` on a
+  not-yet-migrated machine shows zero global installs, which reads as data loss.
+- **The migration ordering is the whole decision.** `TryMigrateDirectory` no-ops once
+  the destination exists, so on a machine carrying two old roots whichever is planned
+  first wins. That order lives in the pure, unit-tested `AppPaths.PlanLinuxMigrations`
+  rather than inline in the constructor, for the same reason `TouchesMachineState` does.
+
 Use `GodmanTestFixture` (saves/restores env vars, creates a temp `TempRoot`, builds
 wired-up `AppPaths`/`RegistryService`/`EnvironmentService`) for any test that hits
 the filesystem. For end-to-end CLI tests use `CliTestHarness.Create(fixture, httpClient)`

@@ -82,9 +82,9 @@
   - Windows: `%APPDATA%\godman\`.
 - **Install roots**:
   - User (Linux): `~/.local/share/godman/installs/`.
-  - Global (Linux): `/usr/local/bin/godman/` (override: `GODMAN_GLOBAL_ROOT`).
+  - Global (Linux): `/usr/local/lib/godman/` (override: `GODMAN_GLOBAL_ROOT`, a prefix).
   - User (Windows): `%APPDATA%\godman\installs\`.
-  - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`).
+  - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`, a prefix).
 - **Shim directories**:
   - User (Linux): `~/.local/bin/`.
   - Global (Linux): `/usr/local/bin/`.

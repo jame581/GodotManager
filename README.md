@@ -69,6 +69,23 @@ chmod +x ~/.local/bin/godman
 > ```
 > The one-liner installer above does this automatically.
 
+> **`sudo godman` and PATH.** `sudo` does not use your PATH — it replaces it with
+> `secure_path` from `/etc/sudoers`, which never contains `~/.local/bin`. So a godman
+> installed there works fine as your own user but fails under `sudo` with
+> `sudo: godman: command not found`. Global-scope commands need `sudo` on Linux, so
+> either call it by path:
+> ```bash
+> sudo ~/.local/bin/godman install --version 4.5.1 --scope Global --activate
+> ```
+> or install the binary into a directory root's `secure_path` already covers. Check
+> which those are with `sudo grep secure_path /etc/sudoers` — `/usr/local/bin` is on it
+> for most distributions, though some ship a narrower list — then:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/jame581/GodotManager/main/install.sh | sudo GODMAN_INSTALL_DIR=/usr/local/bin bash
+> ```
+> The RPM package installs to `/usr/bin/godman`, which is on every `secure_path`, so it
+> is unaffected either way.
+
 ### Usage example
 ```bash
 # List installs
@@ -86,8 +103,9 @@ godman install --version 4.5.1 --edition Standard --platform windows --scope Use
 # Install .NET edition for Windows from auto URL, global scope (UAC prompt)
 godman install --version 4.5.1 --edition DotNet --platform windows --scope Global --activate
 
-# Install on Linux global scope (requires sudo)
-sudo godman install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
+# Install on Linux global scope (requires sudo; use the full path unless godman is
+# on root's secure_path -- see the note under "Install on Linux (manual)")
+sudo ~/.local/bin/godman install --version 4.5.1 --edition Standard --platform linux --scope Global --activate
 
 # Preview activation (dry-run)
 godman activate <id> --dry-run
@@ -124,10 +142,19 @@ All commands accept the following global options:
 ### Linux
 - **Config**: `~/.config/godman/`
 - **Download cache**: `~/.config/godman/downloads/`
-- **User installs**: `~/.local/bin/godman/`
-- **Global installs**: `/usr/local/bin/godman/`
+- **User installs**: `~/.local/share/godman/installs/`
+- **Global installs**: `/usr/local/lib/godman/`
 - **User shim**: `~/.local/bin/godot`
 - **Global shim**: `/usr/local/bin/godot`
+
+Global installs deliberately sit outside the shim directory. They used to live in
+`/usr/local/bin/godman/`, which took the one filename the godman binary itself needs
+if `sudo godman` is ever to resolve. godman migrates that directory to
+`/usr/local/lib/godman/` the first time it runs with enough privilege to move it (so in
+practice, your next `sudo godman ...`), and rebases the recorded install paths to match.
+Until then nothing is lost: godman still reads the machine-wide registry from its old
+location, so `list`, `doctor` and the TUI keep showing your global installs. Run
+`godman doctor` to check whether anything was left behind.
 
 ### Windows
 - **Config**: `%APPDATA%\godman\`
@@ -160,14 +187,18 @@ dotnet test -v detailed
 
 ## Notes
 - **Anything touching a global-scope install requires elevated privileges**, because it writes machine-wide state — the shared install root, the machine-wide registry, system environment variables, and the shared shim.
-  - **Linux**: run the command with `sudo`.
+  - **Linux**: run the command with `sudo` — by full path if godman lives in `~/.local/bin`, since `sudo` will not find it there.
   - **Windows**: a UAC prompt appears automatically. This covers `install`, `activate`, `deactivate`, `remove`, and `clean`, from both the CLI and the TUI — you never need to quit and relaunch from an elevated shell.
   - Note that `activate` needs elevation when the install you are switching *away from* is global, even if the one you are switching to is not; deactivating a global install has to clear machine-wide state either way.
 - Global scope sets system-wide environment variables and shims accessible to all users.
 - **A global install's shim takes precedence over a user one.** Windows searches the machine `PATH` before the user `PATH`, so a `godot` shim left behind by an earlier global activation keeps winning even after you activate a user-scope install. `activate` warns when it detects this and names the file to remove; removing it needs administrator rights, so godman reports the condition rather than silently failing to fix it.
 - The `fetch` command queries GitHub API to discover available Godot versions.
 - Auto-URL construction for known Godot version patterns.
-- Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`
+- Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`. On Linux
+  `GODMAN_GLOBAL_ROOT` is a *prefix*: the shim goes to `<prefix>/bin` and installs to
+  `<prefix>/lib/godman`. (It named the shim directory itself before the global root
+  moved; a value that used to mean `/usr/local/bin` should now be `/usr/local`.) On
+  Windows it stands in for `%ProgramFiles%`, as it always has.
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 - **Troubleshooting**: If something seems off after install/activate, run the command again with `--verbose` (`-V`) to see diagnostic warnings for any best-effort operations that failed silently.
