@@ -13,6 +13,14 @@ internal sealed class AppPaths
     private const string LinuxFolderName = "godman";
     private const string LegacyLinuxFolderName = "godot-manager";
 
+    /// <summary>
+    /// Default prefix for machine-wide state on Linux. The shim lives in
+    /// <c>&lt;prefix&gt;/bin</c> and installs in <c>&lt;prefix&gt;/lib/godman</c>;
+    /// <c>GODMAN_GLOBAL_ROOT</c> overrides the prefix, matching how the same
+    /// variable already stands in for %ProgramFiles% on Windows.
+    /// </summary>
+    private const string DefaultLinuxGlobalPrefix = "/usr/local";
+
     public string ConfigDirectory { get; }
     public string RegistryFile { get; }
     public string GlobalRegistryFile { get; }
@@ -25,6 +33,9 @@ internal sealed class AppPaths
     private readonly string _userShimDirectory;
     private readonly string _globalShimDirectory;
     private readonly string _globalConfigRoot;
+    private readonly IReadOnlyList<(string OldRoot, string NewRoot)> _installRootRelocations;
+    private readonly IReadOnlyList<string> _legacyGlobalRegistryFiles;
+    private readonly IReadOnlyList<(string Path, string Description)> _legacyPaths;
 
     public AppPaths()
     {
@@ -63,6 +74,25 @@ internal sealed class AppPaths
             _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
             _userInstallRoot = System.IO.Path.Combine(userRoot, "installs");
 
+            _installRootRelocations = new[]
+            {
+                (System.IO.Path.Combine(programFiles, LegacyWindowsFolderName, "installs"),
+                    System.IO.Path.Combine(globalRoot, "installs")),
+                (System.IO.Path.Combine(appData, LegacyWindowsFolderName, "installs"), _userInstallRoot)
+            };
+
+            // On Windows the registry sits beside installs\, in the root itself.
+            _legacyGlobalRegistryFiles = new[]
+            {
+                System.IO.Path.Combine(programFiles, LegacyWindowsFolderName, "installs.json")
+            };
+
+            _legacyPaths = new[]
+            {
+                (System.IO.Path.Combine(appData, LegacyWindowsFolderName), "legacy config (GodotManager)"),
+                (System.IO.Path.Combine(programFiles, LegacyWindowsFolderName), "legacy global (GodotManager)")
+            };
+
             // Global scope for Windows: C:\Program Files\godman
             _globalInstallRoot = System.IO.Path.Combine(globalRoot, "installs");
             _globalShimDirectory = System.IO.Path.Combine(globalRoot, "bin");
@@ -74,41 +104,64 @@ internal sealed class AppPaths
         {
             var defaultHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var home = overrideBase ?? defaultHome;
-            var globalShim = overrideGlobalBase ?? "/usr/local/bin";
+            var globalPrefix = overrideGlobalBase ?? DefaultLinuxGlobalPrefix;
 
             var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
             var userInstallRoot = System.IO.Path.Combine(home, ".local", "share", LinuxFolderName, "installs");
-            var globalInstallRoot = System.IO.Path.Combine(globalShim, LinuxFolderName);
+            var userShimDirectory = System.IO.Path.Combine(home, ".local", "bin");
+            var globalShim = System.IO.Path.Combine(globalPrefix, "bin");
+            // Global installs deliberately do NOT live in the shim directory. A directory
+            // called <shim>/godman claims the exact filename the godman binary needs there
+            // for `sudo godman` to resolve at all -- sudo's secure_path never contains
+            // ~/.local/bin -- so the two cannot coexist. See README's Paths section.
+            var globalInstallRoot = System.IO.Path.Combine(globalPrefix, "lib", LinuxFolderName);
 
-            if (allowMigration && home == defaultHome && globalShim == "/usr/local/bin")
+            var oldGlobalInstallRoot = System.IO.Path.Combine(globalShim, LinuxFolderName);
+            var legacyGlobalInstallRoot = System.IO.Path.Combine(globalShim, LegacyLinuxFolderName);
+            var oldUserInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName);
+            var legacyUserInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LegacyLinuxFolderName);
+
+            if (allowMigration && home == defaultHome && globalPrefix == DefaultLinuxGlobalPrefix)
             {
-                // Migrate from legacy godot-manager paths
-                var legacyConfigRoot = System.IO.Path.Combine(defaultHome, ".config", LegacyLinuxFolderName);
-                var legacyUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LegacyLinuxFolderName);
-                var legacyGlobalInstallRoot = System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName);
-                TryMigrateDirectory(legacyConfigRoot, userConfigRoot);
-                TryMigrateDirectory(legacyGlobalInstallRoot, globalInstallRoot);
-                if (System.IO.Directory.Exists(legacyUserInstallRoot))
+                foreach (var (source, destination) in PlanLinuxMigrations(home, globalPrefix))
                 {
-                    TryMigrateDirectory(legacyUserInstallRoot, userInstallRoot);
-                }
-
-                // Migrate from old ~/.local/bin/godman/ install root (only if it's a directory, not the binary)
-                var oldUserInstallRoot = System.IO.Path.Combine(defaultHome, ".local", "bin", LinuxFolderName);
-                if (System.IO.Directory.Exists(oldUserInstallRoot))
-                {
-                    TryMigrateDirectory(oldUserInstallRoot, userInstallRoot);
+                    TryMigrateDirectory(source, destination);
                 }
             }
 
             ConfigDirectory = userConfigRoot;
-            _userShimDirectory = System.IO.Path.Combine(home, ".local", "bin");
+            _userShimDirectory = userShimDirectory;
             _globalShimDirectory = globalShim;
             _userInstallRoot = userInstallRoot;
             _globalInstallRoot = globalInstallRoot;
             // On Linux the global install root IS the shared directory (installs sit
             // directly inside it), so the registry belongs there too.
             _globalConfigRoot = globalInstallRoot;
+
+            _installRootRelocations = new[]
+            {
+                (oldGlobalInstallRoot, globalInstallRoot),
+                (legacyGlobalInstallRoot, globalInstallRoot),
+                (oldUserInstallRoot, userInstallRoot),
+                (legacyUserInstallRoot, userInstallRoot)
+            };
+
+            // On Linux the registry lives inside the global install root, so it moved
+            // with it. Same newest-first order as the migrations.
+            _legacyGlobalRegistryFiles = new[]
+            {
+                System.IO.Path.Combine(oldGlobalInstallRoot, "installs.json"),
+                System.IO.Path.Combine(legacyGlobalInstallRoot, "installs.json")
+            };
+
+            _legacyPaths = new[]
+            {
+                (System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), "legacy config (godot-manager)"),
+                (legacyUserInstallRoot, "legacy installs (godot-manager)"),
+                (legacyGlobalInstallRoot, "legacy global installs (godot-manager)"),
+                (oldUserInstallRoot, "old install root (godman)"),
+                (oldGlobalInstallRoot, "old global install root (godman)")
+            };
         }
 
         RegistryFile = System.IO.Path.Combine(ConfigDirectory, "installs.json");
@@ -130,30 +183,79 @@ internal sealed class AppPaths
     }
 
     /// <summary>
-    /// Returns legacy directory paths that should have been migrated.
-    /// Each entry is (legacyPath, description).
+    /// Legacy directory paths that should have been migrated away by now, each with a
+    /// description. Derived from the resolved (override-aware) locations rather than
+    /// hardcoded defaults, so this agrees with <see cref="GetInstallRootRelocations"/>
+    /// about where an un-migrated machine keeps its files -- <c>doctor</c> joins the two
+    /// to decide whether a leftover directory is safe to delete or still the live copy.
     /// </summary>
     public IReadOnlyList<(string Path, string Description)> GetLegacyPaths()
     {
-        var paths = new List<(string, string)>();
+        return _legacyPaths;
+    }
 
-        if (OperatingSystem.IsWindows())
-        {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            paths.Add((System.IO.Path.Combine(appData, LegacyWindowsFolderName), "legacy config (GodotManager)"));
-            paths.Add((System.IO.Path.Combine(programFiles, LegacyWindowsFolderName), "legacy global (GodotManager)"));
-        }
-        else
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            paths.Add((System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), "legacy config (godot-manager)"));
-            paths.Add((System.IO.Path.Combine(home, ".local", "bin", LegacyLinuxFolderName), "legacy installs (godot-manager)"));
-            paths.Add((System.IO.Path.Combine("/usr/local/bin", LegacyLinuxFolderName), "legacy global installs (godot-manager)"));
-            paths.Add((System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName), "old install root (godman)"));
-        }
+    /// <summary>
+    /// The directory moves that bring a default-layout Linux machine from an older path
+    /// scheme onto the current one, in the order they must run.
+    ///
+    /// Pure -- it plans, it never touches disk -- because the ordering carries the whole
+    /// decision: <see cref="TryMigrateDirectory"/> is a no-op once the destination exists,
+    /// so when a machine has both <c>&lt;shim&gt;/godman</c> and
+    /// <c>&lt;shim&gt;/godot-manager</c> sitting there, whichever is listed first wins and
+    /// the other is left behind for <c>doctor</c> to report. Listing godman first preserves
+    /// the precedence the pre-1.4.0 migration had when it folded godot-manager into
+    /// <c>&lt;shim&gt;/godman</c>. Getting that backwards would silently resurrect an
+    /// abandoned install root over the live one, which is exactly the kind of thing that
+    /// needs a unit test rather than a privileged machine to catch.
+    /// </summary>
+    internal static IReadOnlyList<(string Source, string Destination)> PlanLinuxMigrations(string home, string globalPrefix)
+    {
+        var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
+        var userInstallRoot = System.IO.Path.Combine(home, ".local", "share", LinuxFolderName, "installs");
+        var userBin = System.IO.Path.Combine(home, ".local", "bin");
+        var globalShim = System.IO.Path.Combine(globalPrefix, "bin");
+        var globalInstallRoot = System.IO.Path.Combine(globalPrefix, "lib", LinuxFolderName);
 
-        return paths;
+        // Note that <shim>/godman and ~/.local/bin/godman are a *file* on any machine that
+        // installed the binary there. A file must never be mistaken for an install root;
+        // TryMigrateDirectory's Directory.Exists check on the source is what keeps the two
+        // cases apart, which is why these entries can be listed unconditionally.
+        return new[]
+        {
+            (System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), userConfigRoot),
+            (System.IO.Path.Combine(globalShim, LinuxFolderName), globalInstallRoot),
+            (System.IO.Path.Combine(globalShim, LegacyLinuxFolderName), globalInstallRoot),
+            (System.IO.Path.Combine(userBin, LinuxFolderName), userInstallRoot),
+            (System.IO.Path.Combine(userBin, LegacyLinuxFolderName), userInstallRoot)
+        };
+    }
+
+    /// <summary>
+    /// Install roots used by earlier versions, paired with where their contents live
+    /// now. The constructor moves the directories themselves, but registry entries
+    /// written before a move still carry the old absolute path, so
+    /// <see cref="Services.RegistryService"/> rebases them against this map on load.
+    /// Ordered newest-layout-first, the same way the migrations run.
+    /// </summary>
+    public IReadOnlyList<(string OldRoot, string NewRoot)> GetInstallRootRelocations()
+    {
+        return _installRootRelocations;
+    }
+
+    /// <summary>
+    /// Where the machine-wide registry used to live, newest layout first.
+    ///
+    /// The global registry file sits inside the global install root, so it moved when
+    /// that root did -- and moving it needs privileges an ordinary caller does not
+    /// have. Without a read-side fallback, every unprivileged <c>list</c>, <c>doctor</c>
+    /// and TUI session on a not-yet-migrated machine would simply stop seeing global
+    /// installs, which looks exactly like data loss. Read-only: writes always go to
+    /// <see cref="GlobalRegistryFile"/>, so the first elevated operation moves the
+    /// machine onto the current layout for good.
+    /// </summary>
+    public IReadOnlyList<string> GetLegacyGlobalRegistryFiles()
+    {
+        return _legacyGlobalRegistryFiles;
     }
 
     private void EnsureDirectories()

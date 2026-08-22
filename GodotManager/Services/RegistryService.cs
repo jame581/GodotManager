@@ -61,6 +61,8 @@ internal sealed class RegistryService
             ActiveId = userRegistry.ActiveId
         };
 
+        RebaseRelocatedInstallPaths(merged);
+
         if (merged.ActiveId.HasValue)
         {
             merged.MarkActive(merged.ActiveId.Value);
@@ -204,15 +206,141 @@ internal sealed class RegistryService
 
     private async Task<InstallRegistry> LoadGlobalBestEffortAsync(CancellationToken cancellationToken)
     {
+        var file = ResolveGlobalRegistryFileForRead();
+
         try
         {
-            return await LoadFileAsync(_paths.GlobalRegistryFile, cancellationToken);
+            return await LoadFileAsync(file, cancellationToken);
         }
         catch (Exception ex)
         {
-            _diagnostics?.Warn($"could not read the machine-wide registry at {_paths.GlobalRegistryFile}: {ex.Message}");
+            _diagnostics?.Warn($"could not read the machine-wide registry at {file}: {ex.Message}");
             return new InstallRegistry();
         }
+    }
+
+    /// <summary>
+    /// The machine-wide registry moved with the global install root, and moving it
+    /// needs privileges an ordinary caller does not have -- so on a machine where the
+    /// migration has not run yet, the file is still at its old path. Reading falls
+    /// back to it; writing never does (see <see cref="SaveAsync"/>, which always
+    /// targets <see cref="AppPaths.GlobalRegistryFile"/>), so the first elevated
+    /// operation settles the machine on the current layout.
+    ///
+    /// The current path wins whenever it exists, even if an old file is still lying
+    /// around: after a migration the old one is a leftover, not a second source.
+    /// </summary>
+    private string ResolveGlobalRegistryFileForRead()
+    {
+        if (File.Exists(_paths.GlobalRegistryFile))
+        {
+            return _paths.GlobalRegistryFile;
+        }
+
+        foreach (var legacy in _paths.GetLegacyGlobalRegistryFiles())
+        {
+            if (File.Exists(legacy))
+            {
+                _diagnostics?.Warn($"reading the machine-wide registry from its pre-migration path {legacy}; run an elevated godman command to complete the move");
+                return legacy;
+            }
+        }
+
+        return _paths.GlobalRegistryFile;
+    }
+
+    /// <summary>
+    /// Repairs entry paths left behind by a directory migration. <see cref="AppPaths"/>
+    /// moves an old install root to its current location, but the absolute path recorded
+    /// in the registry when the entry was written still points at the old root, so every
+    /// later lookup -- activation, removal, the "does this install still exist" check --
+    /// would miss.
+    ///
+    /// Applied to the merged view in memory only, and deliberately so: persisting here
+    /// would mean a plain `list` or `doctor` writing to the registry, and for a Global
+    /// entry writing the *global* file -- which an unprivileged caller cannot do, turning
+    /// a read-only command into a permission failure.
+    ///
+    /// Nor does it need to persist. The rebase is derived and idempotent, so it is
+    /// recomputed on every load and the in-memory view is always the authoritative one.
+    /// (It does reach disk for user-scope entries on the next <see cref="SaveAsync"/>,
+    /// which rewrites the user file unconditionally. Global entries usually will not:
+    /// the global write is guarded on the *set of Ids* changing, which a path-only
+    /// correction does not change.)
+    /// </summary>
+    private void RebaseRelocatedInstallPaths(InstallRegistry registry)
+    {
+        var relocations = _paths.GetInstallRootRelocations();
+        if (relocations.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in registry.Installs)
+        {
+            if (string.IsNullOrEmpty(entry.Path) || Directory.Exists(entry.Path))
+            {
+                continue;
+            }
+
+            foreach (var (oldRoot, newRoot) in relocations)
+            {
+                if (!TryRebasePath(entry.Path, oldRoot, newRoot, out var rebased))
+                {
+                    continue;
+                }
+
+                // Only follow a relocation that actually landed. A migration blocked by
+                // permissions (the common case: a global root that needs root to move)
+                // leaves the files at the old path, and a half-finished one leaves them
+                // at neither -- in both cases the recorded path is still the best
+                // information available and must not be overwritten with a guess.
+                if (!Directory.Exists(rebased))
+                {
+                    continue;
+                }
+
+                _diagnostics?.Warn($"Install {entry.Id} moved with its install root: {entry.Path} -> {rebased}");
+                entry.Path = rebased;
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rewrites <paramref name="path"/> from under <paramref name="oldRoot"/> to under
+    /// <paramref name="newRoot"/>. Matching is segment-aware, so a sibling root that
+    /// merely shares a textual prefix (<c>/usr/local/bin/godman-old</c> against
+    /// <c>/usr/local/bin/godman</c>) is not treated as a child.
+    /// </summary>
+    private static bool TryRebasePath(string path, string oldRoot, string newRoot, out string rebased)
+    {
+        rebased = string.Empty;
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        var root = oldRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (root.Length == 0 || !path.StartsWith(root, comparison))
+        {
+            return false;
+        }
+
+        if (path.Length == root.Length)
+        {
+            rebased = newRoot;
+            return true;
+        }
+
+        var separator = path[root.Length];
+        if (separator != Path.DirectorySeparatorChar && separator != Path.AltDirectorySeparatorChar)
+        {
+            return false;
+        }
+
+        rebased = Path.Combine(newRoot, path[(root.Length + 1)..]);
+        return true;
     }
 
     private async Task<InstallRegistry> LoadFileAsync(string path, CancellationToken cancellationToken)

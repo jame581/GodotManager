@@ -3,6 +3,7 @@ using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
 using System;
 using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -10,7 +11,7 @@ namespace GodotManager.Tests;
 public class AppPathsTests
 {
     [Fact]
-    public void Linux_ScopePaths_ArePlacedInLocalBin()
+    public void Linux_ScopePaths_KeepShimsInBinAndInstallsOutOfIt()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -21,9 +22,14 @@ public class AppPathsTests
         var paths = new AppPaths();
 
         Assert.Equal(Path.Combine(home, ".local", "share", "godman", "installs"), paths.GetInstallRoot(InstallScope.User));
-        Assert.Equal("/usr/local/bin/godman", paths.GetInstallRoot(InstallScope.Global));
+        // Global installs must NOT sit in the shim directory. /usr/local/bin/godman is
+        // where the godman binary itself wants to live so that `sudo godman` resolves
+        // (sudo's secure_path never contains ~/.local/bin), and a directory of that name
+        // blocks it.
+        Assert.Equal("/usr/local/lib/godman", paths.GetInstallRoot(InstallScope.Global));
         Assert.Equal(Path.Combine(home, ".local", "bin"), paths.GetShimDirectory(InstallScope.User));
         Assert.Equal("/usr/local/bin", paths.GetShimDirectory(InstallScope.Global));
+        Assert.NotEqual(paths.GetShimDirectory(InstallScope.Global), Path.GetDirectoryName(paths.GetInstallRoot(InstallScope.Global)));
     }
 
     [Fact]
@@ -57,7 +63,7 @@ public class AppPathsTests
         // belongs right there beside them, not in some other parent.
         var paths = new AppPaths();
 
-        Assert.Equal("/usr/local/bin/godman/installs.json", paths.GlobalRegistryFile);
+        Assert.Equal("/usr/local/lib/godman/installs.json", paths.GlobalRegistryFile);
     }
 
     [Fact]
@@ -136,6 +142,125 @@ public class AppPathsTests
     }
 
     [Fact]
+    public void Linux_GodmanGlobalRootOverride_IsAPrefix_NotTheShimDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // GODMAN_GLOBAL_ROOT used to name the shim directory itself, with installs
+        // dropped inside it. It now names a prefix, the way it already stood in for
+        // %ProgramFiles% on Windows -- one variable still redirects both directories,
+        // which is the property every fixture-based test depends on for isolation.
+        using var fixture = new GodmanTestFixture();
+        var prefix = Path.Combine(fixture.TempRoot, "global");
+
+        Assert.Equal(Path.Combine(prefix, "bin"), fixture.Paths.GetShimDirectory(InstallScope.Global));
+        Assert.Equal(Path.Combine(prefix, "lib", "godman"), fixture.Paths.GetInstallRoot(InstallScope.Global));
+    }
+
+    [Fact]
+    public void Linux_MigrationPlan_PrefersGodmanRootOverGodotManagerRoot()
+    {
+        // TryMigrateDirectory is a no-op once the destination exists, so on a machine
+        // carrying both old roots the one planned first is the one that survives. The
+        // godman root has to come first: it is the newer layout, and letting the
+        // abandoned godot-manager root win would replace live installs with stale ones.
+        var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local");
+
+        var godman = plan.ToList().FindIndex(m => m.Source == "/usr/local/bin/godman");
+        var godotManager = plan.ToList().FindIndex(m => m.Source == "/usr/local/bin/godot-manager");
+
+        Assert.True(godman >= 0, "the old global godman root must be migrated");
+        Assert.True(godotManager >= 0, "the legacy godot-manager global root must still be migrated");
+        Assert.True(godman < godotManager, "godman must be planned before godot-manager");
+    }
+
+    [Fact]
+    public void Linux_MigrationPlan_SendsBothOldGlobalRootsOutOfTheShimDirectory()
+    {
+        var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local");
+
+        Assert.Contains(("/usr/local/bin/godman", "/usr/local/lib/godman"), plan);
+        Assert.Contains(("/usr/local/bin/godot-manager", "/usr/local/lib/godman"), plan);
+
+        // Nothing may be migrated *into* the shim directory -- that is the collision the
+        // whole move exists to remove.
+        Assert.DoesNotContain(plan, m => Path.GetDirectoryName(m.Destination) == "/usr/local/bin");
+    }
+
+    [Fact]
+    public void Linux_MigrationPlan_KeepsUserRootsPointedAtTheShareDirectory()
+    {
+        var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local");
+        var userInstalls = Path.Combine("/home/tester", ".local", "share", "godman", "installs");
+
+        Assert.Contains((Path.Combine("/home/tester", ".local", "bin", "godman"), userInstalls), plan);
+        Assert.Contains((Path.Combine("/home/tester", ".local", "bin", "godot-manager"), userInstalls), plan);
+        Assert.Contains((Path.Combine("/home/tester", ".config", "godot-manager"),
+            Path.Combine("/home/tester", ".config", "godman")), plan);
+    }
+
+    [Fact]
+    public void InstallRootRelocations_MapEveryOldRootOntoItsCurrentLocation()
+    {
+        using var fixture = new GodmanTestFixture();
+        var relocations = fixture.Paths.GetInstallRootRelocations();
+
+        Assert.NotEmpty(relocations);
+
+        // Every relocation has to land on a root this AppPaths actually resolves to,
+        // otherwise RegistryService would rebase an entry onto a directory nothing
+        // else in the tool ever writes.
+        var liveRoots = new[]
+        {
+            fixture.Paths.GetInstallRoot(InstallScope.User),
+            fixture.Paths.GetInstallRoot(InstallScope.Global)
+        };
+
+        Assert.All(relocations, r => Assert.Contains(r.NewRoot, liveRoots));
+        Assert.All(relocations, r => Assert.NotEqual(r.OldRoot, r.NewRoot));
+    }
+
+    [Fact]
+    public void Linux_InstallRootRelocations_CoverTheOldGlobalRoot()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var fixture = new GodmanTestFixture();
+        var globalShim = fixture.Paths.GetShimDirectory(InstallScope.Global);
+        var relocations = fixture.Paths.GetInstallRootRelocations();
+
+        Assert.Contains(relocations, r =>
+            r.OldRoot == Path.Combine(globalShim, "godman")
+            && r.NewRoot == fixture.Paths.GetInstallRoot(InstallScope.Global));
+    }
+
+    [Fact]
+    public void LegacyGlobalRegistryFiles_PointIntoTheOldGlobalRootsAndNotTheCurrentOne()
+    {
+        using var fixture = new GodmanTestFixture();
+        var legacy = fixture.Paths.GetLegacyGlobalRegistryFiles();
+
+        Assert.NotEmpty(legacy);
+        Assert.DoesNotContain(fixture.Paths.GlobalRegistryFile, legacy);
+        Assert.All(legacy, f => Assert.Equal("installs.json", Path.GetFileName(f)));
+
+        // Each candidate must belong to a root the relocation map already knows about,
+        // so the file fallback and the entry rebase can never disagree about where a
+        // pre-migration machine kept its global state. The file is *inside* that root
+        // on Linux and one level above it on Windows (where installs live in
+        // <root>\installs), so the check is "some old root lives under this file's
+        // directory" rather than an equality either platform would fail.
+        var oldRoots = fixture.Paths.GetInstallRootRelocations().Select(r => r.OldRoot).ToList();
+        Assert.All(legacy, f => Assert.Contains(oldRoots, r => r.StartsWith(Path.GetDirectoryName(f)!, StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void Linux_GetLegacyPaths_ReturnsExpectedPaths()
     {
         if (OperatingSystem.IsWindows())
@@ -151,6 +276,7 @@ public class AppPathsTests
         Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".local", "bin", "godot-manager"));
         Assert.Contains(legacyPaths, p => p.Path == "/usr/local/bin/godot-manager");
         Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".local", "bin", "godman"));
+        Assert.Contains(legacyPaths, p => p.Path == "/usr/local/bin/godman");
     }
 
     [Fact]
