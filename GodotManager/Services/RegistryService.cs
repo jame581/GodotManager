@@ -78,6 +78,13 @@ internal sealed class RegistryService
         // whether the global file needs rewriting at all. Reading it only once
         // keeps both questions answered from the same snapshot.
         var currentGlobal = await LoadGlobalBestEffortAsync(cancellationToken);
+
+        // Rebase the on-disk copy exactly as LoadAsync rebased the caller's copy. The
+        // content comparison further down must see a path the migration already accounts
+        // for as unchanged -- otherwise every unprivileged save on an un-migrated machine
+        // would try, and fail, to rewrite the machine-wide file.
+        RebaseRelocatedInstallPaths(currentGlobal, quiet: true);
+
         var currentGlobalIds = currentGlobal.Installs.Select(x => x.Id).ToHashSet();
 
         // Scope alone doesn't say which file a Global-scope entry actually lives in
@@ -130,15 +137,13 @@ internal sealed class RegistryService
             .ToList();
 
         // Only touch the global file when the set of *legitimately global* entries
-        // actually changed (strays excluded above). Every write -- including a plain
-        // unprivileged `godman install --scope User` -- passes through here with the
-        // machine's existing global entries still present in `registry.Installs`
-        // (LoadAsync merges them in), so writing the global file unconditionally
-        // would demand elevation for operations that never intended to touch global
-        // scope at all.
-        var desiredGlobalIds = desiredGlobal.Select(x => x.Id).ToHashSet();
-
-        if (!currentGlobalIds.SetEquals(desiredGlobalIds))
+        // actually changed -- by Id set or by content (strays excluded above). Every
+        // write -- including a plain unprivileged `godman install --scope User` --
+        // passes through here with the machine's existing global entries still
+        // present in `registry.Installs` (LoadAsync merges them in), so writing the
+        // global file unconditionally would demand elevation for operations that
+        // never intended to touch global scope at all.
+        if (!GlobalEntriesEquivalent(currentGlobal.Installs, desiredGlobal))
         {
             try
             {
@@ -157,6 +162,37 @@ internal sealed class RegistryService
             _paths.RegistryFile,
             new InstallRegistry { Installs = userEntries, ActiveId = registry.ActiveId },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Same Ids and the same serialized content per Id. Compares content, not just Ids,
+    /// so an in-place field change on a global entry is persisted; both sides are
+    /// rebased first (see <see cref="SaveAsync"/>) so a migration-only path difference
+    /// is not a change.
+    /// </summary>
+    private bool GlobalEntriesEquivalent(List<InstallEntry> current, List<InstallEntry> desired)
+    {
+        // Keyed by Id with first-wins, on both sides: a global file carrying a duplicate Id
+        // (which MergeInstalls also passes through) must compare equal to itself. A
+        // ToDictionary here would throw on it and fail every save, and a count comparison
+        // including duplicates would demand a global write -- and elevation -- from an
+        // unrelated user-scope save.
+        var currentById = Serialized(current);
+        var desiredById = Serialized(desired);
+
+        return currentById.Count == desiredById.Count
+            && desiredById.All(pair => currentById.TryGetValue(pair.Key, out var serialized) && serialized == pair.Value);
+
+        Dictionary<Guid, string> Serialized(List<InstallEntry> entries)
+        {
+            var byId = new Dictionary<Guid, string>();
+            foreach (var entry in entries)
+            {
+                byId.TryAdd(entry.Id, JsonSerializer.Serialize(entry, _jsonOptions));
+            }
+
+            return byId;
+        }
     }
 
     /// <summary>
@@ -265,10 +301,16 @@ internal sealed class RegistryService
     /// recomputed on every load and the in-memory view is always the authoritative one.
     /// (It does reach disk for user-scope entries on the next <see cref="SaveAsync"/>,
     /// which rewrites the user file unconditionally. Global entries usually will not:
-    /// the global write is guarded on the *set of Ids* changing, which a path-only
-    /// correction does not change.)
+    /// the global write compares against the on-disk entries rebased the same way, so
+    /// a path-only correction is not a change.)
     /// </summary>
-    private void RebaseRelocatedInstallPaths(InstallRegistry registry)
+    /// <param name="quiet">
+    /// Suppresses the per-entry verbose warning. <see cref="SaveAsync"/> passes
+    /// <c>true</c> because it calls this on the same on-disk snapshot <see cref="LoadAsync"/>
+    /// already rebased and warned about earlier in the same command; repeating the warning
+    /// here would just duplicate it under <c>--verbose</c>.
+    /// </param>
+    private void RebaseRelocatedInstallPaths(InstallRegistry registry, bool quiet = false)
     {
         var relocations = _paths.GetInstallRootRelocations();
         if (relocations.Count == 0)
@@ -300,7 +342,11 @@ internal sealed class RegistryService
                     continue;
                 }
 
-                _diagnostics?.Warn($"Install {entry.Id} moved with its install root: {entry.Path} -> {rebased}");
+                if (!quiet)
+                {
+                    _diagnostics?.Warn($"Install {entry.Id} moved with its install root: {entry.Path} -> {rebased}");
+                }
+
                 entry.Path = rebased;
                 break;
             }

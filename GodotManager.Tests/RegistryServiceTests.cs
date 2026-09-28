@@ -6,6 +6,7 @@ using Spectre.Console;
 using Spectre.Console.Testing;
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Xunit;
@@ -441,6 +442,43 @@ public class RegistryServiceTests : IDisposable
         Assert.Single(globalNow.Installs);
         var userNow = await ReadRawAsync(_fixture.Paths.RegistryFile);
         Assert.Empty(userNow.Installs);
+    }
+
+    [Fact]
+    public async Task SaveAsync_InPlaceFieldChangeOnGlobalEntry_IsPersisted()
+    {
+        using var fixture = new GodmanTestFixture();
+        var installPath = Path.Combine(fixture.TempRoot, "global-install");
+        Directory.CreateDirectory(installPath);
+        var entry = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var loaded = await fixture.Registry.LoadAsync();
+        loaded.Installs.Single().ChecksumVerified = true;   // same Id set, different content
+        await fixture.Registry.SaveAsync(loaded);
+
+        var reloaded = await fixture.Registry.LoadAsync();
+        Assert.True(reloaded.Installs.Single().ChecksumVerified);
+    }
+
+    [Fact]
+    public async Task SaveAsync_GlobalFileWithDuplicateId_DoesNotThrowOrRewriteIt()
+    {
+        using var fixture = new GodmanTestFixture();
+        var installPath = Path.Combine(fixture.TempRoot, "global-install");
+        Directory.CreateDirectory(installPath);
+        var entry = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.GlobalRegistryFile)!);
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new InstallRegistry { Installs = [entry, entry] },
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+        await File.WriteAllTextAsync(fixture.Paths.GlobalRegistryFile, json);
+        var writeTimeBefore = File.GetLastWriteTimeUtc(fixture.Paths.GlobalRegistryFile);
+
+        var loaded = await fixture.Registry.LoadAsync();
+        await fixture.Registry.SaveAsync(loaded);
+
+        Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(fixture.Paths.GlobalRegistryFile));
     }
 
     private async Task WriteOwnFileAsync(InstallEntry entry)

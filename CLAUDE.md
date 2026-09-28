@@ -61,8 +61,9 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   `RegistryService.RebaseRelocatedInstallPaths` applies it on load — in memory only,
   because a read command must never write (an unprivileged `list` cannot touch the
   global file). It is derived and idempotent, so it is recomputed every load rather
-  than persisted; note the global write is guarded on the Id set changing, which a
-  path-only fix does not. Any future root move must add itself to that map.
+  than persisted; the global write compares content against the on-disk entries
+  rebased the same way, so a path-only fix never triggers it. Any future root move
+  must add itself to that map.
 - **The global registry moves with the root.** It lives inside the global install
   root on Linux, so it needs the same privileged move. `RegistryService.
   ResolveGlobalRegistryFileForRead` falls back to `AppPaths.

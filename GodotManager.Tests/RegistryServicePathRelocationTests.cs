@@ -188,6 +188,31 @@ public class RegistryServicePathRelocationTests : IDisposable
             "an unrelated user-scope save must not rewrite the machine-wide registry");
     }
 
+    [Fact]
+    public async Task SaveAsync_RebaseOnly_DoesNotRewriteGlobalFile()
+    {
+        // The state of an un-migrated machine as the registry sees it: the global file
+        // records the old-root path, the files exist only under the new root, so LoadAsync
+        // rebases the in-memory path. A content comparison against the raw file would call
+        // that a change and make every unprivileged save try to write the global file.
+        var (oldRoot, newRoot) = FirstRelocation();
+        var oldPath = Path.Combine(oldRoot, "4.6.2-standard-linux-global");
+        Directory.CreateDirectory(Path.Combine(newRoot, "4.6.2-standard-linux-global"));
+        await WriteGlobalFileAsync(InstallEntryFactory.Create(
+            version: "4.6.2", scope: InstallScope.Global, path: oldPath));
+
+        var globalFile = _fixture.Paths.GlobalRegistryFile;
+        var before = await File.ReadAllTextAsync(globalFile);
+        var writeTimeBefore = File.GetLastWriteTimeUtc(globalFile);
+
+        var loaded = await _fixture.Registry.LoadAsync();
+        Assert.NotEqual(oldPath, Assert.Single(loaded.Installs).Path); // arrange: the rebase happened
+        await _fixture.Registry.SaveAsync(loaded);
+
+        Assert.Equal(before, await File.ReadAllTextAsync(globalFile));
+        Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(globalFile));
+    }
+
     private static async Task WriteRegistryAsync(string file, InstallEntry entry)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
