@@ -69,14 +69,23 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             // is written: a user-scope install over an active global one must clear machine-wide
             // state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
             // the first machine-wide write"). The split is Windows-only (IsRequired is false
-            // elsewhere). On Linux the activation runs in-process; when unprivileged, RemoveUnix
-            // cannot delete the global shim and only warns under --verbose, so the surviving shim
-            // is reported after the install instead -- see WarnIfShadowedByGlobalShim below.
+            // elsewhere). On Linux the activation runs in-process, so an unprivileged switch away
+            // from an active global install stops up front in LinuxElevation.Check; a global shim
+            // that still survives is reported after the install -- see WarnIfShadowedByGlobalShim.
             var activateSeparately = false;
-            if (request.Activate && !settings.DryRun)
+            if (!settings.DryRun)
             {
-                var currentActive = (await _registry.LoadAsync()).GetActive();
-                if (ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
+                // Linux: stop before downloading or extracting anything when the install
+                // (or, with --activate, switching away from an active global install)
+                // would write global locations this user cannot.
+                var currentActive = request.Activate ? (await _registry.LoadAsync()).GetActive() : null;
+                if (LinuxElevation.Check(_paths, request.Scope, currentActive?.Scope, context.Arguments) is { } denied)
+                {
+                    throw denied;
+                }
+
+                if (request.Activate
+                    && ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
                     && InstallerService.NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope))
                 {
                     activateSeparately = true;

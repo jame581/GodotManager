@@ -33,6 +33,15 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        // Linux: stop before anything -- user-scope paths included -- is deleted when there
+        // are global targets this user cannot remove, rather than cleaning half and printing
+        // a "Failed to remove" line per global item. Before the prompt, so the user is not
+        // asked to confirm an operation that is about to be refused.
+        if (LinuxElevation.CheckClean(_paths, new LauncherService(_paths, _diagnostics), context.Arguments) is { } denied)
+        {
+            return GodmanExceptionRenderer.Render("Clean failed:", denied);
+        }
+
         // Launcher entries do not follow GODMAN_HOME / GODMAN_GLOBAL_ROOT (see AppPaths), so
         // even a sandboxed run removes the real ones -- say so before anything is deleted.
         var confirm = settings.Yes || AnsiConsole.Confirm(

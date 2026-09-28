@@ -42,6 +42,13 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 
         var currentActive = registry.GetActive();
 
+        // Linux: stop before the previous activation is cleaned up, which for a global
+        // install is already a machine-wide write (the global shim).
+        if (LinuxElevation.Check(_paths, install.Scope, currentActive?.Scope, context.Arguments) is { } denied)
+        {
+            return GodmanExceptionRenderer.Render("Activation failed:", denied);
+        }
+
         // Elevation is needed when activating a global install OR switching away from
         // one, because cleaning up a global shim/PATH entry writes machine-wide state.
         // The rule lives in ElevatedActivator so the TUI applies exactly the same one.
@@ -73,14 +80,14 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             return GodmanExceptionRenderer.Render(
                 "Activation failed:",
                 "Access denied while updating environment for this scope.",
-                GodmanException.ElevationHint);
+                GodmanException.ElevationHintFor(context.Arguments));
         }
         catch (SecurityException)
         {
             return GodmanExceptionRenderer.Render(
                 "Activation failed:",
                 "This scope requires elevated privileges.",
-                GodmanException.ElevationHint);
+                GodmanException.ElevationHintFor(context.Arguments));
         }
 
         registry.MarkActive(install.Id);

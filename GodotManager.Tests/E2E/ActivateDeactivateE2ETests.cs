@@ -227,15 +227,19 @@ public class ActivateDeactivateE2ETests : IDisposable
 
                 Assert.NotEqual(0, result.ExitCode);
 
-                // The prefix and message text are unchanged from before this fix --
-                // ActivateCommand already caught UnauthorizedAccessException and
-                // printed "Activation failed:" itself. What was missing, and is the
-                // actual bug this pins, is the hint line: the old code never named a
-                // remedy at all.
-                Assert.Contains("Activation failed:", result.Output);
-                Assert.Contains("Access denied while updating environment for this scope.", result.Output);
-                Assert.Contains("hint:", result.Output);
-                Assert.Contains("sudo", result.Output, StringComparison.OrdinalIgnoreCase);
+                // What this originally pinned is the hint line: the old code never named a
+                // remedy at all. Since the Linux pre-check (LinuxElevation.Check) the
+                // unwritable shim directory is caught before ApplyActiveAsync writes
+                // anything, so the message names the directory instead of the
+                // UnauthorizedAccessException it used to hit -- the hint must survive that
+                // move, now naming the real command rather than a placeholder.
+                var output = result.Output.Replace("\r", "").Replace("\n", "");
+                Assert.Contains("Activation failed:", output);
+                Assert.Contains($"{globalShimDir} is not writable", output);
+                Assert.Contains("hint:", output);
+                Assert.Contains("sudo", output, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains($"activate {entry.Id}", output);
+                Assert.False(File.Exists(Path.Combine(globalShimDir, "godot")));
             }
             finally
             {

@@ -196,6 +196,13 @@ internal sealed class InstallDialog : Dialog
             // activation to the elevated child, exactly as `activate` does. Inside the
             // try so a registry read failure lands in the dialog's own error handling.
             var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
+
+            // Same Linux pre-check as InstallCommand, before anything is downloaded; the
+            // dialog always activates, so the install being switched away from counts too.
+            if (LinuxElevation.Check(_paths, scope, currentActive?.Scope, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
             var activateSeparately = ElevatedActivator.IsRequired(scope, currentActive?.Scope)
                 && InstallerService.NeedsSeparateElevatedActivation(scope, currentActive?.Scope);
             if (activateSeparately)

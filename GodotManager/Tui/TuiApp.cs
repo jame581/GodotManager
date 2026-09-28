@@ -366,6 +366,13 @@ internal sealed class TuiApp
             var registry = await _registry.LoadAsync();
             var previous = registry.GetActive();
 
+            // Linux has no elevated hand-off: stop before RemoveActiveAsync, the first
+            // machine-wide write, exactly as ActivateCommand does.
+            if (LinuxElevation.Check(_paths, entry.Scope, previous?.Scope, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
+
             // Activating a global install -- or switching away from one -- writes
             // machine-wide state. RemoveActiveAsync below clears GODOT_HOME with an
             // EnvironmentVariableTarget.Machine write for a global entry, which throws
@@ -457,6 +464,11 @@ internal sealed class TuiApp
                 return;
             }
 
+            if (LinuxElevation.Check(_paths, active.Scope, null, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
+
             // Clearing GODOT_HOME for a global entry is a machine-scope write that
             // throws SecurityException unelevated, so without this the TUI could not
             // deactivate a global install at all -- the same hole the CLI had.
@@ -523,6 +535,12 @@ internal sealed class TuiApp
 
         try
         {
+            // Linux: before the files are deleted, exactly as RemoveCommand does.
+            if (LinuxElevation.Check(_paths, entry.Scope, null, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
+
             // A global-scope removal writes the machine-wide registry and deletes
             // files under %ProgramFiles%. Elevate for the whole operation instead of
             // failing on the first write, which previously left the TUI user with a

@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -11,11 +12,13 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly AppPaths _paths;
 
-    public RemoveCommand(RegistryService registry, EnvironmentService environment)
+    public RemoveCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
     {
         _registry = registry;
         _environment = environment;
+        _paths = paths;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -33,6 +36,13 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
             if (settings.DryRun)
             {
                 return PreviewRemove(install, registry, settings);
+            }
+
+            // Linux cannot hand off to an elevated child, so it stops here -- before the
+            // files are deleted -- instead of deleting them and then failing to unregister.
+            if (LinuxElevation.Check(_paths, install.Scope, null, context.Arguments) is { } denied)
+            {
+                throw denied;
             }
 
             // Removing a global install writes the machine-wide registry and deletes

@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
@@ -9,11 +10,13 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly AppPaths _paths;
 
-    public DeactivateCommand(RegistryService registry, EnvironmentService environment)
+    public DeactivateCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
     {
         _registry = registry;
         _environment = environment;
+        _paths = paths;
     }
 
     internal sealed class Settings : GlobalSettings { }
@@ -29,6 +32,11 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
             {
                 AnsiConsole.MarkupLine("[yellow]No active installation to deactivate.[/]");
                 return 0;
+            }
+
+            if (LinuxElevation.Check(_paths, activeInstall.Scope, null, context.Arguments) is { } denied)
+            {
+                throw denied;
             }
 
             // Deactivating a global install clears GODOT_HOME and strips PATH through
