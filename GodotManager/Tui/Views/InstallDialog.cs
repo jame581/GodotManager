@@ -228,17 +228,11 @@ internal sealed class InstallDialog : Dialog
                     verificationReason = reason;
                 });
 
-            if (activateSeparately)
-            {
-                var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
-                if (!elevated.Succeeded)
-                {
-                    _app.Invoke(() => MessageBox.ErrorQuery(
-                        _app, "Error",
-                        $"Installed, but activation failed: {elevated.Error}" + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
-                        "OK"));
-                }
-            }
+            // A failure is reported in the completion box below, not in a box of its own:
+            // two boxes read as "failed" then "Success".
+            ElevatedOperationResult? separateActivation = activateSeparately
+                ? await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false)
+                : null;
 
             // NotApplicable covers both "no published sums to check against" and
             // "this release publishes none upstream" -- neither is an error, so
@@ -264,11 +258,18 @@ internal sealed class InstallDialog : Dialog
                 _installing = false;
                 DisposeCancellationSource();
                 _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
-                MessageBox.Query(
-                    _app, "Success",
+                var (title, message, isError) = InstallProgressPresentation.BuildCompletionDialog(
                     InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason)
                         + (shadowWarning is null ? "" : $"\n\n{shadowWarning}"),
-                    "OK");
+                    separateActivation);
+                if (isError)
+                {
+                    MessageBox.ErrorQuery(_app, title, message, "OK");
+                }
+                else
+                {
+                    MessageBox.Query(_app, title, message, "OK");
+                }
                 RequestStop();
             });
         }

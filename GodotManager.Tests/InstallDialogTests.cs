@@ -1,4 +1,5 @@
 using GodotManager.Domain;
+using GodotManager.Services;
 using GodotManager.Tui;
 using System;
 using Xunit;
@@ -110,6 +111,35 @@ public class InstallDialogTests
             "4.5.1", InstallEdition.Standard, unverified: true, reason: "could not fetch the sums file (HTTP 500)");
 
         Assert.Contains("could not fetch the sums file (HTTP 500)", message);
+    }
+
+    [Fact]
+    public void BuildCompletionDialog_WhenTheSeparateActivationFailed_IsOneErrorThatSaysBoth()
+    {
+        // The dialog used to queue an "activation failed" error and then show "Success" as
+        // well. One box: the install happened (so the list must refresh), activation did not.
+        var dialog = InstallProgressPresentation.BuildCompletionDialog(
+            "Installed Godot 4.5.1 (Standard)",
+            ElevatedOperationResult.Failed("Elevation was canceled or blocked.", "Run the TUI from an elevated terminal."));
+
+        Assert.True(dialog.IsError);
+        Assert.Equal("Installed, not activated", dialog.Title);
+        Assert.Contains("Installed Godot 4.5.1 (Standard)", dialog.Message);
+        Assert.Contains("Elevation was canceled or blocked.", dialog.Message);
+        Assert.Contains("Run the TUI from an elevated terminal.", dialog.Message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildCompletionDialog_WithoutAFailedActivation_IsSuccess(bool separateActivationRan)
+    {
+        var dialog = InstallProgressPresentation.BuildCompletionDialog(
+            "Installed Godot 4.5.1 (Standard)", separateActivationRan ? ElevatedOperationResult.Ok() : null);
+
+        Assert.False(dialog.IsError);
+        Assert.Equal("Success", dialog.Title);
+        Assert.Equal("Installed Godot 4.5.1 (Standard)", dialog.Message);
     }
 
     [Fact]

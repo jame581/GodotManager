@@ -1,4 +1,5 @@
 using GodotManager.Domain;
+using GodotManager.Services;
 
 namespace GodotManager.Tui;
 
@@ -68,4 +69,25 @@ internal static class InstallProgressPresentation
               "against the checksums published upstream" +
               (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}.")
             : $"Installed Godot {version} ({edition})";
+
+    /// <summary>
+    /// The single box the dialog shows when an install finishes. When the activation was
+    /// handed to an elevated child and that failed, it is an error that says both halves:
+    /// the install happened (the dialog still reports Success so the list refreshes) but
+    /// the install is not active -- the TUI's counterpart of InstallCommand's -1. Null
+    /// <paramref name="separateActivation"/> means no separate activation ran.
+    /// </summary>
+    internal static (string Title, string Message, bool IsError) BuildCompletionDialog(
+        string completionMessage, ElevatedOperationResult? separateActivation)
+    {
+        if (separateActivation is { Succeeded: false } failed)
+        {
+            return ("Installed, not activated",
+                $"{completionMessage}, but activation failed: {failed.Error}"
+                    + (failed.Hint is null ? "" : $"\n{failed.Hint}"),
+                true);
+        }
+
+        return ("Success", completionMessage, false);
+    }
 }
