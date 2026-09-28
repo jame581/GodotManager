@@ -213,6 +213,38 @@ public class RegistryServicePathRelocationTests : IDisposable
         Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(globalFile));
     }
 
+    [Fact]
+    public async Task PrivilegedLoad_WithAStrayAndOnlyALegacyGlobalFile_KeepsTheLegacyEntries()
+    {
+        // The orphan migration used to read the *current* global file directly. On a
+        // machine that has not migrated yet that file is absent, so the migration wrote a
+        // current file holding only the strays -- which then won over the legacy file on
+        // every later read and hid every legacy global entry.
+        var legacyFile = _fixture.Paths.GetLegacyGlobalRegistryFiles()[0];
+        var legacyEntry = InstallEntryFactory.Create(
+            version: "4.6.2", scope: InstallScope.Global,
+            path: Path.Combine(Path.GetDirectoryName(legacyFile)!, "4.6.2-standard-linux-global"));
+        Directory.CreateDirectory(legacyEntry.Path);
+        await WriteRegistryAsync(legacyFile, legacyEntry);
+
+        var stray = InstallEntryFactory.Create(
+            version: "4.7.1", scope: InstallScope.Global, path: Path.Combine(_fixture.TempRoot, "stray"));
+        await WriteRegistryAsync(_fixture.Paths.RegistryFile, stray);
+
+        Assert.False(File.Exists(_fixture.Paths.GlobalRegistryFile), "precondition: the current global registry must be absent");
+
+        var privileged = new RegistryService(_fixture.Paths, isPrivilegedProcess: () => true);
+        var loaded = await privileged.LoadAsync();
+
+        Assert.Contains(loaded.Installs, x => x.Id == legacyEntry.Id);
+        Assert.Contains(loaded.Installs, x => x.Id == stray.Id);
+
+        var currentGlobal = JsonSerializer.Deserialize<InstallRegistry>(
+            await File.ReadAllTextAsync(_fixture.Paths.GlobalRegistryFile), RawJsonOptions)!;
+        Assert.Contains(currentGlobal.Installs, x => x.Id == legacyEntry.Id);
+        Assert.Contains(currentGlobal.Installs, x => x.Id == stray.Id);
+    }
+
     private static async Task WriteRegistryAsync(string file, InstallEntry entry)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);

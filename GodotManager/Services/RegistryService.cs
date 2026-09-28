@@ -218,7 +218,12 @@ internal sealed class RegistryService
                 return;
             }
 
-            var globalRegistry = await LoadFileAsync(_paths.GlobalRegistryFile, cancellationToken);
+            // Seeded from wherever reads resolve the global registry, not the current path
+            // alone. On a machine whose global root has not moved yet the current file is
+            // absent; writing one that held only the strays would win over the legacy file
+            // on every later read and hide every legacy entry. The write below still targets
+            // the current path, so this carries the legacy entries across with the strays.
+            var globalRegistry = await LoadFileAsync(ResolveGlobalRegistryFileForRead(), cancellationToken);
             var existingGlobalIds = globalRegistry.Installs.Select(x => x.Id).ToHashSet();
             var toAdd = orphans.Where(x => !existingGlobalIds.Contains(x.Id)).ToList();
 
