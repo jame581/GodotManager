@@ -1,4 +1,5 @@
 using GodotManager.Config;
+using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
@@ -13,10 +14,14 @@ internal sealed record ElevatedCleanPayload();
 internal sealed class ElevatedCleanCommand : Command<ElevatedCleanCommand.Settings>
 {
     private readonly AppPaths _paths;
+    private readonly RegistryService _registry;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public ElevatedCleanCommand(AppPaths paths)
+    public ElevatedCleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
+        _registry = registry;
+        _diagnostics = diagnostics;
     }
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -42,7 +47,18 @@ internal sealed class ElevatedCleanCommand : Command<ElevatedCleanCommand.Settin
             return Fail($"Invalid payload: {ex.Message}");
         }
 
-        CleanCommand.CleanupAll(_paths);
+        IReadOnlyList<InstallEntry> installs;
+        try
+        {
+            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+            installs = [];
+        }
+
+        CleanCommand.CleanupAll(_paths, installs, _diagnostics);
         return 0;
     }
 

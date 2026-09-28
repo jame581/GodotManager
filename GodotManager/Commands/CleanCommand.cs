@@ -14,10 +14,14 @@ namespace GodotManager.Commands;
 internal sealed class CleanCommand : Command<CleanCommand.Settings>
 {
     private readonly AppPaths _paths;
+    private readonly RegistryService _registry;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public CleanCommand(AppPaths paths)
+    public CleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
+        _registry = registry;
+        _diagnostics = diagnostics;
     }
 
     public sealed class Settings : GlobalSettings
@@ -29,11 +33,26 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godman installs, shims, and config. Continue?", false);
+        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godman installs, shims, launcher entries, and config. Continue?", false);
         if (!confirm)
         {
             AnsiConsole.MarkupLine("[yellow]Aborted.[/]");
             return 0;
+        }
+
+        // Read before anything is deleted: the registry is the only record of which desktop
+        // shortcuts on Windows are ours. Best-effort -- clean is the recovery tool, and it
+        // must still run on a machine whose installs.json is corrupt. The list only matters
+        // for Windows desktop shortcuts; everything else clean removes is found by location.
+        IReadOnlyList<InstallEntry> installs;
+        try
+        {
+            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+            installs = [];
         }
 
         if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated() && HasGlobalCleanupTargets(_paths))
@@ -42,12 +61,21 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             return RunElevatedCleanup();
         }
 
-        CleanupAll(_paths);
+        CleanupAll(_paths, installs, _diagnostics);
         return 0;
     }
 
-    internal static void CleanupAll(AppPaths paths)
+    internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
     {
+        var launcher = new LauncherService(paths, diagnostics);
+        foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
+        {
+            foreach (var removed in launcher.DeleteAll(scope, installs ?? []))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] launcher entry: {removed}");
+            }
+        }
+
         CleanupDirectory(paths.ConfigDirectory, "config");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
@@ -77,7 +105,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
     {
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
             || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
-            || File.Exists(paths.GlobalRegistryFile);
+            || File.Exists(paths.GlobalRegistryFile)
+            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global));
     }
 
     private static int RunElevatedCleanup()

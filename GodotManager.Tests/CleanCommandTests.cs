@@ -132,4 +132,33 @@ public class CleanCommandTests : IDisposable
 
         Assert.False(Directory.Exists(_fixture.Paths.DownloadCacheDirectory));
     }
+
+    [Fact]
+    public void Clean_RemovesOnlyGodmanLauncherEntries()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var installPath = Path.Combine(_fixture.TempRoot, "i");
+        Directory.CreateDirectory(installPath);
+        var user = InstallEntryFactory.Create(path: installPath);
+        var global = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        _fixture.Launcher.Create(user);
+        _fixture.Launcher.Create(global);
+        var foreign = Path.Combine(_fixture.Paths.GetLauncherDirectory(InstallScope.User), "org.gnome.Foo.desktop");
+        File.WriteAllText(foreign, "[Desktop Entry]\n");
+
+        CleanCommand.CleanupAll(_fixture.Paths, [user, global]);
+
+        Assert.False(_fixture.Launcher.Exists(user));
+        Assert.False(_fixture.Launcher.Exists(global));
+        Assert.False(File.Exists(_fixture.Paths.GetLauncherIconPath(InstallScope.User)));
+        Assert.True(File.Exists(foreign));
+    }
+
+    [Fact]
+    public async Task Clean_WithCorruptRegistry_StillSucceeds()
+    {
+        File.WriteAllText(_fixture.Paths.RegistryFile, "{ not json");
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
+        Assert.Equal(0, result.ExitCode);
+    }
 }
