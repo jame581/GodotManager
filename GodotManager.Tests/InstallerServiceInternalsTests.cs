@@ -73,6 +73,55 @@ public class InstallerServiceInternalsTests
     }
 
     /// <summary>
+    /// Covers the pure helper the fix round 1 late-cancel race fix uses:
+    /// RunElevatedInstallAsync's OperationCanceledException handler calls this to
+    /// decide whether the cancellation token fired after the elevated child had
+    /// already exited 0 (in which case the install is reported completed rather
+    /// than cancelled), rather than the actual production call site, which is
+    /// Windows + Global-scope + unelevated only and not reachable from this
+    /// platform.
+    /// </summary>
+    [Fact]
+    public async Task ChildAlreadySucceeded_WithAProcessThatExitedZero_ReturnsTrue()
+    {
+        using var process = StartShortLivedProcess();
+        await process.WaitForExitAsync();
+
+        Assert.True(InstallerService.ChildAlreadySucceeded(process));
+    }
+
+    [Fact]
+    public async Task ChildAlreadySucceeded_WithAProcessThatExitedNonZero_ReturnsFalse()
+    {
+        using var process = StartFailingProcess();
+        await process.WaitForExitAsync();
+
+        Assert.False(InstallerService.ChildAlreadySucceeded(process));
+    }
+
+    [Fact]
+    public void ChildAlreadySucceeded_WithARunningProcess_ReturnsFalse()
+    {
+        using var process = StartLongRunningProcess();
+        try
+        {
+            Assert.False(InstallerService.ChildAlreadySucceeded(process));
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void ChildAlreadySucceeded_WithNoAssociatedProcess_ReturnsFalseRatherThanThrowing()
+    {
+        using var process = new Process();
+
+        Assert.False(InstallerService.ChildAlreadySucceeded(process));
+    }
+
+    /// <summary>
     /// Covers the scenario the fix exists to survive -- cancellation lands after
     /// the elevated child has already exited on its own -- but not, it turns out,
     /// by exercising the catch blocks that were written to guard it.
@@ -124,6 +173,16 @@ public class InstallerServiceInternalsTests
         var psi = OperatingSystem.IsWindows()
             ? new ProcessStartInfo("cmd.exe", "/c exit 0")
             : new ProcessStartInfo("true", string.Empty);
+        psi.UseShellExecute = false;
+
+        return Process.Start(psi) ?? throw new InvalidOperationException("Could not start test process.");
+    }
+
+    private static Process StartFailingProcess()
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe", "/c exit 1")
+            : new ProcessStartInfo("false", string.Empty);
         psi.UseShellExecute = false;
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Could not start test process.");
