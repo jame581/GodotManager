@@ -169,10 +169,21 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         // two-line block each; a per-install line only for an entry godman did write
         // (LauncherEntry == true) that has since gone missing.
         var launcher = new LauncherService(_paths, _diagnostics);
-        var predatingEntries = registry.Installs.Count(x => x.LauncherEntry == null && !launcher.Exists(x));
-        if (predatingEntries > 0)
+        var predating = registry.Installs.Where(x => x.LauncherEntry == null && !launcher.Exists(x)).ToList();
+        if (predating.Count > 0)
         {
-            AnsiConsole.MarkupLineInterpolated($"[yellow]{predatingEntries} install(s) predate launcher entries[/]; `godman activate <id>` adds one (and makes it active).");
+            // Activating a global install needs root, so it gets the command sudo can find
+            // (identical to the plain one on Windows, where activate raises UAC itself).
+            const string plain = "godman activate <id>";
+            var elevated = ElevatedCommandLine.Render("activate <id>");
+            var anyGlobal = predating.Any(x => x.Scope == InstallScope.Global);
+            var anyUser = predating.Any(x => x.Scope != InstallScope.Global);
+            var how = !anyGlobal || elevated == plain
+                ? $"`{plain}` adds one (and makes it active)."
+                : !anyUser
+                    ? $"`{elevated}` adds one (and makes it active)."
+                    : $"`{plain}` adds one (and makes it active); for a global install use `{elevated}`.";
+            AnsiConsole.MarkupLineInterpolated($"[yellow]{predating.Count} install(s) predate launcher entries[/]; {how}");
         }
 
         foreach (var install in registry.Installs.Where(x => x.LauncherEntry == true && !launcher.Exists(x)))

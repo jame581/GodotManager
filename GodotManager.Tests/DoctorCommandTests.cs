@@ -70,9 +70,51 @@ public class DoctorCommandTests : IDisposable
         var output = await RunDoctorAsync(fixture);
 
         Assert.Contains("2 install(s) predate launcher entries", output);
-        Assert.Contains("godman activate <id>", output);
+        Assert.Contains("`godman activate <id>` adds one (and makes it active).", output);
+        Assert.DoesNotContain("for a global install", output);   // both are user installs
         Assert.DoesNotContain("Launcher entry missing", output);
         Assert.All(installs, x => Assert.DoesNotContain(x.Id.ToString(), output));
+    }
+
+    private static InstallEntry PreLauncherInstall(GodmanTestFixture fixture, string name, InstallScope scope)
+    {
+        var path = Path.Combine(fixture.TempRoot, name);
+        Directory.CreateDirectory(path);
+        return InstallEntryFactory.Create(version: "4.5.1", scope: scope, path: path);   // LauncherEntry null: pre-1.4.0
+    }
+
+    [Fact]
+    public async Task Doctor_PreLauncherSummary_ForGlobalInstallsOnly_NamesTheElevatedCommand()
+    {
+        // Activating a global install needs root: a bare `godman activate` is the wrong advice.
+        using var fixture = new GodmanTestFixture();
+        await fixture.Registry.SaveAsync(new InstallRegistry
+        {
+            Installs = [PreLauncherInstall(fixture, "g", InstallScope.Global)]
+        });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains("1 install(s) predate launcher entries", output);
+        Assert.Contains($"`{ElevatedCommandLine.Render("activate <id>")}` adds one (and makes it active).", output);
+    }
+
+    [Fact]
+    public async Task Doctor_PreLauncherSummary_ForMixedScopes_NamesBothCommands()
+    {
+        if (OperatingSystem.IsWindows()) return; // one command there: UAC elevates activate itself
+        using var fixture = new GodmanTestFixture();
+        await fixture.Registry.SaveAsync(new InstallRegistry
+        {
+            Installs = [PreLauncherInstall(fixture, "u", InstallScope.User), PreLauncherInstall(fixture, "g", InstallScope.Global)]
+        });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains("2 install(s) predate launcher entries", output);
+        Assert.Contains(
+            $"`godman activate <id>` adds one (and makes it active); for a global install use `{ElevatedCommandLine.Render("activate <id>")}`.",
+            output);
     }
 
     [Fact]
