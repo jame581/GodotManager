@@ -230,6 +230,53 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Remove_NonActiveSibling_KeepsTheActiveInstallsDesktopShortcut()
+    {
+        // Windows names the desktop shortcut after version + edition only, so two installs
+        // of the same version share it. The shortcut belongs to the activation: removing
+        // the non-active sibling must not take the active install's shortcut with it.
+        if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
+        var active = InstallEntryFactory.Create(path: Path.Combine(_fixture.TempRoot, "a"));
+        var sibling = InstallEntryFactory.Create(path: Path.Combine(_fixture.TempRoot, "b"));
+        var registry = await _fixture.Registry.LoadAsync();
+        registry.Installs.Add(active);
+        registry.Installs.Add(sibling);
+        registry.ActiveId = active.Id;
+        await _fixture.Registry.SaveAsync(registry);
+
+        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+        File.WriteAllText(shortcut, "shortcut");
+
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", sibling.Id.ToString()]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(shortcut), "the active install's desktop shortcut was deleted");
+    }
+
+    [Fact]
+    public async Task Remove_ActiveInstall_DeletesItsDesktopShortcut()
+    {
+        // The other half: the shortcut still goes when its own (active) install is removed,
+        // through deactivation rather than through the launcher entry's delete.
+        if (!OperatingSystem.IsWindows()) return;
+        var active = InstallEntryFactory.Create(path: Path.Combine(_fixture.TempRoot, "a"));
+        var registry = await _fixture.Registry.LoadAsync();
+        registry.Installs.Add(active);
+        registry.ActiveId = active.Id;
+        await _fixture.Registry.SaveAsync(registry);
+
+        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+        File.WriteAllText(shortcut, "shortcut");
+
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", active.Id.ToString()]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(File.Exists(shortcut), "the removed active install's desktop shortcut was left behind");
+    }
+
+    [Fact]
     public async Task Remove_ActiveInstall_DeletesItsLauncherEntry()
     {
         if (OperatingSystem.IsWindows()) return;

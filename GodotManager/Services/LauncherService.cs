@@ -74,10 +74,16 @@ internal sealed class LauncherService
         }
     }
 
+    /// <summary>
+    /// Deletes the install's launcher entry. Not the desktop shortcut: that belongs to the
+    /// activation and goes through <see cref="EnvironmentService.RemoveActiveAsync"/>, which
+    /// every remove path runs for the active install. Its name is shared by every install
+    /// of the same version and edition, so deleting it here would take the active
+    /// install's shortcut away when a non-active sibling is removed.
+    /// </summary>
     public void Delete(InstallEntry entry)
     {
         TryDelete(GetEntryPath(entry, _paths));
-        DeleteDesktopShortcut(entry);
     }
 
     public void DeleteDesktopShortcut(InstallEntry entry)
