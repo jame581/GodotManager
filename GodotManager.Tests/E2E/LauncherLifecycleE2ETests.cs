@@ -131,7 +131,7 @@ public class LauncherLifecycleE2ETests : IDisposable
 
             Assert.Equal(0, result.ExitCode);
             var output = result.Output.Replace("\r", "").Replace("\n", "");
-            Assert.Contains("needs root to remove", output);
+            Assert.Contains("leftover from an earlier global activation", output);
         }
         finally
         {

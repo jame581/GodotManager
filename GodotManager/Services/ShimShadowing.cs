@@ -72,14 +72,16 @@ internal static class ShimShadowing
     }
 
     /// <summary>
-    /// Linux counterpart of <see cref="BuildWarning"/>: names the file, why it
-    /// survived, where it wins, and the remedy.
+    /// Linux counterpart of <see cref="BuildWarning"/>: names the file, where it wins,
+    /// and the remedy -- conditionally, since the shim may be a live machine-wide
+    /// activation that other users on the machine still rely on.
     /// </summary>
     public static string BuildUnixWarning(string globalShimFile) =>
-        $"The global shim at {globalShimFile} is still present and needs root to remove. It " +
-        $"takes precedence over this user-scope activation wherever {Path.GetDirectoryName(globalShimFile)} comes " +
-        "before ~/.local/bin on PATH (including under sudo), so `godot` there will keep " +
-        $"running whatever that shim points at. Remove it with `sudo rm {globalShimFile}`.";
+        $"The global shim at {globalShimFile} takes precedence over this user-scope activation " +
+        $"wherever {Path.GetDirectoryName(globalShimFile)} comes before ~/.local/bin on PATH (including under sudo), " +
+        "so `godot` there will keep running whatever that shim points at. If it is a leftover from an " +
+        $"earlier global activation, remove it with `sudo rm {globalShimFile}`; if other users rely on the " +
+        "machine-wide install, leave it.";
 
     /// <summary>
     /// Pure so it is testable without touching PATH or the filesystem; the caller
