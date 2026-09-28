@@ -33,7 +33,7 @@ app.Configure(config =>
 {
     config.SetInterceptor(new VerboseInterceptor(diagnostics));
     config.SetApplicationName("godman");
-    config.SetApplicationVersion(Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
+    config.SetApplicationVersion(VersionCommand.GodmanVersion);
 
     config.AddExample("list");
     config.AddExample("install", "--version", "4.5.1", "--edition", "Standard", "--activate");
@@ -61,6 +61,7 @@ app.Configure(config =>
     config.AddCommand<DeactivateCommand>("deactivate").WithDescription("Deactivate the current active install");
     config.AddCommand<RemoveCommand>("remove").WithDescription("Remove a registered install");
     config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
+    config.AddCommand<VersionCommand>("version").WithDescription("Show godman, runtime and OS versions");
     config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
     config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, and config");
 
