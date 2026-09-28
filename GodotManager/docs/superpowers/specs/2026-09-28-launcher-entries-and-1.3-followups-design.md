@@ -3,6 +3,15 @@
 Status: approved design, awaiting spec review. Ships in 1.4.0 on
 `fix/global-install-root-out-of-shim-dir`, alongside the global-root move.
 
+> **Amended during planning (2026-09-28).** The implementation plan
+> (`../plans/2026-09-28-launcher-entries-and-1.3-followups.md`, "Deviations from the
+> spec") refines six points; where this document and that list disagree, the list wins:
+> registry guard rebases the on-disk copy instead of keeping a snapshot; `GODMAN_HOME`
+> (not a fixture-set `XDG_DATA_HOME`) isolates launcher paths, and on Windows the Start
+> Menu/Desktop derive from it; `activate` always rewrites the entry; the Linux file name
+> carries an 8-hex Id prefix; `remove` deletes the entry only after the registry save
+> succeeds; the new kill-wait result drives only a warning.
+
 ## Intent
 
 **Stated by Jan:**
