@@ -9,12 +9,21 @@ internal sealed class EnvironmentService
 {
     private readonly AppPaths _paths;
     private readonly DiagnosticContext? _diagnostics;
+    private readonly LauncherService _launcher;
 
-    public EnvironmentService(AppPaths paths, DiagnosticContext? diagnostics = null)
+    public EnvironmentService(AppPaths paths, DiagnosticContext? diagnostics = null, LauncherService? launcher = null)
     {
         _paths = paths;
         _diagnostics = diagnostics;
+        _launcher = launcher ?? new LauncherService(paths, diagnostics);
     }
+
+    /// <summary>
+    /// Exposed so every front-end that already holds this service -- CLI, the hidden
+    /// *-elevated mirrors, the TUI -- reaches the same launcher code without a second
+    /// DI registration to keep in sync.
+    /// </summary>
+    public LauncherService Launcher => _launcher;
 
     public Task ApplyActiveAsync(InstallEntry entry, CancellationToken cancellationToken = default)
     {
@@ -79,31 +88,19 @@ internal sealed class EnvironmentService
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
-        // Derive executable name from installation folder name
-        // Folder name matches the archive binary name (e.g., Godot_v4.5.1-stable_win64.exe)
-        var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var expectedExe = folderName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? folderName
-            : folderName + ".exe";
-
-        var exe = Path.Combine(entry.Path, expectedExe);
-
-        // Fallback: search for any Godot executable if expected name not found.
-        // This covers .NET/mono installs, whose archive nests the binary inside its
-        // own Godot_vX-stable_mono_win64/ directory -- the folder-name guess above
-        // can never match those, so without the nested lookup the shim is written
-        // pointing at a path that does not exist.
-        if (!File.Exists(exe))
-        {
-            exe = GodotExecutableLocator.Find(entry.Path, windows: true, _diagnostics) ?? exe;
-        }
+        // Standard builds: the binary is named after the install folder. .NET/mono
+        // archives nest it one level down -- ResolveForInstall covers both.
+        var exe = GodotExecutableLocator.ResolveForInstall(entry.Path, windows: true, _diagnostics);
 
         var shimPath = Path.Combine(shimDir, "godot.cmd");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
 
-        // Create shortcuts if on Windows
-        CreateShortcuts(entry, exe, createDesktopShortcut);
+        _launcher.Create(entry);
+        if (createDesktopShortcut)
+        {
+            _launcher.CreateDesktopShortcut(entry);
+        }
     }
 
     private void RemoveWindows(InstallEntry? entry)
@@ -134,10 +131,10 @@ internal sealed class EnvironmentService
             }
         }
 
-        // Delete shortcuts
+        // Delete launcher entry and desktop shortcut
         if (entry != null)
         {
-            DeleteShortcuts(entry);
+            _launcher.Delete(entry);
         }
 
         // Broadcast change notification
@@ -165,18 +162,7 @@ internal sealed class EnvironmentService
 
         var shimPath = Path.Combine(shimDir, "godot");
 
-        // Derive binary name from installation folder name
-        var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var target = Path.Combine(entry.Path, folderName);
-
-        // Fallback: search for any Godot binary if expected name not found. Same
-        // nesting problem as the Windows branch -- the mono tarball extracts into
-        // its own Godot_vX-stable_mono_linux_x86_64/ directory, so a top-level-only
-        // search leaves the shim pointing at a path that was never written.
-        if (!File.Exists(target))
-        {
-            target = GodotExecutableLocator.Find(entry.Path, windows: false, _diagnostics) ?? target;
-        }
+        var target = GodotExecutableLocator.ResolveForInstall(entry.Path, windows: false, _diagnostics);
 
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";
         File.WriteAllText(shimPath, shimContent);
@@ -268,78 +254,6 @@ internal sealed class EnvironmentService
         catch (Exception ex)
         {
             _diagnostics?.Warn($"Failed to clean PATH: {ex.Message}");
-        }
-    }
-
-    private void CreateShortcuts(InstallEntry entry, string exePath, bool createDesktopShortcut)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-
-            // Create Start Menu shortcut
-            var startMenuFolder = entry.Scope == InstallScope.Global
-                ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-                : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-
-            var godmanFolder = Path.Combine(startMenuFolder, "Programs", "godman");
-            Directory.CreateDirectory(godmanFolder);
-
-            var startMenuShortcut = Path.Combine(godmanFolder, shortcutName);
-            WindowsShortcut.Create(startMenuShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
-
-            // Create Desktop shortcut if requested
-            if (createDesktopShortcut)
-            {
-                var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-                var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
-                WindowsShortcut.Create(desktopShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"Failed to create shortcuts: {ex.Message}");
-        }
-    }
-
-    private void DeleteShortcuts(InstallEntry entry)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-
-            // Delete Start Menu shortcut
-            var startMenuFolder = entry.Scope == InstallScope.Global
-                ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-                : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-
-            var startMenuShortcut = Path.Combine(startMenuFolder, "Programs", "godman", shortcutName);
-            if (File.Exists(startMenuShortcut))
-            {
-                File.Delete(startMenuShortcut);
-            }
-
-            // Delete Desktop shortcut
-            var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
-            if (File.Exists(desktopShortcut))
-            {
-                File.Delete(desktopShortcut);
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"Failed to delete shortcuts: {ex.Message}");
         }
     }
 

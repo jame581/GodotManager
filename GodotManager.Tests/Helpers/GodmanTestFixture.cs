@@ -16,6 +16,7 @@ internal sealed class GodmanTestFixture : IDisposable
     public AppPaths Paths { get; }
     public RegistryService Registry { get; }
     public EnvironmentService Environment { get; }
+    public LauncherService Launcher { get; }
 
     private readonly (string Key, string? Value)[] _savedEnvVars;
     private readonly (string Key, string? Value)[] _savedPersistentVars;
@@ -53,7 +54,8 @@ internal sealed class GodmanTestFixture : IDisposable
 
         Paths = new AppPaths();
         Registry = new RegistryService(Paths);
-        Environment = new EnvironmentService(Paths, diagnostics: null);
+        Launcher = new LauncherService(Paths);
+        Environment = new EnvironmentService(Paths, diagnostics: null, Launcher);
     }
 
     public void Dispose()

@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Godot logo by Andrea Calabró, CC BY 4.0; attributed in README. -->
+    <EmbeddedResource Include="Assets\godot-icon.svg" LogicalName="GodotManager.Assets.godot-icon.svg" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageReference Include="SharpCompress" Version="0.50.1" />
     <PackageReference Include="Spectre.Console" Version="0.57.2" />
