@@ -1,3 +1,4 @@
+using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Tests.Helpers;
@@ -457,6 +458,27 @@ public class DoctorCommandTests : IDisposable
         }
         Assert.Contains("Do not delete this directory", output);
         Assert.DoesNotContain("can be removed", output);
+    }
+
+    [Theory]
+    [InlineData("/home/u/sandbox")]
+    [InlineData("sandbox")]
+    public void NoPlannedMoveAdvice_ForAUserRoot_NamesGodmanHomeBeingSet_EvenWhenRelative(string home)
+    {
+        // A relative GODMAN_HOME used to get "set it to an absolute path" -- after which the
+        // next doctor run said nothing moves while it is set at all: a circle.
+        var advice = DoctorCommand.NoPlannedMoveAdvice(isGlobalRoot: false, homeOverride: home);
+
+        Assert.Contains("does not move user install roots while GODMAN_HOME is set", advice);
+        Assert.DoesNotContain("relative path", advice);
+    }
+
+    [Fact]
+    public void NoPlannedMoveAdvice_ForTheGlobalRoot_NamesTheRelativePrefix()
+    {
+        var advice = DoctorCommand.NoPlannedMoveAdvice(isGlobalRoot: true, homeOverride: "/home/u");
+
+        Assert.Contains("while GODMAN_GLOBAL_ROOT is a relative path", advice);
     }
 
     [Fact]

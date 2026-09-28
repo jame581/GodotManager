@@ -77,6 +77,19 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             ? "run an elevated godman command to complete the move"
             : $"run `{ElevatedCommandLine.Render("list")}` to complete the move";
 
+    /// <summary>
+    /// What doctor says about a legacy root godman has no planned move for. Offering the move
+    /// would send the user round in circles, so it says why there is none. A user root is
+    /// never moved while GODMAN_HOME is set at all -- relative or not, so "make it absolute"
+    /// would only lead to this same answer. A global root is unplanned only when the prefix
+    /// is relative: nothing is moved (or created) under one, since it would resolve against
+    /// the working directory.
+    /// </summary>
+    internal static string NoPlannedMoveAdvice(bool isGlobalRoot, string? homeOverride) =>
+        !isGlobalRoot && homeOverride is not null
+            ? "Still in use -- godman does not move user install roots while GODMAN_HOME is set. If it names your own home, run godman once without it; otherwise move the installs by hand. Do not delete this directory."
+            : $"Still in use -- godman does not move this directory while {(isGlobalRoot ? "GODMAN_GLOBAL_ROOT" : "GODMAN_HOME")} is a relative path. Set it to an absolute path; do not delete this directory.";
+
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var registry = await _registry.LoadAsync();
@@ -279,21 +292,7 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             }
             else if (pending.Count > 0 && _paths.GetMigrationDestination(pending[0].OldRoot) is null)
             {
-                // A relocation with no planned move. Offering the move would send the user
-                // round in circles, so say why there is none: user roots are never moved while
-                // GODMAN_HOME is set, and nothing is moved (or created) under a relative root,
-                // which would resolve against the working directory.
-                if (!isGlobalRoot && _paths.HomeOverride is { } home && Path.IsPathRooted(home))
-                {
-                    AnsiConsole.MarkupLine(
-                        "[grey]  Still in use -- godman does not move user install roots while GODMAN_HOME is set. If it names your own home, run godman once without it; otherwise move the installs by hand. Do not delete this directory.[/]");
-                }
-                else
-                {
-                    var variable = isGlobalRoot ? "GODMAN_GLOBAL_ROOT" : "GODMAN_HOME";
-                    AnsiConsole.MarkupLineInterpolated(
-                        $"[grey]  Still in use -- godman does not move this directory while {variable} is a relative path. Set {variable} to an absolute path; do not delete this directory.[/]");
-                }
+                AnsiConsole.MarkupLineInterpolated($"[grey]  {NoPlannedMoveAdvice(isGlobalRoot, _paths.HomeOverride)}[/]");
             }
             else if (pending.Count == 0)
             {
