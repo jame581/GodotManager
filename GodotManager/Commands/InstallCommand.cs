@@ -69,8 +69,8 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             // is written: a user-scope install over an active global one must clear machine-wide
             // state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
             // the first machine-wide write"). The split is Windows-only (IsRequired is false
-            // elsewhere). On Linux the activation runs in-process, RemoveUnix cannot delete the
-            // global shim without root and only warns under --verbose, so the surviving shim
+            // elsewhere). On Linux the activation runs in-process; when unprivileged, RemoveUnix
+            // cannot delete the global shim and only warns under --verbose, so the surviving shim
             // is reported after the install instead -- see WarnIfShadowedByGlobalShim below.
             var activateSeparately = false;
             if (request.Activate && !settings.DryRun)

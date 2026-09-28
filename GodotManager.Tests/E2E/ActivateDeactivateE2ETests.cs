@@ -72,7 +72,7 @@ public class ActivateDeactivateE2ETests : IDisposable
             Assert.Equal(0, result.ExitCode);
             // Spectre wraps at the test console width; join lines before matching.
             var output = result.Output.Replace("\r", "").Replace("\n", "");
-            Assert.Contains("could not be removed without root", output);
+            Assert.Contains("needs root to remove", output);
             Assert.Contains("sudo rm", output);
             Assert.Contains("godot", output);
         }

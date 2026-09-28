@@ -128,7 +128,7 @@ public class LauncherLifecycleE2ETests : IDisposable
 
             Assert.Equal(0, result.ExitCode);
             var output = result.Output.Replace("\r", "").Replace("\n", "");
-            Assert.Contains("could not be removed without root", output);
+            Assert.Contains("needs root to remove", output);
         }
         finally
         {

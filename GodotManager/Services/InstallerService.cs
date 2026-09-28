@@ -230,9 +230,9 @@ internal sealed class InstallerService
             // the previous activation's shim, PATH entry and desktop shortcut behind. On
             // Windows, callers that would need elevation for this split the activation off
             // beforehand -- see NeedsSeparateElevatedActivation; that split is Windows-only.
-            // On Linux it runs here unprivileged: RemoveUnix cannot delete a global shim
-            // (EACCES), only warns under --verbose, and the shim survives -- the callers
-            // report it afterwards through ShimShadowing.GetWarning.
+            // On Linux it always runs here, in-process; when unprivileged, RemoveUnix cannot
+            // delete a global shim (EACCES), only warns under --verbose, and the shim
+            // survives -- the callers report it afterwards through ShimShadowing.GetWarning.
             if (previousActive is not null)
             {
                 try

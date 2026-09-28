@@ -13,7 +13,10 @@ namespace GodotManager.Services;
 /// install the user just activated -- `godot` keeps launching the old version and
 /// nothing in the output says why. Removing the global shim needs administrator
 /// rights the activating user may not have, so this only reports the condition and
-/// leaves the remedy to the caller.
+/// leaves the remedy to the caller. On Linux an unprivileged activation cannot
+/// delete the global shim under /usr/local/bin (nor a dead leftover there), and it
+/// outranks the user shim under sudo's secure_path and in any shell that puts
+/// /usr/local/bin before ~/.local/bin.
 /// </remarks>
 internal static class ShimShadowing
 {
@@ -49,10 +52,13 @@ internal static class ShimShadowing
             }
 
             // Linux: EnvironmentService.RemoveUnix cannot delete the global shim from an
-            // unprivileged process (EACCES), and the same is true of a dead leftover from
-            // an earlier global activation. It is not checked against PATH: /usr/local/bin
-            // precedes ~/.local/bin in the default PATH and is always in sudo's
-            // secure_path, so a surviving global shim wins almost everywhere.
+            // unprivileged process (EACCES), and a dead leftover from an earlier global
+            // activation survives the same way. It is not checked against PATH: the shim
+            // always wins under sudo's secure_path and in any shell that puts
+            // /usr/local/bin first, while default login shells (Fedora's /etc/skel/.bashrc,
+            // Debian/Ubuntu ~/.profile) usually put ~/.local/bin first -- so the warning may
+            // fire when the current shell is not affected. It is kept unconditional because
+            // sudo is exactly where godman tells users to run global commands.
             var globalShim = Path.Combine(globalShimDir, "godot");
             return activatedScope == InstallScope.User && File.Exists(globalShim)
                 ? BuildUnixWarning(globalShim)
@@ -70,11 +76,10 @@ internal static class ShimShadowing
     /// survived, where it wins, and the remedy.
     /// </summary>
     public static string BuildUnixWarning(string globalShimFile) =>
-        $"The global shim at {globalShimFile} could not be removed without root. It takes " +
-        "precedence over this user-scope activation wherever /usr/local/bin comes before " +
-        "~/.local/bin on PATH (including under sudo), so `godot` there will keep launching " +
-        $"the previously active install. Remove it with `sudo rm {globalShimFile}`, or re-run " +
-        "the activation with sudo.";
+        $"The global shim at {globalShimFile} is still present and needs root to remove. It " +
+        "takes precedence over this user-scope activation wherever /usr/local/bin comes " +
+        "before ~/.local/bin on PATH (including under sudo), so `godot` there will keep " +
+        $"running whatever that shim points at. Remove it with `sudo rm {globalShimFile}`.";
 
     /// <summary>
     /// Pure so it is testable without touching PATH or the filesystem; the caller
