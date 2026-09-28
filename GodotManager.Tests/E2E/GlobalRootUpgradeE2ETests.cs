@@ -12,7 +12,7 @@ namespace GodotManager.Tests.E2E;
 /// <summary>
 /// The 1.3.0 → 1.4.0 upgrade of an active global install: <c>&lt;shim&gt;/godman</c>
 /// moves to <c>&lt;prefix&gt;/lib/godman</c> and the shim that hard-codes the old root has
-/// to follow. The real migration only runs without overrides (on the real /usr/local), so
+/// to follow. The fixture's <see cref="AppPaths"/> is built before this layout exists, so
 /// the move and repair are driven through the same internal
 /// <see cref="AppPaths.MigrateAndRepair"/> the constructor calls, against the fixture's
 /// prefix.

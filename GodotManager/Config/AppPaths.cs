@@ -37,6 +37,22 @@ internal sealed class AppPaths
     public string DesktopDirectory { get; }
     public string EnvVarName => "GODOT_HOME";
 
+    /// <summary>
+    /// Set when <c>GODMAN_GLOBAL_ROOT</c> (or its legacy alias) still carries its pre-1.4.0
+    /// meaning -- the shim directory, with installs in <c>&lt;value&gt;/godman</c> -- as
+    /// judged by <see cref="UsesPre140GlobalRootMeaning"/>. Null otherwise, and always on
+    /// Windows, where the variable's meaning did not change. The text is for
+    /// <c>list</c> and <c>doctor</c> to print; this class only detects.
+    /// </summary>
+    public string? LegacyGlobalRootOverrideWarning { get; }
+
+    /// <summary>
+    /// True when <see cref="LegacyGlobalRootOverrideWarning"/> is set: the global shim and
+    /// install directories under the misread prefix are then not created, since they
+    /// would be junk directories inside the old shim directory.
+    /// </summary>
+    private readonly bool _skipGlobalDirectories;
+
     private readonly string _userInstallRoot;
     private readonly string _globalInstallRoot;
     private readonly string _userShimDirectory;
@@ -164,6 +180,14 @@ internal sealed class AppPaths
             // ~/.local/bin -- so the two cannot coexist. See README's Paths section.
             var globalInstallRoot = System.IO.Path.Combine(globalPrefix, "lib", LinuxFolderName);
 
+            if (overrideGlobalBase is not null
+                && UsesPre140GlobalRootMeaning(overrideGlobalBase, System.IO.Path.Combine(globalInstallRoot, "installs.json")))
+            {
+                LegacyGlobalRootOverrideWarning = BuildLegacyGlobalRootOverrideWarning(
+                    overrideGlobalPrimary is not null ? EnvGlobal : LegacyEnvGlobal, overrideGlobalBase);
+                _skipGlobalDirectories = true;
+            }
+
             var oldGlobalInstallRoot = System.IO.Path.Combine(globalShim, LinuxFolderName);
             var legacyGlobalInstallRoot = System.IO.Path.Combine(globalShim, LegacyLinuxFolderName);
             var oldUserInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName);
@@ -171,6 +195,7 @@ internal sealed class AppPaths
 
             // Gated per scope, not on "any override set": exporting GODMAN_HOME must not
             // stop `sudo -E godman ... --scope Global` from moving the default global root.
+            // The global moves run under any prefix (see MigrationGates).
             if (applySideEffects)
             {
                 MigrateAndRepair(
@@ -178,7 +203,7 @@ internal sealed class AppPaths
                         home,
                         globalPrefix,
                         migrateUser: migrateUser && home == defaultHome,
-                        migrateGlobal: migrateGlobal && globalPrefix == DefaultLinuxGlobalPrefix),
+                        migrateGlobal: migrateGlobal),
                     new[]
                     {
                         System.IO.Path.Combine(userShimDirectory, "godot"),
@@ -312,16 +337,24 @@ internal sealed class AppPaths
     }
 
     /// <summary>
-    /// Which scopes may run their default-layout migrations. Pure so the gating is
-    /// unit-testable without a real home directory or root. Each scope looks only at its
-    /// own overrides: the migrations move default locations, and an override on one scope
-    /// says nothing about whether the other scope is at its default.
+    /// Which scopes may run their migrations. Pure so the gating is unit-testable without a
+    /// real home directory or root. Each scope looks only at its own overrides: an override
+    /// on one scope says nothing about the other.
+    ///
+    /// The user moves run only without a GODMAN_HOME override. The global moves run under
+    /// any GODMAN_GLOBAL_ROOT, so the global override arguments never turn them off: on
+    /// Linux they only move <c>&lt;prefix&gt;/bin/godman</c> (or <c>godot-manager</c>) to
+    /// <c>&lt;prefix&gt;/lib/godman</c> inside whatever prefix is in effect, which is
+    /// exactly what a user who re-pointed a 1.3.0 value like <c>/opt/godot/bin</c> at
+    /// <c>/opt/godot</c> needs -- and an override naming the default prefix
+    /// (<c>/usr/local</c>, what the release notes tell users to set) must not behave any
+    /// differently from no override. The Windows constructor still restricts its global
+    /// move to the default %ProgramFiles% on its own.
     /// </summary>
     internal static (bool MigrateUser, bool MigrateGlobal) MigrationGates(
         string? homeOverride, string? legacyHomeOverride, string? globalOverride, string? legacyGlobalOverride)
     {
-        return (homeOverride == null && legacyHomeOverride == null,
-                globalOverride == null && legacyGlobalOverride == null);
+        return (homeOverride == null && legacyHomeOverride == null, true);
     }
 
     private static IReadOnlyList<(string Source, string Destination, InstallScope Scope)> PlanLinuxMigrationsByScope(string home, string globalPrefix)
@@ -394,6 +427,51 @@ internal sealed class AppPaths
         return _legacyGlobalRegistryFiles;
     }
 
+    /// <summary>
+    /// Whether a GODMAN_GLOBAL_ROOT value still means what it did before 1.4.0, when it
+    /// named the shim directory and installs lived in <c>&lt;value&gt;/godman</c>: that
+    /// directory holds a registry (<c>installs.json</c>) or at least one install directory,
+    /// and the registry of the current layout (<paramref name="globalRegistryFile"/>) does
+    /// not exist yet. Once the current layout has a registry the value is taken at its
+    /// word. Reads the disk; an unreadable directory counts as holding nothing.
+    /// </summary>
+    internal static bool UsesPre140GlobalRootMeaning(string overrideValue, string globalRegistryFile)
+    {
+        try
+        {
+            if (System.IO.File.Exists(globalRegistryFile))
+            {
+                return false;
+            }
+
+            var oldRoot = System.IO.Path.Combine(overrideValue, LinuxFolderName);
+            return System.IO.File.Exists(System.IO.Path.Combine(oldRoot, "installs.json"))
+                || (System.IO.Directory.Exists(oldRoot) && System.IO.Directory.EnumerateDirectories(oldRoot).Any());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Pointing the variable at the value's parent only fixes things when the value is a
+    /// <c>&lt;X&gt;/bin</c> shim directory: the migration looks in
+    /// <c>&lt;prefix&gt;/bin/godman</c>. Any other value needs the root moved by hand.
+    /// </summary>
+    internal static string BuildLegacyGlobalRootOverrideWarning(string variable, string value)
+    {
+        var trimmed = value.Length > 1 ? value.TrimEnd('/') : value;
+        var oldRoot = System.IO.Path.Combine(trimmed, LinuxFolderName);
+        var parent = System.IO.Path.GetDirectoryName(trimmed);
+        var prefix = $"{variable}={value} uses the pre-1.4.0 meaning (the shim directory). It now names a prefix: ";
+
+        return string.Equals(System.IO.Path.GetFileName(trimmed), "bin", StringComparison.Ordinal) && !string.IsNullOrEmpty(parent)
+            ? prefix + $"set it to {parent} so installs in {oldRoot} are found and moved."
+            : prefix + $"set it to the prefix you want, move {oldRoot} to <prefix>/lib/godman yourself and " +
+              "update the install paths recorded in its installs.json (godman only moves <prefix>/bin/godman automatically).";
+    }
+
     private static (string User, string Global, string? UserIcon, string? GlobalIcon, string Desktop) ResolveLauncherLocations()
     {
         var root = Environment.GetEnvironmentVariable(EnvLauncherRoot);
@@ -451,9 +529,35 @@ internal sealed class AppPaths
         System.IO.Directory.CreateDirectory(_userShimDirectory);
         System.IO.Directory.CreateDirectory(_userInstallRoot);
 
-        // Attempt global dirs; permission may be required.
-        TryCreateDirectory(_globalShimDirectory);
-        TryCreateDirectory(_globalInstallRoot);
+        if (_skipGlobalDirectories)
+        {
+            return;
+        }
+
+        // Attempt global dirs; permission may be required. Never create one that is, or
+        // lies inside, the destination of a move whose source is still there -- the
+        // migration no-ops once its destination exists, even empty, so an empty directory
+        // made here after a failed move would block that move on every later run.
+        foreach (var directory in new[] { _globalShimDirectory, _globalInstallRoot })
+        {
+            if (!IsInsidePendingMigrationDestination(directory))
+            {
+                TryCreateDirectory(directory);
+            }
+        }
+    }
+
+    private bool IsInsidePendingMigrationDestination(string directory)
+    {
+        foreach (var (source, destination) in _migrationMoves)
+        {
+            if (PathRebase.IsUnder(directory, destination) && System.IO.Directory.Exists(source))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void TryCreateDirectory(string path)

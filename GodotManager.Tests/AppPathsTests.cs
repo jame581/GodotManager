@@ -520,17 +520,161 @@ public class AppPathsTests
     }
 
     [Fact]
-    public void MigrationGates_AGlobalOverrideDoesNotBlockTheUserMigration()
+    public void MigrationGates_AGlobalOverrideNamingTheDefaultPrefix_StillMigratesGlobal()
     {
-        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, "/opt/prefix", null));
-        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, null, "/opt/legacy"));
+        // What the 1.4.0 release notes tell users to set. Treating it as "an override" used
+        // to switch the global move off, after which a root run's EnsureDirectories created
+        // an empty /usr/local/lib/godman and blocked the move for good.
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, "/usr/local", null));
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, "/usr/local/", null));
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, null, "/usr/local"));
+    }
+
+    [Fact]
+    public void MigrationGates_ACustomGlobalPrefix_StillMigratesGlobal_AndDoesNotBlockTheUserMigration()
+    {
+        // The global moves only ever go <prefix>/bin/godman -> <prefix>/lib/godman inside
+        // the prefix in effect, so a user who updated /opt/godot/bin to /opt/godot gets
+        // their root moved like everyone else.
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, "/opt/prefix", null));
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, null, "/opt/legacy"));
     }
 
     [Fact]
     public void MigrationGates_NoOverrides_MigratesBothScopes()
     {
         Assert.Equal((true, true), AppPaths.MigrationGates(null, null, null, null));
-        Assert.Equal((false, false), AppPaths.MigrationGates("/h", null, "/p", null));
+        Assert.Equal((false, true), AppPaths.MigrationGates("/h", null, "/p", null));
+    }
+
+    // --- GODMAN_GLOBAL_ROOT under 1.4.0 (review 3, item I1) ---
+
+    [Fact]
+    public void Linux_GlobalRootOverride_MigratesTheOldRootInsideThatPrefix()
+    {
+        if (OperatingSystem.IsWindows()) return; // Linux layout
+
+        // Through the real constructor, with the prefix inside the fixture's TempRoot.
+        using var fixture = new GodmanTestFixture(globalRoot: "custom", seed: prefix =>
+        {
+            var old = Path.Combine(prefix, "bin", "godman", "4.5.1-standard-linux-global");
+            Directory.CreateDirectory(old);
+            File.WriteAllText(Path.Combine(old, "marker"), "x");
+        });
+        var prefix = Path.Combine(fixture.TempRoot, "custom");
+
+        Assert.False(Directory.Exists(Path.Combine(prefix, "bin", "godman")), "the old root should have moved");
+        Assert.True(File.Exists(Path.Combine(prefix, "lib", "godman", "4.5.1-standard-linux-global", "marker")));
+    }
+
+    [Fact]
+    public void Linux_AFailedGlobalMove_LeavesNoEmptyDestinationBehind()
+    {
+        // TryMigrateDirectory no-ops once its destination exists, even empty. A rename that
+        // fails must not be followed by EnsureDirectories creating that destination, or
+        // every later run skips the move.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+
+        string? lockedBin = null;
+        try
+        {
+            using var fixture = new GodmanTestFixture(globalRoot: "locked", seed: prefix =>
+            {
+                Directory.CreateDirectory(Path.Combine(prefix, "bin", "godman", "4.5.1"));
+                lockedBin = Path.Combine(prefix, "bin");
+                // rename(2) needs write access to the source's parent; the destination's
+                // parent (<prefix>/lib) stays writable, so only the move itself fails.
+                if (!OperatingSystem.IsWindows()) // restates the guard above for the analyzer
+                {
+                    File.SetUnixFileMode(lockedBin, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+                }
+            });
+            var prefix = Path.Combine(fixture.TempRoot, "locked");
+
+            File.SetUnixFileMode(lockedBin!, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Assert.True(Directory.Exists(Path.Combine(prefix, "bin", "godman", "4.5.1")), "precondition: the move failed");
+            Assert.False(Directory.Exists(Path.Combine(prefix, "lib", "godman")),
+                "an empty destination would block the move on every later run");
+        }
+        finally
+        {
+            if (lockedBin is not null && Directory.Exists(lockedBin))
+            {
+                File.SetUnixFileMode(lockedBin, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+    }
+
+    private static void SeedPre140GlobalRoot(string value)
+    {
+        var old = Path.Combine(value, "godman");
+        Directory.CreateDirectory(Path.Combine(old, "4.5.1-standard-linux-global"));
+        File.WriteAllText(Path.Combine(old, "installs.json"), "{\"Installs\":[]}");
+    }
+
+    [Fact]
+    public void Linux_AnOverrideKeepingThePre140Meaning_WarnsAndCreatesNoGlobalDirectories()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        using var fixture = new GodmanTestFixture(globalRoot: Path.Combine("opt", "bin"), seed: SeedPre140GlobalRoot);
+        var value = Path.Combine(fixture.TempRoot, "opt", "bin");
+
+        Assert.False(Directory.Exists(Path.Combine(value, "bin")), "no <value>/bin shim directory may be created");
+        Assert.False(Directory.Exists(Path.Combine(value, "lib")), "no <value>/lib/godman install root may be created");
+        Assert.Equal(
+            $"GODMAN_GLOBAL_ROOT={value} uses the pre-1.4.0 meaning (the shim directory). It now names a prefix: " +
+            $"set it to {Path.Combine(fixture.TempRoot, "opt")} so installs in {Path.Combine(value, "godman")} are found and moved.",
+            fixture.Paths.LegacyGlobalRootOverrideWarning);
+    }
+
+    [Fact]
+    public void Linux_APre140OverrideNotEndingInBin_SaysToMoveTheRootByHand()
+    {
+        // Pointing at the parent only helps when the value is the shim directory <X>/bin:
+        // the migration looks in <prefix>/bin/godman.
+        if (OperatingSystem.IsWindows()) return;
+
+        using var fixture = new GodmanTestFixture(globalRoot: "shims", seed: SeedPre140GlobalRoot);
+        var value = Path.Combine(fixture.TempRoot, "shims");
+
+        Assert.False(Directory.Exists(Path.Combine(value, "lib")));
+        var warning = fixture.Paths.LegacyGlobalRootOverrideWarning;
+        Assert.NotNull(warning);
+        Assert.StartsWith($"GODMAN_GLOBAL_ROOT={value} uses the pre-1.4.0 meaning (the shim directory).", warning);
+        Assert.Contains($"move {Path.Combine(value, "godman")} to <prefix>/lib/godman", warning);
+        Assert.DoesNotContain($"set it to {fixture.TempRoot} ", warning);
+    }
+
+    [Fact]
+    public void UsesPre140GlobalRootMeaning_OnlyWhileTheOldRootHasInstallsAndTheNewRegistryIsAbsent()
+    {
+        using var fixture = new GodmanTestFixture();
+        var value = Path.Combine(fixture.TempRoot, "v");
+        var newRegistry = Path.Combine(value, "lib", "godman", "installs.json");
+
+        Assert.False(AppPaths.UsesPre140GlobalRootMeaning(value, newRegistry), "nothing there");
+
+        Directory.CreateDirectory(Path.Combine(value, "godman"));
+        Assert.False(AppPaths.UsesPre140GlobalRootMeaning(value, newRegistry), "an empty godman directory holds no installs");
+
+        Directory.CreateDirectory(Path.Combine(value, "godman", "4.5.1"));
+        Assert.True(AppPaths.UsesPre140GlobalRootMeaning(value, newRegistry), "an install directory");
+
+        Directory.Delete(Path.Combine(value, "godman", "4.5.1"));
+        File.WriteAllText(Path.Combine(value, "godman", "installs.json"), "{}");
+        Assert.True(AppPaths.UsesPre140GlobalRootMeaning(value, newRegistry), "the 1.3.0 registry");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(newRegistry)!);
+        File.WriteAllText(newRegistry, "{}");
+        Assert.False(AppPaths.UsesPre140GlobalRootMeaning(value, newRegistry), "the new layout is in use");
+    }
+
+    [Fact]
+    public void Linux_TheFixturesPrefixOverride_DoesNotWarn()
+    {
+        using var fixture = new GodmanTestFixture();
+        Assert.Null(fixture.Paths.LegacyGlobalRootOverrideWarning);
     }
 
     [Fact]

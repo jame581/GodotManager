@@ -24,9 +24,9 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
     /// <summary>
     /// Whether anything actually landed in a relocation destination. Existence alone
-    /// does not answer it: <see cref="AppPaths"/> best-effort-creates both install roots
-    /// on every run, so an empty destination is the normal state of a machine whose
-    /// migration has not run. An unreadable directory counts as empty, which keeps the
+    /// does not answer it: <see cref="AppPaths"/> best-effort-creates the install roots on
+    /// every run (except the global one while a move into it is still pending), so an empty
+    /// destination is a normal state for a machine whose migration has not run. An unreadable directory counts as empty, which keeps the
     /// advice on the safe side -- never tell someone to delete a directory when we
     /// cannot confirm its contents were copied somewhere else.
     /// </summary>
@@ -77,6 +77,11 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
     {
         var registry = await _registry.LoadAsync();
         var active = registry.GetActive();
+
+        if (_paths.LegacyGlobalRootOverrideWarning is { } overrideWarning)
+        {
+            DiagnosticContext.WarnAlways(overrideWarning);
+        }
 
         if (registry.Installs.Count == 0)
         {
@@ -234,7 +239,8 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             // What the migration will do next depends on its destination exactly the way
             // TryMigrateDirectory decides it: it no-ops whenever the destination EXISTS, even
             // empty -- and AppPaths creates the install roots on every run, doctor's own
-            // included. So the destination is checked where the migration checks it
+            // included (except the global one while a move into it is still pending). So
+            // the destination is checked where the migration checks it
             // (GetMigrationDestination: the whole root on Windows), three ways.
             var isGlobalRoot = pending.Any(r => string.Equals(
                 r.NewRoot, _paths.GetInstallRoot(InstallScope.Global), StringComparison.Ordinal));
