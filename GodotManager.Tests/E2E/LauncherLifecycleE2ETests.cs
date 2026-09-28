@@ -153,6 +153,35 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Install_Force_WhenRegistrySaveFails_KeepsTheReplacedEntrysLauncher()
+    {
+        // Parity-review F5: the replaced entry's launcher was deleted before the save, so a
+        // failed save left the still-registered old install with no app-menu entry.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target);
+        Assert.True(_fixture.Launcher.Exists(original));
+
+        File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead);
+        var archive = MockArchiveFactory.CreateMockGodotArchive();
+        try
+        {
+            var result = await CliTestHarness.Create(_fixture).RunAsync(
+                ["install", "--version", "4.5.1", "--archive", archive, "--platform", Platform, "--path", target, "--force"]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.Equal(original.Id, registry.Installs.Single().Id);
+            Assert.True(_fixture.Launcher.Exists(original));
+        }
+        finally
+        {
+            File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Delete(archive);
+        }
+    }
+
+    [Fact]
     public async Task Remove_NonActiveInstall_DeletesItsLauncherEntry()
     {
         if (OperatingSystem.IsWindows()) return;

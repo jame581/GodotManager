@@ -214,15 +214,11 @@ internal sealed class InstallerService
 
         // A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
         // carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
-        // in the app menu. Deleted here, before anything new is written: on Windows both
-        // share one .lnk name, and deleting after the create would delete the new one.
+        // in the app menu. Captured here, before RemoveAll drops them; their launcher files
+        // are deleted only after the save below succeeds.
         var replaced = registry.Installs
             .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        foreach (var old in replaced)
-        {
-            _environment.Launcher.Delete(old);
-        }
 
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
@@ -255,9 +251,18 @@ internal sealed class InstallerService
 
         await _registry.SaveAsync(registry, cancellationToken);
 
-        // After the save, symmetric with remove: an install whose registry write failed must
-        // not leave a launcher entry pointing at an unregistered install. (Activation above
-        // may already have written it; this rewrite is idempotent.)
+        // After the save, symmetric with remove: a failed registry write must neither leave
+        // a launcher entry pointing at an unregistered install nor have deleted the entry of
+        // the install it was meant to replace. The deletes run first: on Windows the old and
+        // new entries share one .lnk name, which activation above may already have written
+        // for the new entry -- Delete(old) removes it and Create(entry) rewrites it, while
+        // with --no-shortcut the old one is correctly left removed. (The Create rewrite is
+        // idempotent.)
+        foreach (var old in replaced)
+        {
+            _environment.Launcher.Delete(old);
+        }
+
         if (request.CreateLauncherEntry)
         {
             _environment.Launcher.Create(entry);
