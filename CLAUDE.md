@@ -78,6 +78,13 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   the destination exists, so on a machine carrying two old roots whichever is planned
   first wins. That order lives in the pure, unit-tested `AppPaths.PlanLinuxMigrations`
   rather than inline in the constructor, for the same reason `TouchesMachineState` does.
+- **An empty destination blocks a move for good.** So the global moves run under any
+  `GODMAN_GLOBAL_ROOT` (they only move `<prefix>/bin/godman` within that prefix — see
+  `AppPaths.MigrationGates`), and `EnsureDirectories` never creates a global directory
+  inside a destination whose source still exists. A value that still carries the 1.3.0
+  meaning (the shim directory) is caught by `AppPaths.UsesPre140GlobalRootMeaning`: global
+  directories are then not created at all and `list`/`doctor` print
+  `LegacyGlobalRootOverrideWarning`.
 
 Use `GodmanTestFixture` (saves/restores env vars, creates a temp `TempRoot`, builds
 wired-up `AppPaths`/`RegistryService`/`EnvironmentService`) for any test that hits

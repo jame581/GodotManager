@@ -155,7 +155,8 @@ Global installs deliberately sit outside the shim directory. They used to live i
 if `sudo godman` is ever to resolve. godman migrates that directory to
 `/usr/local/lib/godman/` on the first privileged run of a command that sets up its paths
 (e.g. `sudo ~/.local/bin/godman list`, or `doctor`, `install`, `fetch`; `version` and
-`--help` do not, and a set `GODMAN_GLOBAL_ROOT` disables it), rebases the recorded
+`--help` do not; under a `GODMAN_GLOBAL_ROOT` prefix it moves `<prefix>/bin/godman`
+instead), rebases the recorded
 install paths to match, and rewrites the global `godot` shim and the `env.sh` it sources
 (root's, under a HOME-resetting sudo -- the default on Fedora, Debian and Ubuntu) that
 pointed into the old directory.
@@ -204,8 +205,17 @@ dotnet test -v detailed
 - Auto-URL construction for known Godot version patterns.
 - Environment variable overrides available: `GODMAN_HOME`, `GODMAN_GLOBAL_ROOT`. On Linux
   `GODMAN_GLOBAL_ROOT` is a *prefix*: the shim goes to `<prefix>/bin` and installs to
-  `<prefix>/lib/godman`. (It named the shim directory itself before the global root
-  moved; a value that used to mean `/usr/local/bin` should now be `/usr/local`.) On
+  `<prefix>/lib/godman`. Before 1.4.0 it named the shim directory itself, with installs
+  in `<value>/godman`:
+  - `/usr/local/bin` → set `/usr/local`, or unset it.
+  - `<X>/bin` → set `<X>`; the next run that can write there moves `<X>/bin/godman`
+    to `<X>/lib/godman`.
+  - any other value `<V>` → godman does not move `<V>/godman`; pick a prefix `<P>`, move
+    it to `<P>/lib/godman` yourself and update the paths in its `installs.json` (or
+    reinstall).
+
+  While a value still looks like the old meaning (`<value>/godman` holds installs and
+  `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn. On
   Windows it stands in for `%ProgramFiles%`, as it always has.
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
