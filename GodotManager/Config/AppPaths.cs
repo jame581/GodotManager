@@ -47,6 +47,7 @@ internal sealed class AppPaths
     private readonly string? _userLauncherIconPath;
     private readonly string? _globalLauncherIconPath;
     private readonly IReadOnlyList<(string OldRoot, string NewRoot)> _installRootRelocations;
+    private readonly IReadOnlyList<(string Source, string Destination)> _migrationMoves;
     private readonly IReadOnlyList<string> _legacyGlobalRegistryFiles;
     private readonly IReadOnlyList<(string Path, string Description)> _legacyPaths;
 
@@ -111,6 +112,15 @@ internal sealed class AppPaths
             ConfigDirectory = userRoot;
             _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
             _userInstallRoot = System.IO.Path.Combine(userRoot, "installs");
+
+            // Every move the constructor can make, ungated and override-aware, so doctor can
+            // look at the same directory TryMigrateDirectory checks (the whole root on
+            // Windows, not the installs\ inside it the relocation map names).
+            _migrationMoves = new[]
+            {
+                (System.IO.Path.Combine(appData, LegacyWindowsFolderName), userRoot),
+                (System.IO.Path.Combine(programFiles, LegacyWindowsFolderName), globalRoot)
+            };
 
             _installRootRelocations = new[]
             {
@@ -185,6 +195,8 @@ internal sealed class AppPaths
             // On Linux the global install root IS the shared directory (installs sit
             // directly inside it), so the registry belongs there too.
             _globalConfigRoot = globalInstallRoot;
+
+            _migrationMoves = PlanLinuxMigrations(home, globalPrefix);
 
             _installRootRelocations = new[]
             {
@@ -344,6 +356,26 @@ internal sealed class AppPaths
     public IReadOnlyList<(string OldRoot, string NewRoot)> GetInstallRootRelocations()
     {
         return _installRootRelocations;
+    }
+
+    /// <summary>
+    /// The directory whose existence decides whether the migration covering
+    /// <paramref name="oldRoot"/> can still run: <see cref="TryMigrateDirectory"/> no-ops
+    /// once it exists, even empty. On Linux that is the relocation's new root itself; on
+    /// Windows it is the whole godman root, one level above the <c>installs</c> directory
+    /// the relocation map names. Null when no planned move covers the path.
+    /// </summary>
+    internal string? GetMigrationDestination(string oldRoot)
+    {
+        foreach (var (source, destination) in _migrationMoves)
+        {
+            if (PathRebase.TryRebase(oldRoot, source, destination, out _))
+            {
+                return destination;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

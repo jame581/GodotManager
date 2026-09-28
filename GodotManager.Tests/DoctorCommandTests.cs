@@ -190,6 +190,22 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Doctor_WithGlobalActiveInstallDirectoryMissing_NamesAnElevatedActivate()
+    {
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1", scope: InstallScope.Global, path: Path.Combine(_fixture.TempRoot, "gone-global"));
+        entry.LauncherEntry = false;
+        var registry = new InstallRegistry { Installs = [entry] };
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Active install directory missing", output);
+        Assert.Contains($"Run `{ElevatedCommandLine.Render($"activate {entry.Id}")}` again to rewrite the shim", output);
+    }
+
+    [Fact]
     public async Task Doctor_WithActiveInstallDirectoryPresent_DoesNotReportItMissing()
     {
         var registry = new InstallRegistry();
@@ -306,12 +322,16 @@ public class DoctorCommandTests : IDisposable
         Assert.DoesNotContain(ElevatedCommandLine.Render("list"), output);
     }
 
+    // The four tests below follow TryMigrateDirectory's real rule: it no-ops whenever the
+    // destination EXISTS, even empty. The fixture's AppPaths already created the install
+    // roots (as every run does), so the "absent" cases delete the destination first. The
+    // destination is derived from AppPaths exactly as doctor derives it.
+
     [Fact]
-    public async Task Doctor_WithAnUnmovedGlobalRootAndAnEmptyDestination_OffersTheElevatedMove()
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnAbsentDestination_OffersTheElevatedMove()
     {
-        var pending = PendingRelocation(InstallScope.Global);
-        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard-linux-global"));
-        Assert.False(HasAnything(pending.NewRoot), "precondition: the destination must be empty");
+        var (legacy, destination) = UnmovedRoot(InstallScope.Global);
+        Directory.Delete(destination, recursive: true);
 
         var output = Flatten(await RunDoctorAsync(_fixture));
 
@@ -321,24 +341,81 @@ public class DoctorCommandTests : IDisposable
                 ? "Run an elevated godman command to complete the move"
                 : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move",
             output);
+        Assert.DoesNotContain("rmdir", output);
+        Assert.DoesNotContain("can be removed", output);
+        Assert.True(Directory.Exists(legacy));
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnEmptyDestination_SaysTheEmptyDirectoryBlocksTheMove()
+    {
+        // e.g. after a failed privileged move: `sudo godman list` alone would no-op forever.
+        var (_, destination) = UnmovedRoot(InstallScope.Global);
+        Directory.Delete(destination, recursive: true);
+        Directory.CreateDirectory(destination);
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains($"blocked only by the empty {destination}", output);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list")}`", output);
+        }
+        Assert.Contains("Do not delete this directory", output);
         Assert.DoesNotContain("can be removed", output);
     }
 
     [Fact]
-    public async Task Doctor_WithAnUnmovedUserRoot_DoesNotSendTheUserToSudo()
+    public async Task Doctor_WithAnUnmovedUserRootAndAnAbsentDestination_DoesNotSendTheUserToSudo()
     {
         // User roots move on every ordinary run; under a HOME-resetting sudo an elevated
-        // run would migrate root's home instead.
-        var pending = PendingRelocation(InstallScope.User);
-        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard-linux-user"));
-        Assert.False(HasAnything(pending.NewRoot), "precondition: the destination must be empty");
+        // run would migrate root's home instead. (Linux: on Windows the user migration's
+        // destination is the config root itself, which always exists.)
+        if (OperatingSystem.IsWindows()) return;
+        var (_, destination) = UnmovedRoot(InstallScope.User);
+        Directory.Delete(destination, recursive: true);
 
         var output = Flatten(await RunDoctorAsync(_fixture));
 
         Assert.Contains("Still in use", output);
         Assert.Contains("next ordinary (non-sudo) run", output);
         Assert.DoesNotContain("sudo ", output);
-        Assert.DoesNotContain("elevated", output);
+        Assert.DoesNotContain("can be removed", output);
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedUserRootAndAnEmptyDestination_SaysToRemoveItWithoutSudo()
+    {
+        // The normal state: doctor's own run already attempted the user migration and then
+        // created the (empty) user install root, so "the next ordinary run" alone would
+        // never move anything.
+        if (OperatingSystem.IsWindows()) return;
+        var (_, destination) = UnmovedRoot(InstallScope.User);
+        Assert.True(Directory.Exists(destination) && !HasAnything(destination), "precondition: exists but empty");
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains($"blocked only by the empty {destination}", output);
+        Assert.Contains($"`rmdir {destination}`, then: godman moves them on its next ordinary (non-sudo) run", output);
+        Assert.DoesNotContain("sudo rmdir", output);
+        Assert.DoesNotContain("can be removed", output);
+    }
+
+    /// <summary>
+    /// An old root of <paramref name="scope"/> holding an install, plus the directory whose
+    /// existence decides whether its migration can run (derived, as doctor does).
+    /// </summary>
+    private (string Legacy, string Destination) UnmovedRoot(InstallScope scope)
+    {
+        var pending = PendingRelocation(scope);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard"));
+        var relocation = _fixture.Paths.GetInstallRootRelocations().First(r =>
+            r.NewRoot == pending.NewRoot
+            && (r.OldRoot == pending.OldRoot || r.OldRoot.StartsWith(pending.OldRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
+        var destination = _fixture.Paths.GetMigrationDestination(relocation.OldRoot)!;
+        Assert.StartsWith(_fixture.TempRoot, destination);
+        return (pending.OldRoot, destination);
     }
 
     private static string Flatten(string output) => output.Replace("\r", "").Replace("\n", "");

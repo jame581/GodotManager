@@ -562,4 +562,24 @@ public class AppPathsTests
             AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local").Where(m => m.Source.StartsWith("/home/tester/", StringComparison.Ordinal)),
             plan);
     }
+
+    [Fact]
+    public void GetMigrationDestination_CoversEveryRelocation_AndContainsItsNewRoot()
+    {
+        // Doctor asks this where the migration's existence check looks. On Linux that is
+        // the relocation's new root; on Windows the whole godman root above installs\.
+        // Either way the relocation's new root must sit at or under it.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.All(fixture.Paths.GetInstallRootRelocations(), r =>
+        {
+            var destination = fixture.Paths.GetMigrationDestination(r.OldRoot);
+            Assert.NotNull(destination);
+            Assert.True(PathRebase.IsUnder(r.NewRoot, destination!), $"{r.NewRoot} is not under {destination}");
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Equal(r.NewRoot, destination);
+            }
+        });
+    }
 }

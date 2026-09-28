@@ -42,6 +42,37 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         }
     }
 
+    private enum DestinationState { Absent, Empty, HasContent }
+
+    /// <summary>An unreadable destination counts as having content: the safe side, since it blocks the move.</summary>
+    private static DestinationState ProbeDestination(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return DestinationState.Absent;
+        }
+
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(directory).Any()
+                ? DestinationState.HasContent
+                : DestinationState.Empty;
+        }
+        catch
+        {
+            return DestinationState.HasContent;
+        }
+    }
+
+    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    /// <summary>What runs the migration once nothing blocks it.</summary>
+    private static string MoveRemedy(bool globalRoot) => !globalRoot
+        ? "godman moves them on its next ordinary (non-sudo) run"
+        : OperatingSystem.IsWindows()
+            ? "run an elevated godman command to complete the move"
+            : $"run `{ElevatedCommandLine.Render("list")}` to complete the move";
+
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var registry = await _registry.LoadAsync();
@@ -121,7 +152,10 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         if (active is not null && !string.IsNullOrEmpty(active.Path) && !Directory.Exists(active.Path))
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Active install directory missing[/]: {active.Path}");
-            AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim, or remove the entry.[/]");
+            var activate = active.Scope == InstallScope.Global
+                ? ElevatedCommandLine.Render($"activate {active.Id}")
+                : $"godman activate {active.Id}";
+            AnsiConsole.MarkupLineInterpolated($"[grey]  Run `{activate}` again to rewrite the shim, or remove the entry.[/]");
         }
 
         // One entry per install is created on install. An explicit --no-shortcut is not a
@@ -197,38 +231,61 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             // registered still lives here, it is live.
             var referenced = registry.Installs.Any(x => !string.IsNullOrEmpty(x.Path) && PathRebase.IsUnder(x.Path, legacyPath));
 
-            // A move is still possible only while the destination is empty:
-            // TryMigrateDirectory no-ops once it holds anything, so for a root whose
-            // destination already has content "run godman to complete the move" would be
-            // advice that can never work, repeated forever.
-            var movePending = pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot));
+            // What the migration will do next depends on its destination exactly the way
+            // TryMigrateDirectory decides it: it no-ops whenever the destination EXISTS, even
+            // empty -- and AppPaths creates the install roots on every run, doctor's own
+            // included. So the destination is checked where the migration checks it
+            // (GetMigrationDestination: the whole root on Windows), three ways.
             var isGlobalRoot = pending.Any(r => string.Equals(
                 r.NewRoot, _paths.GetInstallRoot(InstallScope.Global), StringComparison.Ordinal));
+            var destination = pending.Count > 0
+                ? _paths.GetMigrationDestination(pending[0].OldRoot) ?? pending[0].NewRoot
+                : null;
+            var state = destination is null ? DestinationState.Absent : ProbeDestination(destination);
 
-            if (movePending)
+            // Removable only once the installs have landed somewhere and nothing registered
+            // still points here. An empty or absent destination never makes it removable.
+            var removable = !referenced
+                && destination is not null
+                && state == DestinationState.HasContent
+                && pending.All(r => HasContent(r.NewRoot));
+
+            if (pending.Count == 0)
+            {
+                if (referenced)
+                {
+                    AnsiConsole.MarkupLine("[grey]  Still in use -- registered installs still live here and godman does not move this directory automatically. Reinstall or remove those installs first; do not delete this directory until then.[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
+                }
+            }
+            else if (removable)
+            {
+                AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
+            }
+            else if (state == DestinationState.Absent)
             {
                 // Only the machine-wide root needs privileges. User roots move on every
                 // ordinary run, and under a HOME-resetting sudo an elevated run would
                 // migrate root's home, not this user's.
-                var remedy = !isGlobalRoot
-                    ? "godman moves them on its next ordinary (non-sudo) run"
-                    : OperatingSystem.IsWindows()
-                        ? "Run an elevated godman command to complete the move"
-                        : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move";
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[grey]  Still in use -- installs here have not moved to {pending[0].NewRoot} yet. {remedy}; do not delete this directory.[/]");
+                    $"[grey]  Still in use -- installs here have not moved to {destination} yet. {Capitalize(MoveRemedy(isGlobalRoot))}; do not delete this directory.[/]");
             }
-            else if (referenced)
+            else if (state == DestinationState.Empty)
             {
-                var why = pending.Count > 0
-                    ? $"godman cannot move them automatically because {pending[0].NewRoot} already exists"
-                    : "godman does not move this directory automatically";
+                var removeEmpty = OperatingSystem.IsWindows()
+                    ? $"remove the empty {destination}{(isGlobalRoot ? " from an elevated terminal" : string.Empty)}"
+                    : $"run `{(isGlobalRoot ? "sudo " : string.Empty)}rmdir {destination}`";
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[grey]  Still in use -- registered installs still live here and {why}. Reinstall or remove those installs first; do not delete this directory until then.[/]");
+                    $"[grey]  Still in use -- installs here have not moved: the move is blocked only by the empty {destination}. To complete it, {removeEmpty}, then: {MoveRemedy(isGlobalRoot)}. Do not delete this directory.[/]");
             }
             else
             {
-                AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
+                var who = referenced ? "registered installs still live here" : "installs here have not moved";
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[grey]  Still in use -- {who} and godman cannot move them automatically because {destination} already exists. Reinstall or remove those installs first; do not delete this directory until then.[/]");
             }
         }
 
