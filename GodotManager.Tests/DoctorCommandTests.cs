@@ -284,25 +284,85 @@ public class DoctorCommandTests : IDisposable
         // A destination with content is not proof this root moved: on a machine with two
         // old roots only the first planned one migrates, and a blocked or partial move
         // leaves entries behind. A registry entry pointing into the directory makes it live.
-        var pending = FirstPendingRelocation();
+        // And because TryMigrateDirectory no-ops onto a destination that exists, "run
+        // godman to complete the move" can never work here -- it must not be offered.
+        var pending = PendingRelocation(InstallScope.Global);
         var installDir = Path.Combine(pending.OldRoot, "4.5.1-standard-linux-global");
         Directory.CreateDirectory(installDir);
         Directory.CreateDirectory(pending.NewRoot);
         File.WriteAllText(Path.Combine(pending.NewRoot, "4.6.2-standard-linux-global.marker"), "migrated");
-        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installDir);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", scope: InstallScope.Global, path: installDir);
         entry.LauncherEntry = false;
         await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
 
-        var output = await RunDoctorAsync(_fixture);
+        var output = Flatten(await RunDoctorAsync(_fixture));
 
         Assert.Contains("Legacy directory found", output);
         Assert.Contains("Still in use", output);
+        Assert.Contains("already exists", output);
+        Assert.Contains("Reinstall or remove those installs", output);
         Assert.DoesNotContain("can be removed", output);
-        if (!OperatingSystem.IsWindows())
+        Assert.DoesNotContain("to complete the move", output);
+        Assert.DoesNotContain(ElevatedCommandLine.Render("list"), output);
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnEmptyDestination_OffersTheElevatedMove()
+    {
+        var pending = PendingRelocation(InstallScope.Global);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard-linux-global"));
+        Assert.False(HasAnything(pending.NewRoot), "precondition: the destination must be empty");
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains(
+            OperatingSystem.IsWindows()
+                ? "Run an elevated godman command to complete the move"
+                : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move",
+            output);
+        Assert.DoesNotContain("can be removed", output);
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedUserRoot_DoesNotSendTheUserToSudo()
+    {
+        // User roots move on every ordinary run; under a HOME-resetting sudo an elevated
+        // run would migrate root's home instead.
+        var pending = PendingRelocation(InstallScope.User);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard-linux-user"));
+        Assert.False(HasAnything(pending.NewRoot), "precondition: the destination must be empty");
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains("next ordinary (non-sudo) run", output);
+        Assert.DoesNotContain("sudo ", output);
+        Assert.DoesNotContain("elevated", output);
+    }
+
+    private static string Flatten(string output) => output.Replace("\r", "").Replace("\n", "");
+
+    private static bool HasAnything(string directory) =>
+        Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any();
+
+    /// <summary>A legacy root doctor reports whose relocation lands in <paramref name="scope"/>'s install root.</summary>
+    private (string OldRoot, string NewRoot) PendingRelocation(InstallScope scope)
+    {
+        var target = _fixture.Paths.GetInstallRoot(scope);
+        foreach (var (legacyPath, _) in _fixture.Paths.GetLegacyPaths())
         {
-            // The remedy names a command sudo can actually find (see ElevatedCommandLine).
-            Assert.Contains(ElevatedCommandLine.Render("list"), output.Replace("\r", "").Replace("\n", ""));
+            foreach (var relocation in _fixture.Paths.GetInstallRootRelocations())
+            {
+                if (relocation.NewRoot == target
+                    && (relocation.OldRoot == legacyPath || relocation.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+                {
+                    return (legacyPath, relocation.NewRoot);
+                }
+            }
         }
+
+        throw new InvalidOperationException($"no {scope} legacy path is covered by the relocation map");
     }
 
     /// <summary>

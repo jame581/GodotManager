@@ -132,6 +132,45 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void InspectShim_ReportsAbsentStaleHealthyAndForeignShims()
+    {
+        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
+        var shimPath = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), shimName);
+        var liveTarget = Path.Combine(_fixture.TempRoot, "live", "Godot");
+        var goneTarget = Path.Combine(_fixture.TempRoot, "gone", "Godot");
+        Directory.CreateDirectory(Path.GetDirectoryName(liveTarget)!);
+        File.WriteAllText(liveTarget, "fake");
+        string Shim(string target) => OperatingSystem.IsWindows()
+            ? $"@echo off\r\n\"{target}\" %*\r\n"
+            : $"#!/usr/bin/env bash\nexec \"{target}\" \"$@\"\n";
+
+        if (File.Exists(shimPath)) File.Delete(shimPath);
+        Assert.Equal((shimPath, false, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(shimPath)!);
+        File.WriteAllText(shimPath, Shim(goneTarget));
+        Assert.Equal((shimPath, true, goneTarget),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        File.WriteAllText(shimPath, Shim(liveTarget));
+        Assert.Equal((shimPath, true, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        File.WriteAllText(shimPath, "#!/bin/sh\necho hand-written\n");
+        Assert.Equal((shimPath, true, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+    }
+
+    [Fact]
+    public void InspectShim_LooksInTheRequestedScope()
+    {
+        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
+        var inspected = GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.Global);
+        Assert.Equal(Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.Global), shimName), inspected.ShimPath);
+    }
+
+    [Fact]
     public void ParseShimTarget_ParsesBothShimFormats_AndIgnoresForeignFiles()
     {
         Assert.Equal("/opt/g/Godot", GodotManager.Services.EnvironmentService.ParseShimTarget(

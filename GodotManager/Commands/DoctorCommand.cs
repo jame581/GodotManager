@@ -89,39 +89,28 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             }
         }
 
-        var shimPath = OperatingSystem.IsWindows()
-            ? Path.Combine(_paths.GetShimDirectory(scope), "godot.cmd")
-            : Path.Combine(_paths.GetShimDirectory(scope), "godot");
-
-        if (File.Exists(shimPath))
+        // Reads the target out of the shim itself (see InspectShim): the registry cannot
+        // tell a shim that still names a moved root from a healthy one.
+        var shim = EnvironmentService.InspectShim(_paths, scope, _diagnostics);
+        if (shim.Exists)
         {
-            AnsiConsole.MarkupLineInterpolated($"[green]Shim present[/] at {shimPath}");
+            AnsiConsole.MarkupLineInterpolated($"[green]Shim present[/] at {shim.ShimPath}");
 
-            // A shim that exists says nothing about whether it still resolves: it
-            // hard-codes an absolute path to the binary. So read that path out of the shim
-            // itself rather than inferring it from the registry. The registry cannot answer
-            // it: after a completed root migration it rebases the active entry onto the new
-            // root, which exists, while a shim the migration failed to repair still names
-            // the old one -- the active-directory check below would call that healthy.
-            string? target = null;
-            try
+            if (shim.MissingTarget is not null)
             {
-                target = EnvironmentService.ParseShimTarget(File.ReadAllText(shimPath));
-            }
-            catch (Exception ex)
-            {
-                _diagnostics?.Warn($"Could not read the shim at {shimPath}: {ex.Message}");
-            }
-
-            if (target is not null && !File.Exists(target))
-            {
-                AnsiConsole.MarkupLineInterpolated($"[yellow]Shim points at a missing binary[/]: {target}");
-                AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim.[/]");
+                AnsiConsole.MarkupLineInterpolated($"[yellow]Shim points at a missing binary[/]: {shim.MissingTarget}");
+                // A global shim needs root to rewrite -- name a command sudo can find.
+                var rewrite = active is not null && active.Scope == InstallScope.Global
+                    ? $"Run `{ElevatedCommandLine.Render($"activate {active.Id}")}` to rewrite the shim."
+                    : active is not null
+                        ? $"Run `godman activate {active.Id}` to rewrite the shim."
+                        : "Run the activate command again to rewrite the shim.";
+                AnsiConsole.MarkupLineInterpolated($"[grey]  {rewrite}[/]");
             }
         }
         else
         {
-            AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shimPath}");
+            AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shim.ShimPath}");
         }
 
         // The registry's own view: an active entry whose directory is gone (deleted by
@@ -208,16 +197,34 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             // registered still lives here, it is live.
             var referenced = registry.Installs.Any(x => !string.IsNullOrEmpty(x.Path) && PathRebase.IsUnder(x.Path, legacyPath));
 
-            if (referenced || (pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot))))
+            // A move is still possible only while the destination is empty:
+            // TryMigrateDirectory no-ops once it holds anything, so for a root whose
+            // destination already has content "run godman to complete the move" would be
+            // advice that can never work, repeated forever.
+            var movePending = pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot));
+            var isGlobalRoot = pending.Any(r => string.Equals(
+                r.NewRoot, _paths.GetInstallRoot(InstallScope.Global), StringComparison.Ordinal));
+
+            if (movePending)
             {
-                var destination = pending.Count > 0 ? $" to {pending[0].NewRoot}" : string.Empty;
-                // The machine-wide root needs privileges to move; any command that builds
-                // AppPaths runs the migration, `list` being the harmless one.
-                var remedy = OperatingSystem.IsWindows()
-                    ? "Run an elevated godman command to complete the move"
-                    : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move";
+                // Only the machine-wide root needs privileges. User roots move on every
+                // ordinary run, and under a HOME-resetting sudo an elevated run would
+                // migrate root's home, not this user's.
+                var remedy = !isGlobalRoot
+                    ? "godman moves them on its next ordinary (non-sudo) run"
+                    : OperatingSystem.IsWindows()
+                        ? "Run an elevated godman command to complete the move"
+                        : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move";
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[grey]  Still in use -- installs here have not moved{destination} yet. {remedy}; do not delete this directory.[/]");
+                    $"[grey]  Still in use -- installs here have not moved to {pending[0].NewRoot} yet. {remedy}; do not delete this directory.[/]");
+            }
+            else if (referenced)
+            {
+                var why = pending.Count > 0
+                    ? $"godman cannot move them automatically because {pending[0].NewRoot} already exists"
+                    : "godman does not move this directory automatically";
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[grey]  Still in use -- registered installs still live here and {why}. Reinstall or remove those installs first; do not delete this directory until then.[/]");
             }
             else
             {

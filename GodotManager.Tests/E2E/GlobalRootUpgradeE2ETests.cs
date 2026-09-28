@@ -22,7 +22,7 @@ public class GlobalRootUpgradeE2ETests : IDisposable
     private readonly GodmanTestFixture _fixture = new();
     public void Dispose() => _fixture.Dispose();
 
-    private sealed record Layout(string OldRoot, string NewRoot, string Shim, string Binary, string InstallDir);
+    private sealed record Layout(string OldRoot, string NewRoot, string Shim, string Binary, string InstallDir, Guid ActiveId);
 
     /// <summary>
     /// A 1.3.0 machine: global install and its registry inside <c>&lt;shim&gt;/godman</c>,
@@ -53,7 +53,7 @@ public class GlobalRootUpgradeE2ETests : IDisposable
         File.WriteAllText(shim, $"#!/usr/bin/env bash\nsource \"{_fixture.Paths.EnvScriptPath}\" 2>/dev/null\nexec \"{binary}\" \"$@\"\n");
         File.WriteAllText(_fixture.Paths.EnvScriptPath, $"export GODOT_HOME=\"{installDir}\"\n");
 
-        return new Layout(oldRoot, newRoot, shim, binary, installDir);
+        return new Layout(oldRoot, newRoot, shim, binary, installDir, entry.Id);
     }
 
     private string[] RepairTargets() =>
@@ -126,5 +126,7 @@ public class GlobalRootUpgradeE2ETests : IDisposable
         Assert.Contains("Shim present", output);
         Assert.Contains($"Shim points at a missing binary: {layout.Binary}", output);
         Assert.DoesNotContain("Active install directory missing", output);
+        // A global shim needs root to rewrite: the remedy names a command sudo can find.
+        Assert.Contains($"Run `{GodotManager.Infrastructure.ElevatedCommandLine.Render($"activate {layout.ActiveId}")}` to rewrite the shim", output);
     }
 }

@@ -79,6 +79,39 @@ internal sealed class EnvironmentService
     /// foreign file). Lives beside the writers so the two formats cannot drift apart
     /// unnoticed; <c>doctor</c> uses it to check what the shim really points at.
     /// </summary>
+    /// <summary>
+    /// The shim check both doctors run (CLI <c>doctor</c> and the TUI dialog): where the
+    /// scope's shim is, whether it exists, and -- when it does -- the target it names if
+    /// that file is missing. A shim that exists says nothing about whether it still
+    /// resolves: it hard-codes an absolute path, and the registry cannot answer for it --
+    /// after a completed root migration it rebases the active entry onto the new root,
+    /// which exists, while an unrepaired shim still names the old one. An unreadable shim
+    /// or a foreign file yields no <c>MissingTarget</c> (warned under --verbose).
+    /// </summary>
+    internal static (string ShimPath, bool Exists, string? MissingTarget) InspectShim(
+        AppPaths paths, InstallScope scope, DiagnosticContext? diagnostics = null)
+    {
+        var shimPath = Path.Combine(
+            paths.GetShimDirectory(scope),
+            OperatingSystem.IsWindows() ? "godot.cmd" : "godot");
+
+        if (!File.Exists(shimPath))
+        {
+            return (shimPath, false, null);
+        }
+
+        try
+        {
+            var target = ParseShimTarget(File.ReadAllText(shimPath));
+            return (shimPath, true, target is not null && !File.Exists(target) ? target : null);
+        }
+        catch (Exception ex)
+        {
+            diagnostics?.Warn($"Could not read the shim at {shimPath}: {ex.Message}");
+            return (shimPath, true, null);
+        }
+    }
+
     internal static string? ParseShimTarget(string content)
     {
         foreach (var raw in content.Split('\n'))

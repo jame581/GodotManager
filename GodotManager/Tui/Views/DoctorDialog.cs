@@ -66,13 +66,14 @@ internal sealed class DoctorDialog : Dialog
         report.AppendLine("=== Godot Manager Doctor ===\n");
 
         // Check registry
+        InstallEntry? active = null;
         try
         {
             var registry = await _registry.LoadAsync();
             Check("Registry loads", true, $"{registry.Installs.Count} install(s) registered");
 
             // Check active install
-            var active = registry.GetActive();
+            active = registry.GetActive();
             if (active is not null)
             {
                 Check("Active install set", true, $"{active.Version} ({active.Edition})");
@@ -99,11 +100,14 @@ internal sealed class DoctorDialog : Dialog
         var installRoot = _paths.GetInstallRoot(InstallScope.User);
         Check("Installs directory exists", Directory.Exists(installRoot), installRoot);
 
-        // Check shim
-        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
-        var shimDir = _paths.GetShimDirectory(InstallScope.User);
-        var shimPath = System.IO.Path.Combine(shimDir, shimName);
-        Check("Shim exists", File.Exists(shimPath), shimPath);
+        // Check shim -- the same helper as the CLI doctor, in the active install's scope.
+        var shim = EnvironmentService.InspectShim(_paths, active?.Scope ?? InstallScope.User);
+        Check("Shim exists", shim.Exists, shim.ShimPath);
+        if (shim.Exists)
+        {
+            Check("Shim target exists", shim.MissingTarget is null,
+                shim.MissingTarget is null ? string.Empty : $"Missing: {shim.MissingTarget} -- activate again to rewrite the shim");
+        }
 
         // Summary
         report.AppendLine($"\n=== Summary: {passed} passed, {failed} failed ===");
