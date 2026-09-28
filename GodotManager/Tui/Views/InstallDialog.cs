@@ -14,11 +14,13 @@ internal sealed class InstallDialog : Dialog
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly AppPaths _paths;
+    private readonly RegistryService _registry;
     private readonly IApplication _app;
 
     private readonly TextField _versionField;
     private readonly OptionSelector _editionSelector;
     private readonly OptionSelector _scopeSelector;
+    private readonly CheckBox _launcherCheckBox;
     private readonly ProgressBar _progressBar;
     private readonly Label _statusLabel;
     private readonly Button _installButton;
@@ -37,11 +39,13 @@ internal sealed class InstallDialog : Dialog
         InstallerService installer,
         GodotDownloadUrlBuilder urlBuilder,
         AppPaths paths,
+        RegistryService registry,
         IApplication app)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
         _paths = paths;
+        _registry = registry;
         _app = app;
 
         Title = "Install Godot";
@@ -75,9 +79,16 @@ internal sealed class InstallDialog : Dialog
             Values = [0, 1]
         };
 
+        _launcherCheckBox = new CheckBox
+        {
+            X = 14, Y = 7,
+            Text = "Add to application launcher",
+            Value = CheckState.Checked
+        };
+
         _progressBar = new ProgressBar
         {
-            X = 1, Y = 8,
+            X = 1, Y = 9,
             Width = Dim.Fill() - 2,
             Height = 1,
             Fraction = 0f,
@@ -86,7 +97,7 @@ internal sealed class InstallDialog : Dialog
 
         _statusLabel = new Label
         {
-            X = 1, Y = 9,
+            X = 1, Y = 10,
             Width = Dim.Fill() - 2,
             Text = "",
             Visible = false
@@ -125,7 +136,7 @@ internal sealed class InstallDialog : Dialog
         };
 
         Add(versionLabel, _versionField, editionLabel, _editionSelector,
-            scopeLabel, _scopeSelector, _progressBar, _statusLabel);
+            scopeLabel, _scopeSelector, _launcherCheckBox, _progressBar, _statusLabel);
 
         AddButton(_installButton);
         AddButton(_cancelButton);
@@ -170,7 +181,8 @@ internal sealed class InstallDialog : Dialog
             version, edition, platform, scope,
             uri, null, null,
             Activate: true, Force: false,
-            Checksums: new ChecksumSource(version));
+            Checksums: new ChecksumSource(version),
+            CreateLauncherEntry: _launcherCheckBox.Value == CheckState.Checked);
 
         var verificationStatus = ChecksumStatus.NotApplicable;
         string? verificationReason = null;
@@ -178,6 +190,27 @@ internal sealed class InstallDialog : Dialog
 
         try
         {
+            // Same predicate InstallCommand uses (CLAUDE.md: both front-ends go through
+            // one elevation decision). The dialog always activates, so a user-scope
+            // install over an active global one installs unactivated here and hands the
+            // activation to the elevated child, exactly as `activate` does. Inside the
+            // try so a registry read failure lands in the dialog's own error handling.
+            var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
+
+            // Same Linux pre-check as InstallCommand, before anything is downloaded. Only the
+            // target scope counts: the dialog always activates, but switching away from an
+            // active global install is not stopped -- the shadow warning below reports it.
+            if (LinuxElevation.Check(_paths, scope, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
+            var activateSeparately = ElevatedActivator.IsRequired(scope, currentActive?.Scope)
+                && InstallerService.NeedsSeparateElevatedActivation(scope, currentActive?.Scope);
+            if (activateSeparately)
+            {
+                request = request with { Activate = false };
+            }
+
             InstallEntry result = await _installer.InstallWithElevationAsync(
                 request,
                 progress =>
@@ -195,6 +228,12 @@ internal sealed class InstallDialog : Dialog
                     verificationReason = reason;
                 });
 
+            // A failure is reported in the completion box below, not in a box of its own:
+            // two boxes read as "failed" then "Success".
+            ElevatedOperationResult? separateActivation = activateSeparately
+                ? await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false)
+                : null;
+
             // NotApplicable covers both "no published sums to check against" and
             // "this release publishes none upstream" -- neither is an error, so
             // neither should be surfaced as though the download were suspect. Only
@@ -205,16 +244,32 @@ internal sealed class InstallDialog : Dialog
             // --verbose-gated warning for the CLI.
             var unverified = verificationStatus == ChecksumStatus.Unverified;
 
+            // Same check `activate`, `install --activate` and the TUI's own activate run
+            // (ShimShadowing.GetWarning): a surviving machine-wide shim outranks this
+            // in-process activation. Not after the elevated split -- that child ran
+            // elevated and could remove the global shim itself, exactly as the CLI skips it.
+            var shadowWarning = request.Activate
+                ? ShimShadowing.GetWarning(_paths, scope)
+                : null;
+
             _app.Invoke(() =>
             {
                 Success = true;
                 _installing = false;
                 DisposeCancellationSource();
                 _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
-                MessageBox.Query(
-                    _app, "Success",
-                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason),
-                    "OK");
+                var (title, message, isError) = InstallProgressPresentation.BuildCompletionDialog(
+                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason)
+                        + (shadowWarning is null ? "" : $"\n\n{shadowWarning}"),
+                    separateActivation);
+                if (isError)
+                {
+                    MessageBox.ErrorQuery(_app, title, message, "OK");
+                }
+                else
+                {
+                    MessageBox.Query(_app, title, message, "OK");
+                }
                 RequestStop();
             });
         }

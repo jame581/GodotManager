@@ -1,4 +1,5 @@
 using GodotManager.Services;
+using System;
 using System.IO;
 using Xunit;
 
@@ -127,5 +128,31 @@ public class GodotExecutableLocatorTests
     {
         Assert.Null(GodotExecutableLocator.Find(
             Path.Combine(Path.GetTempPath(), "godman-locator-does-not-exist"), windows: true));
+    }
+
+    [Fact]
+    public void ResolveForInstall_PrefersTheFolderNamedBinary()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "godman-locator-" + Guid.NewGuid().ToString("N"), "Godot_v4.7.2-stable_linux.x86_64");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var expected = Path.Combine(root, "Godot_v4.7.2-stable_linux.x86_64");
+            File.WriteAllText(expected, "x");
+
+            Assert.Equal(expected, GodotExecutableLocator.ResolveForInstall(root, windows: false));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(root)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveForInstall_WithNothingOnDisk_FallsBackToTheFolderNameGuess()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "does-not-exist-" + Guid.NewGuid().ToString("N"), "Godot_v4.7.2-stable_win64.exe");
+
+        Assert.Equal(Path.Combine(root, "Godot_v4.7.2-stable_win64.exe"), GodotExecutableLocator.ResolveForInstall(root, windows: true));
     }
 }

@@ -61,6 +61,8 @@ internal sealed class RegistryService
             ActiveId = userRegistry.ActiveId
         };
 
+        RebaseRelocatedInstallPaths(merged);
+
         if (merged.ActiveId.HasValue)
         {
             merged.MarkActive(merged.ActiveId.Value);
@@ -76,6 +78,13 @@ internal sealed class RegistryService
         // whether the global file needs rewriting at all. Reading it only once
         // keeps both questions answered from the same snapshot.
         var currentGlobal = await LoadGlobalBestEffortAsync(cancellationToken);
+
+        // Rebase the on-disk copy exactly as LoadAsync rebased the caller's copy. The
+        // content comparison further down must see a path the migration already accounts
+        // for as unchanged -- otherwise every unprivileged save on an un-migrated machine
+        // would try, and fail, to rewrite the machine-wide file.
+        RebaseRelocatedInstallPaths(currentGlobal, quiet: true);
+
         var currentGlobalIds = currentGlobal.Installs.Select(x => x.Id).ToHashSet();
 
         // Scope alone doesn't say which file a Global-scope entry actually lives in
@@ -128,15 +137,13 @@ internal sealed class RegistryService
             .ToList();
 
         // Only touch the global file when the set of *legitimately global* entries
-        // actually changed (strays excluded above). Every write -- including a plain
-        // unprivileged `godman install --scope User` -- passes through here with the
-        // machine's existing global entries still present in `registry.Installs`
-        // (LoadAsync merges them in), so writing the global file unconditionally
-        // would demand elevation for operations that never intended to touch global
-        // scope at all.
-        var desiredGlobalIds = desiredGlobal.Select(x => x.Id).ToHashSet();
-
-        if (!currentGlobalIds.SetEquals(desiredGlobalIds))
+        // actually changed -- by Id set or by content (strays excluded above). Every
+        // write -- including a plain unprivileged `godman install --scope User` --
+        // passes through here with the machine's existing global entries still
+        // present in `registry.Installs` (LoadAsync merges them in), so writing the
+        // global file unconditionally would demand elevation for operations that
+        // never intended to touch global scope at all.
+        if (!GlobalEntriesEquivalent(currentGlobal.Installs, desiredGlobal))
         {
             try
             {
@@ -155,6 +162,38 @@ internal sealed class RegistryService
             _paths.RegistryFile,
             new InstallRegistry { Installs = userEntries, ActiveId = registry.ActiveId },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Same Ids and the same serialized content per Id. Compares content, not just Ids,
+    /// so an in-place field change on a global entry is persisted; both sides are
+    /// rebased first (see <see cref="SaveAsync"/>) so a migration-only path difference
+    /// is not a change.
+    /// </summary>
+    private bool GlobalEntriesEquivalent(List<InstallEntry> current, List<InstallEntry> desired)
+    {
+        // Keyed by Id with first-wins, on both sides: a global file carrying a duplicate Id
+        // (which MergeInstalls also passes through) must compare equal to itself. A
+        // ToDictionary here would throw on it and fail every save. Both counts below are
+        // of these de-duplicated maps; comparing one of them against a raw list count
+        // would see a mismatch whenever the file carries a duplicate and demand a global
+        // write -- and elevation -- from an unrelated user-scope save.
+        var currentById = Serialized(current);
+        var desiredById = Serialized(desired);
+
+        return currentById.Count == desiredById.Count
+            && desiredById.All(pair => currentById.TryGetValue(pair.Key, out var serialized) && serialized == pair.Value);
+
+        Dictionary<Guid, string> Serialized(List<InstallEntry> entries)
+        {
+            var byId = new Dictionary<Guid, string>();
+            foreach (var entry in entries)
+            {
+                byId.TryAdd(entry.Id, JsonSerializer.Serialize(entry, _jsonOptions));
+            }
+
+            return byId;
+        }
     }
 
     /// <summary>
@@ -179,7 +218,12 @@ internal sealed class RegistryService
                 return;
             }
 
-            var globalRegistry = await LoadFileAsync(_paths.GlobalRegistryFile, cancellationToken);
+            // Seeded from wherever reads resolve the global registry, not the current path
+            // alone. On a machine whose global root has not moved yet the current file is
+            // absent; writing one that held only the strays would win over the legacy file
+            // on every later read and hide every legacy entry. The write below still targets
+            // the current path, so this carries the legacy entries across with the strays.
+            var globalRegistry = await LoadFileAsync(ResolveGlobalRegistryFileForRead(), cancellationToken);
             var existingGlobalIds = globalRegistry.Installs.Select(x => x.Id).ToHashSet();
             var toAdd = orphans.Where(x => !existingGlobalIds.Contains(x.Id)).ToList();
 
@@ -204,14 +248,115 @@ internal sealed class RegistryService
 
     private async Task<InstallRegistry> LoadGlobalBestEffortAsync(CancellationToken cancellationToken)
     {
+        var file = ResolveGlobalRegistryFileForRead();
+
         try
         {
-            return await LoadFileAsync(_paths.GlobalRegistryFile, cancellationToken);
+            return await LoadFileAsync(file, cancellationToken);
         }
         catch (Exception ex)
         {
-            _diagnostics?.Warn($"could not read the machine-wide registry at {_paths.GlobalRegistryFile}: {ex.Message}");
+            _diagnostics?.Warn($"could not read the machine-wide registry at {file}: {ex.Message}");
             return new InstallRegistry();
+        }
+    }
+
+    /// <summary>
+    /// The machine-wide registry moved with the global install root, and moving it
+    /// needs privileges an ordinary caller does not have -- so on a machine where the
+    /// migration has not run yet, the file is still at its old path. Reading falls
+    /// back to it; writing never does (see <see cref="SaveAsync"/>, which always
+    /// targets <see cref="AppPaths.GlobalRegistryFile"/>), so the first elevated
+    /// operation settles the machine on the current layout.
+    ///
+    /// The current path wins whenever it exists, even if an old file is still lying
+    /// around: after a migration the old one is a leftover, not a second source.
+    /// </summary>
+    private string ResolveGlobalRegistryFileForRead()
+    {
+        if (File.Exists(_paths.GlobalRegistryFile))
+        {
+            return _paths.GlobalRegistryFile;
+        }
+
+        foreach (var legacy in _paths.GetLegacyGlobalRegistryFiles())
+        {
+            if (File.Exists(legacy))
+            {
+                _diagnostics?.Warn($"reading the machine-wide registry from its pre-migration path {legacy}; run an elevated godman command to complete the move");
+                return legacy;
+            }
+        }
+
+        return _paths.GlobalRegistryFile;
+    }
+
+    /// <summary>
+    /// Repairs entry paths left behind by a directory migration. <see cref="AppPaths"/>
+    /// moves an old install root to its current location, but the absolute path recorded
+    /// in the registry when the entry was written still points at the old root, so every
+    /// later lookup -- activation, removal, the "does this install still exist" check --
+    /// would miss.
+    ///
+    /// Applied to the merged view in memory only, and deliberately so: persisting here
+    /// would mean a plain `list` or `doctor` writing to the registry, and for a Global
+    /// entry writing the *global* file -- which an unprivileged caller cannot do, turning
+    /// a read-only command into a permission failure.
+    ///
+    /// Nor does it need to persist. The rebase is derived and idempotent, so it is
+    /// recomputed on every load and the in-memory view is always the authoritative one.
+    /// (It does reach disk for user-scope entries on the next <see cref="SaveAsync"/>,
+    /// which rewrites the user file unconditionally. Global entries usually will not:
+    /// the global write compares against the on-disk entries rebased the same way, so
+    /// a path-only correction is not a change.)
+    /// </summary>
+    /// <param name="quiet">
+    /// Suppresses the per-entry verbose warning. <see cref="SaveAsync"/> passes
+    /// <c>true</c> because it calls this on its own fresh read of the global file -- the
+    /// file <see cref="LoadAsync"/> normally already rebased and warned about earlier in
+    /// the same command; repeating the warning here would just duplicate it under
+    /// <c>--verbose</c>.
+    /// </param>
+    private void RebaseRelocatedInstallPaths(InstallRegistry registry, bool quiet = false)
+    {
+        var relocations = _paths.GetInstallRootRelocations();
+        if (relocations.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in registry.Installs)
+        {
+            if (string.IsNullOrEmpty(entry.Path) || Directory.Exists(entry.Path))
+            {
+                continue;
+            }
+
+            foreach (var (oldRoot, newRoot) in relocations)
+            {
+                if (!PathRebase.TryRebase(entry.Path, oldRoot, newRoot, out var rebased))
+                {
+                    continue;
+                }
+
+                // Only follow a relocation that actually landed. A migration blocked by
+                // permissions (the common case: a global root that needs root to move)
+                // leaves the files at the old path, and a half-finished one leaves them
+                // at neither -- in both cases the recorded path is still the best
+                // information available and must not be overwritten with a guess.
+                if (!Directory.Exists(rebased))
+                {
+                    continue;
+                }
+
+                if (!quiet)
+                {
+                    _diagnostics?.Warn($"Install {entry.Id} moved with its install root: {entry.Path} -> {rebased}");
+                }
+
+                entry.Path = rebased;
+                break;
+            }
         }
     }
 

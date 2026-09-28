@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -11,11 +12,13 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly AppPaths _paths;
 
-    public RemoveCommand(RegistryService registry, EnvironmentService environment)
+    public RemoveCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
     {
         _registry = registry;
         _environment = environment;
+        _paths = paths;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -33,6 +36,13 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
             if (settings.DryRun)
             {
                 return PreviewRemove(install, registry, settings);
+            }
+
+            // Linux cannot hand off to an elevated child, so it stops here -- before the
+            // files are deleted -- instead of deleting them and then failing to unregister.
+            if (LinuxElevation.Check(_paths, install.Scope, context.Arguments) is { } denied)
+            {
+                throw denied;
             }
 
             // Removing a global install writes the machine-wide registry and deletes
@@ -86,12 +96,16 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
             }
 
             await _registry.SaveAsync(registry);
+
+            // After the save, not before: if the registry write fails (a global entry without
+            // privileges), the entry stays registered and its launcher entry must stay with it.
+            _environment.Launcher.Delete(install);
             AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {install.Version} ({install.Edition}, {install.Platform})");
             return 0;
         }
         catch (GodmanException ex)
         {
-            return GodmanExceptionRenderer.Render("Remove failed:", ex);
+            return GodmanExceptionRenderer.Render("Remove failed:", ex.WithArguments(context.Arguments));
         }
         catch (Exception ex)
         {
@@ -119,8 +133,9 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
         AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
         AnsiConsole.MarkupLine("[grey]1.[/] Unregister from installs.json");
+        AnsiConsole.MarkupLine("[grey]2.[/] Remove application launcher entry");
 
-        var step = 2;
+        var step = 3;
         if (registry.ActiveId == install.Id)
         {
             AnsiConsole.MarkupLine($"[grey]{step}.[/] Deactivate (clear GODOT_HOME, remove shims)");

@@ -86,6 +86,28 @@ internal static class GodotExecutableLocator
             .EndsWith("_console", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The binary a shim or launcher entry should point at. The folder-name guess is
+    /// right for standard builds; <see cref="Find"/> covers the nested .NET layout. When
+    /// neither finds anything the guess is returned anyway, so a caller always gets a
+    /// path -- the same behaviour the shims have always had.
+    /// </summary>
+    public static string ResolveForInstall(string installPath, bool windows, DiagnosticContext? diagnostics = null)
+    {
+        var folderName = Path.GetFileName(installPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var expected = windows && !folderName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? folderName + ".exe"
+            : folderName;
+        var guess = Path.Combine(installPath, expected);
+
+        if (File.Exists(guess))
+        {
+            return guess;
+        }
+
+        return Find(installPath, windows, diagnostics) ?? guess;
+    }
+
+    /// <summary>
     /// Enumeration is best-effort, matching the surrounding convention: a permission
     /// or race failure while probing must not turn activation into an error. It is
     /// still reported under <c>--verbose</c> — swallowing silently would leave a user

@@ -82,9 +82,9 @@
   - Windows: `%APPDATA%\godman\`.
 - **Install roots**:
   - User (Linux): `~/.local/share/godman/installs/`.
-  - Global (Linux): `/usr/local/bin/godman/` (override: `GODMAN_GLOBAL_ROOT`).
+  - Global (Linux): `/usr/local/lib/godman/` (override: `GODMAN_GLOBAL_ROOT`, a prefix).
   - User (Windows): `%APPDATA%\godman\installs\`.
-  - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`).
+  - Global (Windows): `C:\Program Files\godman\installs\` (override: `GODMAN_GLOBAL_ROOT`, a prefix).
 - **Shim directories**:
   - User (Linux): `~/.local/bin/`.
   - Global (Linux): `/usr/local/bin/`.
@@ -277,3 +277,106 @@ elevation and error handling.** `install` was unaffected because it delegates to
   `PATH` regardless; `GodmanTestFixture` now snapshots and restores it.
 
 Spec: `GodotManager/docs/superpowers/specs/2026-07-28-v1.3.0-install-robustness-design.md`
+
+## Phase 8 — Global install root out of the shim directory (1.4.0) ✅ COMPLETE
+
+Global installs lived at `/usr/local/bin/godman`, which claimed the exact filename
+the godman binary needs in `/usr/local/bin` for `sudo godman` to resolve — `sudo`
+replaces PATH with `secure_path`, which never contains the `~/.local/bin` that
+`install.sh` writes to. The documented `sudo godman ...` workflow could not work on a
+default sudo configuration, and the obvious fix was blocked by godman's own directory.
+
+- **The root moved to `/usr/local/lib/godman`**, and `GODMAN_GLOBAL_ROOT` became a
+  *prefix* (shim `<prefix>/bin`, installs `<prefix>/lib/godman`) instead of naming the
+  shim directory. That matches what it already meant on Windows, and keeps one
+  variable redirecting both directories — the property `GodmanTestFixture` relies on.
+  **Breaking**: a value that used to mean `/usr/local/bin` is now `/usr/local`.
+- **A root move orphans absolute registry paths.** `InstallEntry.Path` is absolute, so
+  the move invalidates every entry pointing into the old root.
+  `AppPaths.GetInstallRootRelocations` publishes the old→new map and
+  `RegistryService.RebaseRelocatedInstallPaths` applies it on load — in memory only,
+  since a read command must never write, and for a global entry that would mean
+  writing a file an unprivileged caller cannot touch. Derived and idempotent, so it is
+  recomputed each load rather than persisted.
+- **The machine-wide registry moved with the root**, and moving it needs privileges.
+  Without a read-side fallback every unprivileged `list`, `doctor` and TUI session on a
+  not-yet-migrated machine shows zero global installs — indistinguishable from data
+  loss. Reads fall back to the pre-migration path; writes always target the current
+  one, so the first elevated operation settles the machine on the new layout.
+- **The migration ordering is the whole decision.** `TryMigrateDirectory` no-ops once
+  the destination exists, so on a machine carrying both old roots whichever runs first
+  wins. That lives in the pure, unit-tested `AppPaths.PlanLinuxMigrations` rather than
+  inline in the constructor, for the same reason `TouchesMachineState` does.
+- **A completed move repairs the files that name the old root.** The shim hard-codes
+  `exec "<old root>/<version>/…"` and `env.sh` exports the old root as `GODOT_HOME`.
+  After a *successful* directory move, `AppPaths.MigrateAndRepair` rewrites those
+  (user and global shim, `env.sh`), matching quoted paths with the same segment-aware
+  rule the registry rebase uses (`PathRebase`). A blocked move rewrites nothing: the
+  files are still where the shim points.
+- **`doctor` gained three checks**: the shim's own target (parsed out of `godot` /
+  `godot.cmd`) is missing — the only check that sees a completed migration whose shim
+  was not repaired, since the registry rebases the active entry onto the new root,
+  which exists; an active install whose directory is missing (a vanished install — it
+  catches neither a blocked migration, which leaves the shim working, nor a completed
+  one); and a legacy root that is still in use — the stock "this can be removed" advice
+  would have destroyed installs that had not moved yet. Existence cannot answer "did
+  the migration run", since `AppPaths` best-effort creates both roots on startup; the
+  signal is whether anything landed in the destination and whether any registry entry
+  still points into the old root.
+- **`install.sh` refuses to install over a directory**, which `cp` would otherwise
+  nest the binary inside — reachable now that the docs point at
+  `GODMAN_INSTALL_DIR=/usr/local/bin`.
+
+Windows paths are unchanged; it picks up the entry rebasing and registry fallback for
+its own older `GodotManager` → `godman` migration for free.
+
+User-facing release notes: `GodotManager/docs/release-notes/1.4.0.md` — paste into the
+GitHub release after `release.yml` creates it.
+
+### Launcher entries per install + 1.3.0 follow-ups ✅ COMPLETE
+
+Every install now gets its own application-launcher entry, and the open 1.3.0 review
+follow-ups were closed in the same release.
+
+- **`AppPaths`** resolves per-scope launcher directories and, on Linux, an icon path
+  under `icons/hicolor/scalable/apps/godman-godot.svg`; both ignore
+  `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` and are redirected only by the internal
+  `GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` now also saves/restores.
+- **`LauncherService`** owns the `.desktop` file (Linux) and Start Menu `.lnk`
+  (Windows) for an install, plus the optional Windows desktop shortcut; every write
+  is best-effort like shim cleanup, never an exception.
+- **Global registry write guard now compares content, not just the Id set** (1.3.0
+  follow-up 2.1): `SaveAsync` re-reads the global file itself, rebases that copy the
+  same way `LoadAsync` rebases the caller's, and writes the global file only when the
+  desired global entries differ from the rebased on-disk copy by Id set or by
+  serialized content — a rebase alone never triggers a write, but a genuine in-place
+  field change does.
+- **`install` / `activate` / `remove` / `clean` wired to `LauncherService`**: install
+  creates an entry (`--no-shortcut` opts out, recorded on `InstallEntry.LauncherEntry`
+  and honoured by `activate` and `doctor`); activate backfills the entry for
+  pre-1.4.0 installs; remove and clean delete it, remove only after the registry save
+  succeeds so a failed global write never orphans the entry; deactivate leaves it in
+  place. `install --activate` also cleans up the previously active install, and on
+  Windows a user-scope install over an active global one activates through the
+  elevated path (the same predicate `activate` already used).
+- **Elevated-install cancellation follow-ups** (1.3.0 follow-ups 2.2–2.4): the
+  post-kill wait is now bounded (10 s) and returns whether the process is confirmed
+  gone, so the caller only keeps the cache archive when it might not be; a cancel
+  landing after a success is reported as success instead of leaking the cache; the
+  `Kill()` comment now states what the catches actually cover instead of citing
+  .NET Framework behavior this net10.0-only project doesn't have.
+- **`doctor`** reports installs missing their launcher entry (not ones that opted
+  out via `--no-shortcut`); the TUI install dialog gained an "Add to application
+  launcher" checkbox, default on.
+- **`godman version`** (1.3.0 follow-up 2.5): prints godman, .NET runtime, and OS
+  versions; `--version` is unchanged.
+- **Dropped follow-ups**, both stale on inspection: "`remove` has no
+  `remove-elevated` mirror on Windows" — `remove-elevated` already existed; "TUI
+  coverage is manual-only" — not code-fixable, stays covered by the manual
+  verification checklist.
+- **Known limitation (Windows)**: two installs of the same version and edition in one
+  scope at different `--path`s share one Start Menu name; the second overwrites the
+  first's shortcut, since the `.lnk` filename carries no per-install id the way the
+  Linux `.desktop` filename does.
+
+Spec: `GodotManager/docs/superpowers/specs/2026-09-28-launcher-entries-and-1.3-followups-design.md`

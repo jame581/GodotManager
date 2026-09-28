@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -11,11 +12,15 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 {
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
+    private readonly RegistryService _registry;
+    private readonly AppPaths _paths;
 
-    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder)
+    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, RegistryService registry, AppPaths paths)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
+        _registry = registry;
+        _paths = paths;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -57,7 +62,34 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 settings.Activate,
                 settings.Force,
                 settings.DryRun,
-                checksums);
+                checksums,
+                CreateLauncherEntry: !settings.NoShortcut);
+
+            // Activation elevation is decided the same way `activate` decides it, before anything
+            // is written: a user-scope install over an active global one must clear machine-wide
+            // state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
+            // the first machine-wide write"). The split is Windows-only (IsRequired is false
+            // elsewhere). On Linux a global-scope install stops up front in LinuxElevation.Check
+            // when the global locations are not writable; the activation runs in-process, and
+            // switching away from an active global install is not stopped (only the target
+            // counts, see LinuxElevation.MustStop): when unprivileged, RemoveUnix cannot delete
+            // the global shim, so it is reported after the install -- WarnIfShadowedByGlobalShim.
+            if (!settings.DryRun && LinuxElevation.Check(_paths, request.Scope, context.Arguments) is { } denied)
+            {
+                throw denied;
+            }
+
+            var activateSeparately = false;
+            if (request.Activate && !settings.DryRun)
+            {
+                var currentActive = (await _registry.LoadAsync()).GetActive();
+                if (ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
+                    && InstallerService.NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope))
+                {
+                    activateSeparately = true;
+                    request = request with { Activate = false };
+                }
+            }
 
             if (settings.DryRun)
             {
@@ -102,6 +134,30 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
 
+            // A failed elevated activation still falls through to the checksum warning
+            // below: the install itself happened, and whether its archive was verified is
+            // no less true for the activation having failed.
+            var activationFailed = false;
+            if (activateSeparately)
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required to switch away from the active global install. A UAC prompt will appear.[/]");
+                var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
+                if (!elevated.Succeeded)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {elevated.Error}");
+                    if (elevated.Hint is { } hint)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
+                    }
+
+                    activationFailed = true;
+                }
+            }
+            else if (settings.Activate)
+            {
+                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
+            }
+
             // Only when verification was actually attempted and did not succeed.
             // NotApplicable covers both "no published sums to check against" (--url
             // or --archive, which never carry a ChecksumSource) and "this release
@@ -119,11 +175,11 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                     $"upstream: {verificationReason}");
             }
 
-            return 0;
+            return activationFailed ? -1 : 0;
         }
         catch (GodmanException ex)
         {
-            return GodmanExceptionRenderer.Render("Install failed:", ex);
+            return GodmanExceptionRenderer.Render("Install failed:", ex.WithArguments(context.Arguments));
         }
         catch (Exception ex)
         {
@@ -161,15 +217,21 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
-        AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
-        AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
-        AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
+        var step = 1;
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Download/copy archive");
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Extract to install directory");
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Register in installs.json");
+
+        if (request.CreateLauncherEntry)
+        {
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Add application launcher entry");
+        }
 
         if (request.Activate)
         {
-            AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");
-            AnsiConsole.MarkupLine("[grey]5.[/] Update GODOT_HOME environment variable");
-            AnsiConsole.MarkupLine("[grey]6.[/] Write shim script");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Set as active install");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Update GODOT_HOME environment variable");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Write shim script");
         }
 
         await Task.CompletedTask;
@@ -207,6 +269,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
         [CommandOption("--activate")]
         public bool Activate { get; set; }
+
+        [CommandOption("--no-shortcut")]
+        [Description("Do not add an application-launcher entry (Start Menu on Windows, app menu on Linux).")]
+        public bool NoShortcut { get; set; }
 
         [CommandOption("--force")]
         public bool Force { get; set; }

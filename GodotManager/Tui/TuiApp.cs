@@ -312,7 +312,7 @@ internal sealed class TuiApp
 
     private void OnBrowseVersionSelected(object? sender, GodotRelease release)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _app!);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, _app!);
         dialog.PresetVersion(release.Version);
         _app!.Run(dialog);
         var installed = dialog.Success;
@@ -365,6 +365,14 @@ internal sealed class TuiApp
         {
             var registry = await _registry.LoadAsync();
             var previous = registry.GetActive();
+
+            // Linux has no elevated hand-off: stop before anything is written when the target
+            // is global and not writable, exactly as ActivateCommand does. Switching away from
+            // an active global install proceeds; the shadow warning below reports its shim.
+            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
 
             // Activating a global install -- or switching away from one -- writes
             // machine-wide state. RemoveActiveAsync below clears GODOT_HOME with an
@@ -435,37 +443,12 @@ internal sealed class TuiApp
 
     /// <summary>
     /// Null when nothing shadows the activation, otherwise the message to append to
-    /// the confirmation dialog.
+    /// the confirmation dialog. The check is <see cref="ShimShadowing.GetWarning"/>,
+    /// the same one the CLI runs; it is best-effort, so a probing failure shows no
+    /// warning rather than turning a committed activation into an error dialog.
     /// </summary>
-    private string? BuildShimShadowWarning(InstallScope activatedScope)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return null;
-        }
-
-        // Best-effort: this runs after the activation has been committed, and reading
-        // the machine PATH can throw SecurityException on a locked-down host. An
-        // informational warning must not turn a successful activation into an error
-        // dialog.
-        try
-        {
-            var globalShimDir = _paths.GetShimDirectory(InstallScope.Global);
-            var globalShim = Path.Combine(globalShimDir, "godot.cmd");
-
-            return ShimShadowing.WouldShadow(
-                activatedScope,
-                File.Exists(globalShim),
-                globalShimDir,
-                Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
-                ? ShimShadowing.BuildWarning(globalShim)
-                : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private string? BuildShimShadowWarning(InstallScope activatedScope) =>
+        ShimShadowing.GetWarning(_paths, activatedScope);
 
     private async Task DeactivateAsync(IApplication app)
     {
@@ -512,9 +495,18 @@ internal sealed class TuiApp
             registry.ClearActive();
             await _registry.SaveAsync(registry);
 
+            // Same report as DeactivateCommand: on Linux an unprivileged deactivation of a
+            // global install proceeds but cannot delete the global shim.
+            var shimWarning = ShimShadowing.GetDeactivateWarning(_paths, active.Scope);
+
             app.Invoke(() =>
             {
-                MessageBox.Query(app, "Deactivated", $"Deactivated {active.Version} ({active.Edition})", "OK");
+                MessageBox.Query(
+                    app,
+                    "Deactivated",
+                    $"Deactivated {active.Version} ({active.Edition})"
+                        + (shimWarning is null ? "" : $"\n\n{shimWarning}"),
+                    "OK");
             });
             await RefreshRegistryAsync(app);
             app.Invoke(() => SetStatus($"Deactivated {active.Version}"));
@@ -548,6 +540,12 @@ internal sealed class TuiApp
 
         try
         {
+            // Linux: before the files are deleted, exactly as RemoveCommand does.
+            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
+            {
+                throw denied;
+            }
+
             // A global-scope removal writes the machine-wide registry and deletes
             // files under %ProgramFiles%. Elevate for the whole operation instead of
             // failing on the first write, which previously left the TUI user with a
@@ -609,6 +607,10 @@ internal sealed class TuiApp
             registry.Installs.RemoveAll(x => x.Id == entry.Id);
             await _registry.SaveAsync(registry);
 
+            // After the save, not before: if the registry write fails (a global entry without
+            // privileges), the entry stays registered and its launcher entry must stay with it.
+            _environment.Launcher.Delete(entry);
+
             app.Invoke(() =>
             {
                 MessageBox.Query(
@@ -631,7 +633,7 @@ internal sealed class TuiApp
 
     private void ShowInstallDialog(IApplication app)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, app);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, app);
         app.Run(dialog);
         var installed = dialog.Success;
         dialog.Dispose();

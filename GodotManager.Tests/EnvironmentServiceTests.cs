@@ -111,6 +111,102 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ParseShimTarget_ReadsBackTheExecutableTheWriterPutThere()
+    {
+        // Round-trips through the real writer, so doctor's parser cannot drift away from
+        // the shim format without this failing -- on either OS's shim.
+        var tempDir = Path.Combine(_fixture.TempRoot, "shim-parse");
+        Directory.CreateDirectory(tempDir);
+        var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
+        var exePath = Path.Combine(tempDir, exeName);
+        File.WriteAllText(exePath, "fake executable");
+        var entry = InstallEntryFactory.Create(path: tempDir);
+        entry.LauncherEntry = false;
+
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        var shimPath = Path.Combine(
+            _fixture.Paths.GetShimDirectory(InstallScope.User),
+            OperatingSystem.IsWindows() ? "godot.cmd" : "godot");
+        Assert.Equal(exePath, GodotManager.Services.EnvironmentService.ParseShimTarget(File.ReadAllText(shimPath)));
+    }
+
+    [Fact]
+    public void InspectShim_ReportsAbsentStaleHealthyAndForeignShims()
+    {
+        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
+        var shimPath = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), shimName);
+        var liveTarget = Path.Combine(_fixture.TempRoot, "live", "Godot");
+        var goneTarget = Path.Combine(_fixture.TempRoot, "gone", "Godot");
+        Directory.CreateDirectory(Path.GetDirectoryName(liveTarget)!);
+        File.WriteAllText(liveTarget, "fake");
+        string Shim(string target) => OperatingSystem.IsWindows()
+            ? $"@echo off\r\n\"{target}\" %*\r\n"
+            : $"#!/usr/bin/env bash\nexec \"{target}\" \"$@\"\n";
+
+        if (File.Exists(shimPath)) File.Delete(shimPath);
+        Assert.Equal((shimPath, false, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(shimPath)!);
+        File.WriteAllText(shimPath, Shim(goneTarget));
+        Assert.Equal((shimPath, true, goneTarget),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        File.WriteAllText(shimPath, Shim(liveTarget));
+        Assert.Equal((shimPath, true, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+
+        File.WriteAllText(shimPath, "#!/bin/sh\necho hand-written\n");
+        Assert.Equal((shimPath, true, (string?)null),
+            GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.User));
+    }
+
+    [Fact]
+    public void InspectShim_LooksInTheRequestedScope()
+    {
+        var shimName = OperatingSystem.IsWindows() ? "godot.cmd" : "godot";
+        var inspected = GodotManager.Services.EnvironmentService.InspectShim(_fixture.Paths, InstallScope.Global);
+        Assert.Equal(Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.Global), shimName), inspected.ShimPath);
+    }
+
+    [Fact]
+    public void ParseShimTarget_ParsesBothShimFormats_AndIgnoresForeignFiles()
+    {
+        Assert.Equal("/opt/g/Godot", GodotManager.Services.EnvironmentService.ParseShimTarget(
+            "#!/usr/bin/env bash\nsource \"/h/.config/godman/env.sh\" 2>/dev/null\nexec \"/opt/g/Godot\" \"$@\"\n"));
+        Assert.Equal(@"C:\g\Godot.exe", GodotManager.Services.EnvironmentService.ParseShimTarget(
+            "@echo off\r\n\"C:\\g\\Godot.exe\" %*\r\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimTarget("#!/bin/sh\n"));
+    }
+
+    [Fact]
+    public void ParseShimSourcedScript_ReadsTheSourceLine_AndIgnoresEverythingElse()
+    {
+        Assert.Equal("/root/.config/godman/env.sh", GodotManager.Services.EnvironmentService.ParseShimSourcedScript(
+            "#!/usr/bin/env bash\nsource \"/root/.config/godman/env.sh\" 2>/dev/null\nexec \"/opt/g/Godot\" \"$@\"\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimSourcedScript("@echo off\r\n\"C:\\g\\Godot.exe\" %*\r\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimSourcedScript("#!/bin/sh\nexec \"/opt/g/Godot\"\n"));
+    }
+
+    [Fact]
+    public async Task ParseShimSourcedScript_ReadsBackTheEnvScriptTheWriterPutThere()
+    {
+        if (OperatingSystem.IsWindows()) return; // godot.cmd sources nothing
+        var tempDir = Path.Combine(_fixture.TempRoot, "shim-source");
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "Godot_v4.5.1-stable_linux.x86_64"), "fake executable");
+        var entry = InstallEntryFactory.Create(path: tempDir);
+        entry.LauncherEntry = false;
+
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        var shimPath = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        Assert.Equal(_fixture.Paths.EnvScriptPath,
+            GodotManager.Services.EnvironmentService.ParseShimSourcedScript(File.ReadAllText(shimPath)));
+    }
+
+    [Fact]
     public async Task RemoveActiveAsync_DeletesShimFile()
     {
         // Arrange
@@ -220,11 +316,12 @@ public class EnvironmentServiceTests : IDisposable
         await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: true);
 
         // Assert
-        var desktopFolder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+        // The desktop resolves under the fixture's GODMAN_LAUNCHER_ROOT, so this never
+        // touches the real user's desktop and the assertion can be live.
+        var desktopFolder = _fixture.Paths.DesktopDirectory;
         var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
         var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
 
-        // Note: Actual shortcut creation might fail in test environment, so this is best-effort
-        // Assert.True(File.Exists(desktopShortcut), "Desktop shortcut should be created");
+        Assert.True(File.Exists(desktopShortcut), "Desktop shortcut should be created");
     }
 }

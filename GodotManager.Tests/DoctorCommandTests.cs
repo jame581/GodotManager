@@ -1,9 +1,11 @@
+using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Tests.Helpers;
 using Spectre.Console;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -16,6 +18,170 @@ public class DoctorCommandTests : IDisposable
     public DoctorCommandTests()
     {
         _fixture = new GodmanTestFixture();
+    }
+
+    private static async Task<string> RunDoctorAsync(GodmanTestFixture fixture)
+    {
+        var app = CliTestHarness.Create(fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+            Assert.Equal(0, result.ExitCode);
+            return result.Output;
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_GlobalActivateRemedy_CarriesTheGlobalRootOverrideThroughSudo()
+    {
+        // sudo drops GODMAN_GLOBAL_ROOT; without it the suggested activate would act on
+        // /usr/local instead of the prefix this install lives under.
+        if (OperatingSystem.IsWindows()) return; // UAC, no command-line prefix
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "g");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", scope: InstallScope.Global, path: path);
+        entry.LauncherEntry = true;   // godman wrote one; it has since been deleted
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains($"Run: sudo GODMAN_GLOBAL_ROOT={Path.Combine(fixture.TempRoot, "global")} ", output);
+        Assert.Contains($" activate {entry.Id}", output);
+    }
+
+    [Fact]
+    public async Task Doctor_UnderARelativeGlobalRoot_OffersNoMove_AndAsksForAnAbsolutePath()
+    {
+        // godman never migrates under a relative prefix (MigrationGates), so "run sudo …
+        // list to complete the move" would never complete anything.
+        if (OperatingSystem.IsWindows()) return; // Linux layout
+        var cwd = Path.Combine(Path.GetTempPath(), "godman-cwd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cwd);
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(cwd);
+            using var fixture = new GodmanTestFixture(globalRoot: "rel", globalRootVerbatim: true,
+                seed: value => Directory.CreateDirectory(Path.Combine(value, "bin", "godman", "4.5.1")));
+            Assert.True(Directory.Exists(Path.Combine(cwd, "rel", "bin", "godman", "4.5.1")), "precondition: not moved");
+
+            var output = Flatten(await RunDoctorAsync(fixture));
+
+            Assert.Contains($"Legacy directory found: {Path.Combine("rel", "bin", "godman")}", output);
+            Assert.Contains("GODMAN_GLOBAL_ROOT is a relative path", output);
+            Assert.DoesNotContain("to complete the move", output);
+            Assert.DoesNotContain("can be removed", output);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+            Directory.Delete(cwd, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_ReportsAnInstallWhoseLauncherEntryWentMissing()
+    {
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "i");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);
+        entry.LauncherEntry = true;   // godman wrote one; it has since been deleted
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.Contains("Launcher entry missing", output);
+        Assert.Contains(entry.Id.ToString(), output);
+        Assert.DoesNotContain("predate launcher entries", output);
+    }
+
+    [Fact]
+    public async Task Doctor_SummarisesPreLauncherInstallsInOneLine()
+    {
+        // Every install on a machine upgraded from 1.3.x has LauncherEntry == null. One
+        // two-line block per install buried the rest of the report.
+        using var fixture = new GodmanTestFixture();
+        var installs = new[] { "a", "b" }.Select(name =>
+        {
+            var path = Path.Combine(fixture.TempRoot, name);
+            Directory.CreateDirectory(path);
+            return InstallEntryFactory.Create(version: "4.5.1", path: path);   // LauncherEntry null: pre-1.4.0
+        }).ToList();
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = installs });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.Contains("2 install(s) predate launcher entries", output);
+        Assert.Contains("`godman activate <id>` adds one (and makes it active).", output);
+        Assert.DoesNotContain("for a global install", output);   // both are user installs
+        Assert.DoesNotContain("Launcher entry missing", output);
+        Assert.All(installs, x => Assert.DoesNotContain(x.Id.ToString(), output));
+    }
+
+    private static InstallEntry PreLauncherInstall(GodmanTestFixture fixture, string name, InstallScope scope)
+    {
+        var path = Path.Combine(fixture.TempRoot, name);
+        Directory.CreateDirectory(path);
+        return InstallEntryFactory.Create(version: "4.5.1", scope: scope, path: path);   // LauncherEntry null: pre-1.4.0
+    }
+
+    [Fact]
+    public async Task Doctor_PreLauncherSummary_ForGlobalInstallsOnly_NamesTheElevatedCommand()
+    {
+        // Activating a global install needs root: a bare `godman activate` is the wrong advice.
+        using var fixture = new GodmanTestFixture();
+        await fixture.Registry.SaveAsync(new InstallRegistry
+        {
+            Installs = [PreLauncherInstall(fixture, "g", InstallScope.Global)]
+        });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains("1 install(s) predate launcher entries", output);
+        Assert.Contains($"`{ElevatedCommandLine.Render("activate <id>")}` adds one (and makes it active).", output);
+    }
+
+    [Fact]
+    public async Task Doctor_PreLauncherSummary_ForMixedScopes_NamesBothCommands()
+    {
+        if (OperatingSystem.IsWindows()) return; // one command there: UAC elevates activate itself
+        using var fixture = new GodmanTestFixture();
+        await fixture.Registry.SaveAsync(new InstallRegistry
+        {
+            Installs = [PreLauncherInstall(fixture, "u", InstallScope.User), PreLauncherInstall(fixture, "g", InstallScope.Global)]
+        });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains("2 install(s) predate launcher entries", output);
+        Assert.Contains(
+            $"`godman activate <id>` adds one (and makes it active); for a global install use `{ElevatedCommandLine.Render("activate <id>")}`.",
+            output);
+    }
+
+    [Fact]
+    public async Task Doctor_DoesNotReportAnOptedOutInstall()
+    {
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "i");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);
+        entry.LauncherEntry = false;
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.Contains("Registry", output);
+        Assert.DoesNotContain("Launcher entry missing", output);
+        Assert.DoesNotContain("predate launcher entries", output);
     }
 
     [Fact]
@@ -83,6 +249,335 @@ public class DoctorCommandTests : IDisposable
 
         // Assert
         Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public async Task Doctor_WithActiveInstallDirectoryMissing_SaysSo()
+    {
+        // An active entry whose directory has vanished (deleted by hand). This is not
+        // the migration check: a blocked migration leaves the directory -- and the shim
+        // -- where they were, and a completed one gets its entry rebased onto the new
+        // root. The shim-target check covers a moved root; see GlobalRootUpgradeE2ETests.
+        var registry = new InstallRegistry();
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1", path: Path.Combine(_fixture.TempRoot, "moved-away"));
+        registry.Installs.Add(entry);
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Active install directory missing", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithGlobalActiveInstallDirectoryMissing_NamesAnElevatedActivate()
+    {
+        var entry = InstallEntryFactory.Create(
+            version: "4.5.1", scope: InstallScope.Global, path: Path.Combine(_fixture.TempRoot, "gone-global"));
+        entry.LauncherEntry = false;
+        var registry = new InstallRegistry { Installs = [entry] };
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Active install directory missing", output);
+        Assert.Contains($"Run `{ElevatedCommandLine.Render($"activate {entry.Id}")}` again to rewrite the shim", output);
+    }
+
+    [Fact]
+    public async Task Doctor_WithActiveInstallDirectoryPresent_DoesNotReportItMissing()
+    {
+        var registry = new InstallRegistry();
+        var installPath = Path.Combine(_fixture.TempRoot, "still-there");
+        Directory.CreateDirectory(installPath);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
+        registry.Installs.Add(entry);
+        registry.MarkActive(entry.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            // Paired with a positive assertion so this cannot pass on empty output.
+            Assert.Contains("Registry", result.Output);
+            Assert.DoesNotContain("Active install directory missing", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithUnmigratedInstallRoot_WarnsAgainstDeletingIt()
+    {
+        // The stock legacy-directory advice is "this can be removed". For a root whose
+        // destination does not exist yet that advice is actively destructive: the
+        // directory still holds the only copy of those installs, and the machine-wide
+        // one needs privileges to move. Getting this wrong deletes a user's installs.
+        var pending = FirstPendingRelocation();
+        Directory.CreateDirectory(pending.OldRoot);
+        // The fixture's AppPaths created both install roots before this old root existed,
+        // so "not migrated" shows up here as an empty destination, not a missing one.
+        Assert.False(
+            Directory.Exists(pending.NewRoot) && Directory.EnumerateFileSystemEntries(pending.NewRoot).Any(),
+            "precondition: nothing may have landed in the destination yet");
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Still in use", result.Output);
+            Assert.DoesNotContain("can be removed", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithLeftoverRootAfterMigration_SaysItCanBeRemoved()
+    {
+        // Once the destination exists the old directory really is a leftover, and the
+        // original advice applies again.
+        var pending = FirstPendingRelocation();
+        Directory.CreateDirectory(pending.OldRoot);
+        Directory.CreateDirectory(pending.NewRoot);
+        File.WriteAllText(Path.Combine(pending.NewRoot, "4.6.2-standard-linux-global.marker"), "migrated");
+
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("Legacy directory found", result.Output);
+            Assert.Contains("can be removed", result.Output);
+            Assert.DoesNotContain("Still in use", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithARegisteredInstallStillInTheLegacyRoot_DoesNotSayItCanBeRemoved()
+    {
+        // A destination with content is not proof this root moved: on a machine with two
+        // old roots only the first planned one migrates, and a blocked or partial move
+        // leaves entries behind. A registry entry pointing into the directory makes it live.
+        // And because TryMigrateDirectory no-ops onto a destination that exists, "run
+        // godman to complete the move" can never work here -- it must not be offered.
+        var pending = PendingRelocation(InstallScope.Global);
+        var installDir = Path.Combine(pending.OldRoot, "4.5.1-standard-linux-global");
+        Directory.CreateDirectory(installDir);
+        Directory.CreateDirectory(pending.NewRoot);
+        File.WriteAllText(Path.Combine(pending.NewRoot, "4.6.2-standard-linux-global.marker"), "migrated");
+        var entry = InstallEntryFactory.Create(version: "4.5.1", scope: InstallScope.Global, path: installDir);
+        entry.LauncherEntry = false;
+        await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Legacy directory found", output);
+        Assert.Contains("Still in use", output);
+        Assert.Contains("already exists", output);
+        Assert.Contains("Reinstall or remove those installs", output);
+        Assert.DoesNotContain("can be removed", output);
+        Assert.DoesNotContain("to complete the move", output);
+        Assert.DoesNotContain(ElevatedCommandLine.Render("list"), output);
+    }
+
+    // The four tests below follow TryMigrateDirectory's real rule: it no-ops whenever the
+    // destination EXISTS, even empty. The fixture's AppPaths already created the install
+    // roots (as every run does), so the "absent" cases delete the destination first. The
+    // destination is derived from AppPaths exactly as doctor derives it.
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnAbsentDestination_OffersTheElevatedMove()
+    {
+        var (legacy, destination) = UnmovedRoot(InstallScope.Global);
+        Directory.Delete(destination, recursive: true);
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains(
+            OperatingSystem.IsWindows()
+                ? "Run an elevated godman command to complete the move"
+                : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move",
+            output);
+        Assert.DoesNotContain("rmdir", output);
+        Assert.DoesNotContain("can be removed", output);
+        Assert.True(Directory.Exists(legacy));
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnEmptyDestination_SaysTheEmptyDirectoryBlocksTheMove()
+    {
+        // e.g. after a failed privileged move: `sudo godman list` alone would no-op forever.
+        var (_, destination) = UnmovedRoot(InstallScope.Global);
+        Directory.Delete(destination, recursive: true);
+        Directory.CreateDirectory(destination);
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains($"blocked only by the empty {destination}", output);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list")}`", output);
+            // The fixture sets GODMAN_GLOBAL_ROOT, which sudo would otherwise drop.
+            Assert.Contains($"GODMAN_GLOBAL_ROOT={Path.Combine(_fixture.TempRoot, "global")}", output);
+        }
+        Assert.Contains("Do not delete this directory", output);
+        Assert.DoesNotContain("can be removed", output);
+    }
+
+    [Theory]
+    [InlineData("/home/u/sandbox")]
+    [InlineData("sandbox")]
+    public void NoPlannedMoveAdvice_ForAUserRoot_NamesGodmanHomeBeingSet_EvenWhenRelative(string home)
+    {
+        // A relative GODMAN_HOME used to get "set it to an absolute path" -- after which the
+        // next doctor run said nothing moves while it is set at all: a circle.
+        var advice = DoctorCommand.NoPlannedMoveAdvice(isGlobalRoot: false, homeOverride: home);
+
+        Assert.Contains("does not move user install roots while GODMAN_HOME is set", advice);
+        Assert.DoesNotContain("relative path", advice);
+    }
+
+    [Fact]
+    public void NoPlannedMoveAdvice_ForTheGlobalRoot_NamesTheRelativePrefix()
+    {
+        var advice = DoctorCommand.NoPlannedMoveAdvice(isGlobalRoot: true, homeOverride: "/home/u");
+
+        Assert.Contains("while GODMAN_GLOBAL_ROOT is a relative path", advice);
+    }
+
+    [Fact]
+    public async Task Doctor_EmptyDestinationRemedy_QuotesAPathWithASpace()
+    {
+        // The rmdir remedy is meant to be pasted; unquoted, a space splits it into two paths.
+        if (OperatingSystem.IsWindows()) return; // the Windows remedy is prose, not a command
+        using var fixture = new GodmanTestFixture(globalRoot: "my global");
+        var destination = fixture.Paths.GetInstallRoot(InstallScope.Global);
+        Directory.CreateDirectory(destination); // empty: the move is blocked by it
+        var legacy = Path.Combine(fixture.Paths.GetShimDirectory(InstallScope.Global), "godman");
+        Directory.CreateDirectory(Path.Combine(legacy, "4.5.1-standard"));
+
+        var output = Flatten(await RunDoctorAsync(fixture));
+
+        Assert.Contains($"`sudo rmdir '{destination}'`", output);
+    }
+
+    [Fact]
+    public async Task Doctor_WithAnUnmovedUserRootUnderGodmanHome_SaysGodmanDoesNotMoveIt()
+    {
+        // godman moves user roots only without GODMAN_HOME (the fixture sets it). Doctor used
+        // to say "`rmdir <empty destination>`, then godman moves them on its next ordinary
+        // run" -- but no run ever did, and the next one recreated the empty directory.
+        // (Linux: on Windows the user migration's destination is the config root itself,
+        // which always exists.)
+        if (OperatingSystem.IsWindows()) return;
+        var pending = PendingRelocation(InstallScope.User);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard"));
+
+        var output = Flatten(await RunDoctorAsync(_fixture));
+
+        Assert.Contains("Still in use", output);
+        Assert.Contains("does not move user install roots while GODMAN_HOME is set", output);
+        Assert.DoesNotContain("rmdir", output);
+        Assert.DoesNotContain("next ordinary", output);
+        Assert.DoesNotContain("relative path", output);
+        Assert.DoesNotContain("sudo ", output);
+        Assert.DoesNotContain("can be removed", output);
+    }
+
+    /// <summary>
+    /// An old root of <paramref name="scope"/> holding an install, plus the directory whose
+    /// existence decides whether its migration can run (derived, as doctor does).
+    /// </summary>
+    private (string Legacy, string Destination) UnmovedRoot(InstallScope scope)
+    {
+        var pending = PendingRelocation(scope);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard"));
+        var relocation = _fixture.Paths.GetInstallRootRelocations().First(r =>
+            r.NewRoot == pending.NewRoot
+            && (r.OldRoot == pending.OldRoot || r.OldRoot.StartsWith(pending.OldRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)));
+        var destination = _fixture.Paths.GetMigrationDestination(relocation.OldRoot)!;
+        Assert.StartsWith(_fixture.TempRoot, destination);
+        return (pending.OldRoot, destination);
+    }
+
+    private static string Flatten(string output) => output.Replace("\r", "").Replace("\n", "");
+
+    private static bool HasAnything(string directory) =>
+        Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any();
+
+    /// <summary>A legacy root doctor reports whose relocation lands in <paramref name="scope"/>'s install root.</summary>
+    private (string OldRoot, string NewRoot) PendingRelocation(InstallScope scope)
+    {
+        var target = _fixture.Paths.GetInstallRoot(scope);
+        foreach (var (legacyPath, _) in _fixture.Paths.GetLegacyPaths())
+        {
+            foreach (var relocation in _fixture.Paths.GetInstallRootRelocations())
+            {
+                if (relocation.NewRoot == target
+                    && (relocation.OldRoot == legacyPath || relocation.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+                {
+                    return (legacyPath, relocation.NewRoot);
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"no {scope} legacy path is covered by the relocation map");
+    }
+
+    /// <summary>
+    /// An old root that doctor reports as legacy AND that the relocation map knows how
+    /// to move -- the pairing the two messages are chosen from.
+    /// </summary>
+    private (string OldRoot, string NewRoot) FirstPendingRelocation()
+    {
+        foreach (var (legacyPath, _) in _fixture.Paths.GetLegacyPaths())
+        {
+            foreach (var relocation in _fixture.Paths.GetInstallRootRelocations())
+            {
+                if (relocation.OldRoot == legacyPath || relocation.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    return (legacyPath, relocation.NewRoot);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("no legacy path is covered by the relocation map");
     }
 
     [Fact]
@@ -303,6 +798,56 @@ public class DoctorCommandTests : IDisposable
             File.SetUnixFileMode(
                 _fixture.Paths.DownloadCacheDirectory,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WarnsWhenGodmanGlobalRootStillNamesTheShimDirectory()
+    {
+        // A 1.3.0 user who kept GODMAN_GLOBAL_ROOT=<X>/bin: nothing in 1.4.0 looks in
+        // <X>/bin/godman, so without a warning their global installs silently vanish.
+        if (OperatingSystem.IsWindows()) return; // the prefix change is Linux-only
+
+        using var fixture = new GodmanTestFixture(globalRoot: Path.Combine("opt", "bin"), seed: value =>
+        {
+            Directory.CreateDirectory(Path.Combine(value, "godman", "4.5.1-standard-linux-global"));
+            File.WriteAllText(Path.Combine(value, "godman", "installs.json"), "{\"Installs\":[]}");
+        });
+        var value = Path.Combine(fixture.TempRoot, "opt", "bin");
+        var app = CliTestHarness.Create(fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            var output = result.Output.Replace("\r", "").Replace("\n", "");
+            Assert.Contains($"GODMAN_GLOBAL_ROOT={value} uses the pre-1.4.0 meaning", output);
+            Assert.Contains($"set it to {Path.Combine(fixture.TempRoot, "opt")}", output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_DoesNotWarnAboutAGodmanGlobalRootPrefix()
+    {
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("pre-1.4.0 meaning", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
         }
     }
 

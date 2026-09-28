@@ -141,6 +141,56 @@ public class ListCommandTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task List_WarnsWhenGodmanGlobalRootStillNamesTheShimDirectory()
+    {
+        // A 1.3.0 user who kept GODMAN_GLOBAL_ROOT=<X>/bin: nothing in 1.4.0 looks in
+        // <X>/bin/godman, so without a warning their global installs silently vanish.
+        if (OperatingSystem.IsWindows()) return; // the prefix change is Linux-only
+
+        using var fixture = new GodmanTestFixture(globalRoot: Path.Combine("opt", "bin"), seed: value =>
+        {
+            Directory.CreateDirectory(Path.Combine(value, "godman", "4.5.1-standard-linux-global"));
+            File.WriteAllText(Path.Combine(value, "godman", "installs.json"), "{\"Installs\":[]}");
+        });
+        var value = Path.Combine(fixture.TempRoot, "opt", "bin");
+        var app = CliTestHarness.Create(fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["list"]);
+
+            Assert.Equal(0, result.ExitCode);
+            var output = result.Output.Replace("\r", "").Replace("\n", "");
+            Assert.Contains($"GODMAN_GLOBAL_ROOT={value} uses the pre-1.4.0 meaning", output);
+            Assert.Contains($"set it to {Path.Combine(fixture.TempRoot, "opt")}", output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task List_DoesNotWarnAboutAGodmanGlobalRootPrefix()
+    {
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["list"]);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("pre-1.4.0 meaning", result.Output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
     public void Dispose()
     {
         _fixture.Dispose();

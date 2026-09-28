@@ -23,10 +23,19 @@ internal static class TuiErrorPresentation
     /// InstallDialog's install failures. Showing only ex.Message would silently
     /// drop it, leaving a TUI user with a bare failure and no next step.
     /// </summary>
-    internal static string BuildErrorBody(string prefix, Exception ex) =>
-        ex is GodmanException { Hint: { } hint }
-            ? $"{prefix}: {ex.Message}\n{hint}"
-            : $"{prefix}: {ex.Message}";
+    /// <remarks>
+    /// A late failure's hint is the placeholder <see cref="GodmanException.ElevationHint"/>
+    /// (RegistryService has no arguments); the TUI's command to re-run is <c>godman tui</c>,
+    /// so it is rewritten with <see cref="Services.LinuxElevation.TuiArguments"/>, matching
+    /// what the CLI shows for its own late failures.
+    /// </remarks>
+    internal static string BuildErrorBody(string prefix, Exception ex)
+    {
+        var hint = ex is GodmanException godman
+            ? godman.WithArguments(Services.LinuxElevation.TuiArguments).Hint
+            : null;
+        return hint is null ? $"{prefix}: {ex.Message}" : $"{prefix}: {ex.Message}\n{hint}";
+    }
 
     /// <summary>
     /// Body for the "Removed" confirmation, naming any install directory that

@@ -41,6 +41,48 @@ public class ActivateDeactivateE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Activate_UserInstall_WithASurvivingGlobalShim_WarnsOnLinux()
+    {
+        // Parity-review F1: an unprivileged RemoveUnix cannot delete the global shim, so
+        // it silently outranked the user shim. The activation still succeeds; the user
+        // has to be told which file wins and how to remove it.
+        if (OperatingSystem.IsWindows()) return;
+
+        var app = CliTestHarness.Create(_fixture);
+        var installPath = Path.Combine(_fixture.TempRoot, "g451");
+        Directory.CreateDirectory(installPath);
+        File.WriteAllText(Path.Combine(installPath, "Godot_v4.5.1-stable_linux.x86_64"), "fake");
+
+        var globalShimDir = _fixture.Paths.GetShimDirectory(InstallScope.Global);
+        Directory.CreateDirectory(globalShimDir);
+        var globalShim = Path.Combine(globalShimDir, "godot");
+        File.WriteAllText(globalShim, "#!/bin/sh\n");
+
+        var registry = new InstallRegistry();
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installPath);
+        registry.Installs.Add(entry);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["activate", entry.Id.ToString()]);
+
+            Assert.Equal(0, result.ExitCode);
+            // Spectre wraps at the test console width; join lines before matching.
+            var output = result.Output.Replace("\r", "").Replace("\n", "");
+            Assert.Contains("leftover from an earlier global activation", output);
+            Assert.Contains("sudo rm", output);
+            Assert.Contains("godot", output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
     public async Task Activate_InvalidId_ExitsNonZero()
     {
         var app = CliTestHarness.Create(_fixture);
@@ -185,15 +227,19 @@ public class ActivateDeactivateE2ETests : IDisposable
 
                 Assert.NotEqual(0, result.ExitCode);
 
-                // The prefix and message text are unchanged from before this fix --
-                // ActivateCommand already caught UnauthorizedAccessException and
-                // printed "Activation failed:" itself. What was missing, and is the
-                // actual bug this pins, is the hint line: the old code never named a
-                // remedy at all.
-                Assert.Contains("Activation failed:", result.Output);
-                Assert.Contains("Access denied while updating environment for this scope.", result.Output);
-                Assert.Contains("hint:", result.Output);
-                Assert.Contains("sudo", result.Output, StringComparison.OrdinalIgnoreCase);
+                // What this originally pinned is the hint line: the old code never named a
+                // remedy at all. Since the Linux pre-check (LinuxElevation.Check) the
+                // unwritable shim directory is caught before ApplyActiveAsync writes
+                // anything, so the message names the directory instead of the
+                // UnauthorizedAccessException it used to hit -- the hint must survive that
+                // move, now naming the real command rather than a placeholder.
+                var output = result.Output.Replace("\r", "").Replace("\n", "");
+                Assert.Contains("Activation failed:", output);
+                Assert.Contains($"{globalShimDir} is not writable", output);
+                Assert.Contains("hint:", output);
+                Assert.Contains("sudo", output, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains($"activate {entry.Id}", output);
+                Assert.False(File.Exists(Path.Combine(globalShimDir, "godot")));
             }
             finally
             {

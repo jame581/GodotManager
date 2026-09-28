@@ -58,4 +58,17 @@ public class GodmanExceptionTests
         Assert.Contains("bbb", ex.Message);
         Assert.NotNull(ex.Hint);
     }
+
+    [Fact]
+    public void ElevationHint_OnLinux_KeepsTheGlobalRootOverride()
+    {
+        // "Re-run with sudo." alone loses GODMAN_GLOBAL_ROOT: sudo drops it.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodotManager.Tests.Helpers.GodmanTestFixture();
+
+        var hint = GodmanException.ElevationHint;
+
+        Assert.Contains($"sudo GODMAN_GLOBAL_ROOT={System.IO.Path.Combine(fixture.TempRoot, "global")} ", hint);
+        Assert.Contains("the same command", hint);
+    }
 }

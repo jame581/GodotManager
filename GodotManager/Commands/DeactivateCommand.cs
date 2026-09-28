@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
 using Spectre.Console;
@@ -9,11 +10,13 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
 {
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
+    private readonly AppPaths _paths;
 
-    public DeactivateCommand(RegistryService registry, EnvironmentService environment)
+    public DeactivateCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
     {
         _registry = registry;
         _environment = environment;
+        _paths = paths;
     }
 
     internal sealed class Settings : GlobalSettings { }
@@ -60,6 +63,14 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
 
             AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
 
+            // Linux does not stop an unprivileged deactivation of a global install -- its only
+            // global write is a best-effort shim delete (LinuxElevation.MustStop) -- so report
+            // the shim when it survived.
+            if (ShimShadowing.GetDeactivateWarning(_paths, activeInstall.Scope) is { } shimWarning)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{shimWarning}[/]");
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
@@ -69,7 +80,7 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
         }
         catch (GodmanException ex)
         {
-            return GodmanExceptionRenderer.Render("Deactivate failed:", ex);
+            return GodmanExceptionRenderer.Render("Deactivate failed:", ex.WithArguments(context.Arguments));
         }
         catch (Exception ex)
         {

@@ -31,6 +31,23 @@ public class TuiErrorPresentationTests
     }
 
     [Fact]
+    public void BuildErrorBody_WithThePlaceholderElevationHint_NamesTheTuiCommand()
+    {
+        // A late global-registry failure carries GodmanException.ElevationHint, whose
+        // arguments are the "<same arguments>" placeholder; the CLI rewrites it with its own
+        // arguments (WithArguments), so the TUI must too -- with `tui`, the command it runs as.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodotManager.Tests.Helpers.GodmanTestFixture();
+        var ex = new GodmanException("Failed to update the machine-wide registry", GodmanException.ElevationHint);
+
+        var body = TuiErrorPresentation.BuildErrorBody("Remove failed", ex);
+
+        Assert.DoesNotContain("<same arguments>", body);
+        Assert.EndsWith(" tui", body);
+        Assert.StartsWith("Remove failed: Failed to update the machine-wide registry\n", body);
+    }
+
+    [Fact]
     public void BuildErrorBody_WithGodmanExceptionWithoutHint_OmitsTheSecondLine()
     {
         var ex = new GodmanException("something went wrong");

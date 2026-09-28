@@ -9,12 +9,21 @@ internal sealed class EnvironmentService
 {
     private readonly AppPaths _paths;
     private readonly DiagnosticContext? _diagnostics;
+    private readonly LauncherService _launcher;
 
-    public EnvironmentService(AppPaths paths, DiagnosticContext? diagnostics = null)
+    public EnvironmentService(AppPaths paths, DiagnosticContext? diagnostics = null, LauncherService? launcher = null)
     {
         _paths = paths;
         _diagnostics = diagnostics;
+        _launcher = launcher ?? new LauncherService(paths, diagnostics);
     }
+
+    /// <summary>
+    /// Exposed so every front-end that already holds this service -- CLI, the hidden
+    /// *-elevated mirrors, the TUI -- reaches the same launcher code without a second
+    /// DI registration to keep in sync.
+    /// </summary>
+    public LauncherService Launcher => _launcher;
 
     public Task ApplyActiveAsync(InstallEntry entry, CancellationToken cancellationToken = default)
     {
@@ -27,6 +36,17 @@ internal sealed class EnvironmentService
     }
 
     public Task ApplyActiveAsync(InstallEntry entry, bool dryRun, bool createDesktopShortcut, CancellationToken cancellationToken = default)
+    {
+        return ApplyActiveAsync(entry, dryRun, createDesktopShortcut, ensureLauncherEntry: true, cancellationToken);
+    }
+
+    /// <param name="ensureLauncherEntry">
+    /// False only for <see cref="InstallerService.InstallAsync"/>, which activates a new
+    /// install before its registry save and creates the launcher entry itself after that
+    /// save succeeds -- writing it here would leave an app-menu entry for an install the
+    /// registry never recorded when the save fails. <c>activate</c> always passes true.
+    /// </param>
+    internal Task ApplyActiveAsync(InstallEntry entry, bool dryRun, bool createDesktopShortcut, bool ensureLauncherEntry, CancellationToken cancellationToken = default)
     {
         if (dryRun)
         {
@@ -42,7 +62,111 @@ internal sealed class EnvironmentService
             ApplyUnix(entry);
         }
 
+        // Rewritten on every activation, not just created when missing: that is what gives
+        // pre-1.4.0 installs their entry, and it self-heals one whose target moved.
+        if (ensureLauncherEntry && entry.LauncherEntry != false)
+        {
+            _launcher.Create(entry);
+        }
+
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The shim check both doctors run (CLI <c>doctor</c> and the TUI dialog): where the
+    /// scope's shim is, whether it exists, and -- when it does -- the target it names if
+    /// that file is missing. A shim that exists says nothing about whether it still
+    /// resolves: it hard-codes an absolute path, and the registry cannot answer for it --
+    /// after a completed root migration it rebases the active entry onto the new root,
+    /// which exists, while an unrepaired shim still names the old one. An unreadable shim
+    /// or a foreign file yields no <c>MissingTarget</c> (warned under --verbose).
+    /// </summary>
+    internal static (string ShimPath, bool Exists, string? MissingTarget) InspectShim(
+        AppPaths paths, InstallScope scope, DiagnosticContext? diagnostics = null)
+    {
+        var shimPath = Path.Combine(
+            paths.GetShimDirectory(scope),
+            OperatingSystem.IsWindows() ? "godot.cmd" : "godot");
+
+        if (!File.Exists(shimPath))
+        {
+            return (shimPath, false, null);
+        }
+
+        try
+        {
+            var target = ParseShimTarget(File.ReadAllText(shimPath));
+            return (shimPath, true, target is not null && !File.Exists(target) ? target : null);
+        }
+        catch (Exception ex)
+        {
+            diagnostics?.Warn($"Could not read the shim at {shimPath}: {ex.Message}");
+            return (shimPath, true, null);
+        }
+    }
+
+    /// <summary>
+    /// The executable a shim written by this service launches: the quoted
+    /// <c>exec "…"</c> target of the Unix shim, or the quoted <c>"…" %*</c> command of
+    /// <c>godot.cmd</c>. Null when the content has neither shape (a hand-written or
+    /// foreign file). Lives beside the writers so the two formats cannot drift apart
+    /// unnoticed; <c>doctor</c> uses it to check what the shim really points at.
+    /// </summary>
+    internal static string? ParseShimTarget(string content)
+    {
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.Trim();
+            string rest;
+            if (line.StartsWith("exec \"", StringComparison.Ordinal))
+            {
+                rest = line["exec \"".Length..];
+            }
+            else if (line.StartsWith('"') && line.EndsWith("\" %*", StringComparison.Ordinal))
+            {
+                rest = line[1..];
+            }
+            else
+            {
+                continue;
+            }
+
+            var end = rest.IndexOf('"');
+            if (end > 0)
+            {
+                return rest[..end];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The env script a Unix shim written by this service sources: the quoted
+    /// <c>source "…"</c> path. It is the writer's <see cref="AppPaths.EnvScriptPath"/>,
+    /// which for a global shim written under a HOME-resetting or <c>-E</c> sudo is not
+    /// necessarily the reader's. Null when there is no such line (<c>godot.cmd</c>, or a
+    /// foreign file).
+    /// </summary>
+    internal static string? ParseShimSourcedScript(string content)
+    {
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("source \"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var rest = line["source \"".Length..];
+            var end = rest.IndexOf('"');
+            if (end > 0)
+            {
+                return rest[..end];
+            }
+        }
+
+        return null;
     }
 
     public Task RemoveActiveAsync(InstallEntry? entry, CancellationToken cancellationToken = default)
@@ -79,31 +203,18 @@ internal sealed class EnvironmentService
         // Broadcast change notification to other processes (best effort)
         BroadcastEnvironmentChange();
 
-        // Derive executable name from installation folder name
-        // Folder name matches the archive binary name (e.g., Godot_v4.5.1-stable_win64.exe)
-        var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var expectedExe = folderName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? folderName
-            : folderName + ".exe";
-
-        var exe = Path.Combine(entry.Path, expectedExe);
-
-        // Fallback: search for any Godot executable if expected name not found.
-        // This covers .NET/mono installs, whose archive nests the binary inside its
-        // own Godot_vX-stable_mono_win64/ directory -- the folder-name guess above
-        // can never match those, so without the nested lookup the shim is written
-        // pointing at a path that does not exist.
-        if (!File.Exists(exe))
-        {
-            exe = GodotExecutableLocator.Find(entry.Path, windows: true, _diagnostics) ?? exe;
-        }
+        // Standard builds: the binary is named after the install folder. .NET/mono
+        // archives nest it one level down -- ResolveForInstall covers both.
+        var exe = GodotExecutableLocator.ResolveForInstall(entry.Path, windows: true, _diagnostics);
 
         var shimPath = Path.Combine(shimDir, "godot.cmd");
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
 
-        // Create shortcuts if on Windows
-        CreateShortcuts(entry, exe, createDesktopShortcut);
+        if (createDesktopShortcut)
+        {
+            _launcher.CreateDesktopShortcut(entry);
+        }
     }
 
     private void RemoveWindows(InstallEntry? entry)
@@ -134,10 +245,11 @@ internal sealed class EnvironmentService
             }
         }
 
-        // Delete shortcuts
+        // Only the desktop shortcut belongs to the activation. The Start Menu entry
+        // belongs to the install and is deleted by remove/clean, not by deactivation.
         if (entry != null)
         {
-            DeleteShortcuts(entry);
+            _launcher.DeleteDesktopShortcut(entry);
         }
 
         // Broadcast change notification
@@ -165,18 +277,7 @@ internal sealed class EnvironmentService
 
         var shimPath = Path.Combine(shimDir, "godot");
 
-        // Derive binary name from installation folder name
-        var folderName = Path.GetFileName(entry.Path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var target = Path.Combine(entry.Path, folderName);
-
-        // Fallback: search for any Godot binary if expected name not found. Same
-        // nesting problem as the Windows branch -- the mono tarball extracts into
-        // its own Godot_vX-stable_mono_linux_x86_64/ directory, so a top-level-only
-        // search leaves the shim pointing at a path that was never written.
-        if (!File.Exists(target))
-        {
-            target = GodotExecutableLocator.Find(entry.Path, windows: false, _diagnostics) ?? target;
-        }
+        var target = GodotExecutableLocator.ResolveForInstall(entry.Path, windows: false, _diagnostics);
 
         var shimContent = $"#!/usr/bin/env bash\nsource \"{_paths.EnvScriptPath}\" 2>/dev/null\nexec \"{target}\" \"$@\"\n";
         File.WriteAllText(shimPath, shimContent);
@@ -268,78 +369,6 @@ internal sealed class EnvironmentService
         catch (Exception ex)
         {
             _diagnostics?.Warn($"Failed to clean PATH: {ex.Message}");
-        }
-    }
-
-    private void CreateShortcuts(InstallEntry entry, string exePath, bool createDesktopShortcut)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-
-            // Create Start Menu shortcut
-            var startMenuFolder = entry.Scope == InstallScope.Global
-                ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-                : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-
-            var godmanFolder = Path.Combine(startMenuFolder, "Programs", "godman");
-            Directory.CreateDirectory(godmanFolder);
-
-            var startMenuShortcut = Path.Combine(godmanFolder, shortcutName);
-            WindowsShortcut.Create(startMenuShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
-
-            // Create Desktop shortcut if requested
-            if (createDesktopShortcut)
-            {
-                var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-                var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
-                WindowsShortcut.Create(desktopShortcut, exePath, entry.Path, $"Godot {entry.Version} ({entry.Edition})");
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"Failed to create shortcuts: {ex.Message}");
-        }
-    }
-
-    private void DeleteShortcuts(InstallEntry entry)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
-
-            // Delete Start Menu shortcut
-            var startMenuFolder = entry.Scope == InstallScope.Global
-                ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-                : Environment.GetFolderPath(Environment.SpecialFolder.StartMenu);
-
-            var startMenuShortcut = Path.Combine(startMenuFolder, "Programs", "godman", shortcutName);
-            if (File.Exists(startMenuShortcut))
-            {
-                File.Delete(startMenuShortcut);
-            }
-
-            // Delete Desktop shortcut
-            var desktopFolder = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
-            if (File.Exists(desktopShortcut))
-            {
-                File.Delete(desktopShortcut);
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"Failed to delete shortcuts: {ex.Message}");
         }
     }
 

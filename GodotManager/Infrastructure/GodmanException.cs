@@ -16,14 +16,44 @@ internal class GodmanException : Exception
 
     /// <summary>
     /// The standard remedy for a failure caused by attempting a global-scope
-    /// operation without sufficient privileges. Shared verbatim by
-    /// RegistryService.SaveAsync's global-write failure and ActivateCommand's
-    /// UnauthorizedAccessException/SecurityException catches so the wording
-    /// given to the user does not drift between the two call sites.
+    /// operation without sufficient privileges, for callers that do not have the
+    /// command's arguments (RegistryService.SaveAsync's global-write failure). Same
+    /// text as <see cref="ElevationHintFor"/> with no arguments, so the wording does
+    /// not drift between call sites.
     /// </summary>
-    public static string ElevationHint => OperatingSystem.IsWindows()
-        ? "Global-scope installs require administrator privileges. Re-run elevated."
-        : "Global-scope installs require root privileges. Re-run with sudo.";
+    public static string ElevationHint => ElevationHintFor(null);
+
+    /// <summary>
+    /// This failure with its placeholder <see cref="ElevationHint"/> replaced by one naming
+    /// <paramref name="arguments"/>; any other hint is left as it is. For a command whose
+    /// late failure (RegistryService.SaveAsync, which has no arguments) reaches its catch.
+    /// </summary>
+    public GodmanException WithArguments(IReadOnlyList<string>? arguments) =>
+        Hint == ElevationHint && arguments is { Count: > 0 }
+            ? new GodmanException(Message, ElevationHintFor(arguments), this)
+            : this;
+
+    /// <summary>
+    /// The remedy naming the exact command to re-run. <paramref name="arguments"/> are
+    /// the command's own arguments, program excluded (Spectre's CommandContext.Arguments,
+    /// which is the process's arguments minus the program or <c>dotnet …dll</c>).
+    ///
+    /// On Linux it spells the elevated form out through <see cref="ElevatedCommandLine"/>:
+    /// a bare "re-run with sudo" loses GODMAN_GLOBAL_ROOT (sudo drops it) and names a
+    /// godman sudo may not find. Without arguments -- a caller that has none -- they
+    /// appear as a placeholder.
+    /// </summary>
+    public static string ElevationHintFor(IReadOnlyList<string>? arguments)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return "Global-scope installs require administrator privileges. Re-run elevated.";
+        }
+
+        return arguments is { Count: > 0 }
+            ? $"Global-scope installs require root privileges. Re-run it with sudo: {ElevatedCommandLine.RenderArguments(arguments)}"
+            : $"Global-scope installs require root privileges. Re-run the same command with sudo: {ElevatedCommandLine.Render("<same arguments>")}";
+    }
 }
 
 /// <summary>

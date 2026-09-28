@@ -31,7 +31,8 @@ internal sealed record InstallRequest(
     bool Force,
     bool DryRun = false,
     ChecksumSource? Checksums = null,
-    KnownChecksum? Known = null);
+    KnownChecksum? Known = null,
+    bool CreateLauncherEntry = true);
 
 internal sealed record InstallPlan(
     InstallRequest Request,
@@ -58,7 +59,8 @@ internal sealed record ElevatedInstallPayload(
     bool Force,
     string? Checksum = null,
     string? ChecksumAlgorithm = null,
-    bool ChecksumVerified = false);
+    bool ChecksumVerified = false,
+    bool CreateLauncherEntry = true);
 
 internal sealed class InstallerService
 {
@@ -201,19 +203,82 @@ internal sealed class InstallerService
             Checksum = checksum,
             ChecksumAlgorithm = plan.ChecksumAlgorithm,
             ChecksumVerified = plan.ChecksumVerified,
+            LauncherEntry = request.CreateLauncherEntry,
             AddedAt = DateTimeOffset.UtcNow
         };
+
+        // Captured before RemoveAll: when --force reinstalls the active install in place,
+        // the previous active entry is the one being replaced, and its cleanup still has to
+        // run against the scope it was activated in.
+        var previousActive = request.Activate ? registry.GetActive() : null;
+
+        // A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
+        // carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
+        // in the app menu. Captured here, before RemoveAll drops them; their launcher files
+        // are deleted only after the save below succeeds.
+        var replaced = registry.Installs
+            .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var activeIdBeforeReplace = registry.ActiveId;
 
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
 
         if (request.Activate)
         {
+            // Same cleanup `activate` does. Without it, switching the active install through
+            // `install --activate` (and the TUI install dialog, which always activates) left
+            // the previous activation's shim, PATH entry and desktop shortcut behind. On
+            // Windows, callers that would need elevation for this split the activation off
+            // beforehand -- see NeedsSeparateElevatedActivation; that split is Windows-only.
+            // On Linux it always runs here, in-process; when unprivileged, RemoveUnix cannot
+            // delete a global shim (EACCES), only warns under --verbose, and the shim
+            // survives -- the callers report it afterwards through ShimShadowing.GetWarning.
+            if (previousActive is not null)
+            {
+                try
+                {
+                    await _environment.RemoveActiveAsync(previousActive, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _diagnostics?.Warn($"Failed to clean up previous activation ({previousActive.Version}): {ex.Message}");
+                }
+            }
+
             registry.MarkActive(entry.Id);
-            await _environment.ApplyActiveAsync(entry, cancellationToken);
+            // Without the launcher entry: that is created below, only once the save lands.
+            await _environment.ApplyActiveAsync(
+                entry, dryRun: false, createDesktopShortcut: false, ensureLauncherEntry: false, cancellationToken);
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+
+        // After the save, symmetric with remove: a failed registry write must neither leave
+        // a launcher entry pointing at an unregistered install nor have deleted the entry of
+        // the install it was meant to replace. Activation above deliberately skips the
+        // launcher write, so this is the only place an install creates one. The deletes run
+        // first: on Windows the old and new entries share one .lnk name, so Delete(old)
+        // must not run after Create(entry); with --no-shortcut the old one is correctly
+        // left removed.
+        foreach (var old in replaced)
+        {
+            _environment.Launcher.Delete(old);
+
+            // The desktop shortcut belongs to the activation, and replacing the active entry
+            // without --activate never deactivates it: no later remove or deactivate would
+            // see the replacement as active, so the shortcut would outlive `remove --delete`.
+            // (With --activate, RemoveActiveAsync above already deleted it.)
+            if (old.Id == activeIdBeforeReplace)
+            {
+                _environment.Launcher.DeleteDesktopShortcut(old);
+            }
+        }
+
+        if (request.CreateLauncherEntry)
+        {
+            _environment.Launcher.Create(entry);
+        }
 
         // Non-null only for downloads, so a user-supplied --archive is never touched.
         if (plan.CacheFilePath is not null)
@@ -257,35 +322,54 @@ internal sealed class InstallerService
                 : new KnownChecksum(plan.Checksum, plan.ChecksumAlgorithm!, plan.ChecksumVerified)
         };
 
+        var completed = false;
         try
         {
             await RunElevatedInstallAsync(elevatedRequest, cancellationToken);
+            completed = true;
         }
         finally
         {
             // The download happened here, so the cache entry is this process's to
             // clean up: the child took the local-archive branch and its plan has no
-            // CacheFilePath at all. This must run only after the child has actually
-            // exited, since the archive it is extracting is that very file --
-            // RunElevatedInstallAsync's own OperationCanceledException handling now
-            // kills the child (and awaits its exit) before rethrowing, so by the
-            // time this finally runs on the cancellation path, nothing still holds
-            // the file open.
+            // CacheFilePath at all. On the cancellation path,
+            // RunElevatedInstallAsync's own OperationCanceledException handling
+            // attempts to kill the child and bounds the wait for its exit before
+            // rethrowing -- but that kill is not guaranteed: the child may be
+            // elevated in a way this process cannot terminate, or the wait may
+            // simply time out. When that happens, this finally still runs (and the
+            // archive may still be in use), which is exactly why the entry is kept
+            // below rather than deleted.
             //
             // On cancellation specifically, the entry is deliberately kept rather
             // than deleted: the whole point of a cancelled elevated install is that
             // the completed, verified download survives so a retry reuses it
             // instead of re-downloading (same resume contract as the unelevated
-            // path). Only a genuine outcome -- success or a real failure -- clears
-            // the cache. Non-null only for downloads, so a user-supplied --archive
-            // is never touched.
-            if (plan.CacheFilePath is not null && !cancellationToken.IsCancellationRequested)
+            // path) -- and keeping it also avoids deleting a file the child may
+            // still have open. Only a genuine outcome -- success or a real failure
+            // -- clears the cache. Non-null only for downloads, so a user-supplied
+            // --archive is never touched.
+            //
+            // A token cancelled *after* the child already succeeded does not make
+            // this a cancelled install -- keying on `completed` rather than the
+            // token alone is what stops that late cancel leaking the entry. That
+            // includes the narrow window where the cancellation token fires after
+            // the child already exited 0 but before this process observed it:
+            // RunElevatedInstallAsync's OperationCanceledException handling treats
+            // that as success rather than a cancel (see ChildAlreadySucceeded), so
+            // `completed` is still set to true here.
+            if (plan.CacheFilePath is not null && (completed || !cancellationToken.IsCancellationRequested))
             {
                 _download.DeleteCacheEntry(plan.CacheFilePath);
             }
         }
 
-        var registry = await _registry.LoadAsync(cancellationToken);
+        // Reaching here means RunElevatedInstallAsync returned without throwing, so
+        // `completed` is always true and `cancellationToken` may already be
+        // cancelled (the late-cancel-after-success window) -- CancellationToken.None
+        // is what stops that from making this reload throw and report a finished
+        // install as cancelled.
+        var registry = await _registry.LoadAsync(CancellationToken.None);
         var match = registry.Installs
             .OrderByDescending(x => x.AddedAt)
             .FirstOrDefault(x =>
@@ -436,6 +520,18 @@ internal sealed class InstallerService
     }
 
     /// <summary>
+    /// True when activating a freshly installed <paramref name="requestScope"/> install
+    /// would write machine-wide state -- i.e. a user-scope install switching away from an
+    /// active global one. Such callers install with Activate = false and then activate
+    /// through <see cref="ElevatedActivator"/>, exactly as <c>activate</c> does. A
+    /// global-scope install needs no split: on Windows it already runs wholly in the
+    /// elevated child.
+    /// </summary>
+    internal static bool NeedsSeparateElevatedActivation(InstallScope requestScope, InstallScope? previousActiveScope) =>
+        requestScope == InstallScope.User
+        && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
+
+    /// <summary>
     /// Projects a request onto the wire format the elevated child is launched with.
     /// </summary>
     internal static ElevatedInstallPayload BuildElevatedPayload(InstallRequest request) =>
@@ -450,7 +546,8 @@ internal sealed class InstallerService
             request.Force,
             request.Known?.Value,
             request.Known?.Algorithm,
-            request.Known?.Verified ?? false);
+            request.Known?.Verified ?? false,
+            request.CreateLauncherEntry);
 
     private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
     {
@@ -498,17 +595,39 @@ internal sealed class InstallerService
             }
             catch (OperationCanceledException)
             {
-                // WaitForExitAsync(cancellationToken) throws immediately on
-                // cancellation without touching the child at all -- left alone, the
-                // elevated process would keep running unobserved (reading, or
-                // possibly still writing into, the very cache archive the caller's
-                // finally block is about to decide whether to delete) while this
-                // process reports "cancelled" and moves on. Actually killing it here
-                // is what makes that report true, and doing it before this method
-                // returns is what lets the caller's finally block safely decide the
-                // cache entry's fate.
-                await TryKillProcessTreeAsync(process);
-                throw;
+                // WaitForExitAsync(cancellationToken) can throw here not only when
+                // the token fires while the child is still running, but also in the
+                // narrow window where the child already exited 0 (it finished the
+                // install) right as the cancel landed, before this await observed
+                // that exit. Treat that case as success rather than a cancel: the
+                // install genuinely completed, and killing an already-exited process
+                // or reporting a finished install as "cancelled" would both be wrong.
+                if (!ChildAlreadySucceeded(process))
+                {
+                    // Left alone, the elevated process would keep running unobserved
+                    // (reading, or possibly still writing into, the very cache
+                    // archive the caller's finally block is about to decide whether
+                    // to delete) while this process reports "cancelled" and moves
+                    // on. The kill is attempted and the wait bounded (see
+                    // TryKillProcessTreeAsync); when it isn't confirmed, the child
+                    // may still be using the archive or go on to complete the
+                    // install on its own.
+                    if (!await TryKillProcessTreeAsync(process))
+                    {
+                        // Kept regardless (see InstallWithElevationAsync): a
+                        // surviving child may still be reading the archive, or go on
+                        // to finish the install and write the registry itself, so
+                        // deleting the cache here could delete a file still in use
+                        // or force a needless re-download of a since-completed
+                        // install.
+                        _diagnostics?.Warn("the elevated installer did not confirm exit after cancellation; it may still be running.");
+                    }
+                    throw;
+                }
+
+                // Fall through instead of rethrowing: the ExitCode check below sees
+                // 0 and passes, so this method returns normally and
+                // InstallWithElevationAsync marks the install completed.
             }
 
             if (process.ExitCode != 0)
@@ -526,14 +645,47 @@ internal sealed class InstallerService
     }
 
     /// <summary>
+    /// True when <paramref name="process"/> has already exited on its own with exit
+    /// code 0 -- the late-cancel race in <see cref="RunElevatedInstallAsync"/> where
+    /// the cancellation token fires after the elevated child finished successfully
+    /// but before <c>WaitForExitAsync</c> observed that exit. Pure and
+    /// side-effect-free so it can be tested directly against a real process.
+    /// </summary>
+    /// <remarks>
+    /// <c>HasExited</c> and <c>ExitCode</c> both throw <see cref="InvalidOperationException"/>
+    /// when no process is associated with the object any more (disposed, or never
+    /// started); that is treated as "not a success" rather than allowed to escape,
+    /// since the caller is already inside its own <c>OperationCanceledException</c>
+    /// handling and must not have that replaced by a different exception.
+    /// </remarks>
+    internal static bool ChildAlreadySucceeded(Process process)
+    {
+        try
+        {
+            return process.HasExited && process.ExitCode == 0;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Best-effort termination of the elevated child and everything it spawned,
     /// used only from the WaitForExitAsync cancellation path above. Cancellation
     /// must never fail because of this: the child may have already exited in the
     /// gap between the token firing and this call (or between the HasExited check
     /// and Kill itself), and Kill() only requests termination -- it does not wait
-    /// for it -- so this awaits WaitForExitAsync() afterward to confirm the
-    /// process, and whatever file handles it held, are actually gone before
-    /// returning.
+    /// for it -- so this awaits <paramref name="waitForExit"/> (real exit, by
+    /// default) afterward to try to confirm the process, and whatever file handles
+    /// it held, are actually gone before returning. That wait is itself bounded by
+    /// <paramref name="timeout"/>: an elevated child the OS will not let us reap
+    /// must not hang cancellation forever. The returned bool is true when exit was
+    /// actually confirmed within that bound, or when no process is associated with
+    /// the object any more (already exited or never started) -- both cases mean
+    /// nothing is left to wait for. False covers every other outcome (timeout, a
+    /// refused kill, or a partially-killed tree), and callers must treat false as
+    /// "may still be running", not as failure.
     /// </summary>
     /// <remarks>
     /// <c>internal</c> rather than <c>private</c> purely so
@@ -545,8 +697,13 @@ internal sealed class InstallerService
     /// Global-scope + unelevated branch. Do not call this from outside that call
     /// site and the tests that cover it directly.
     /// </remarks>
-    internal static async Task TryKillProcessTreeAsync(Process process)
+    internal static async Task<bool> TryKillProcessTreeAsync(
+        Process process,
+        TimeSpan? timeout = null,
+        Func<Process, CancellationToken, Task>? waitForExit = null)
     {
+        waitForExit ??= static (p, token) => p.WaitForExitAsync(token);
+
         try
         {
             if (!process.HasExited)
@@ -554,16 +711,34 @@ internal sealed class InstallerService
                 process.Kill(entireProcessTree: true);
             }
 
-            await process.WaitForExitAsync();
+            // Bounded: Kill() only requests termination, and an elevated child the OS
+            // will not let us reap must not hang cancellation forever.
+            using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(10));
+            await waitForExit(process, cts.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
         catch (InvalidOperationException)
         {
-            // Already exited between the HasExited check and Kill/WaitForExitAsync.
+            // No process is associated with this object any more (it was disposed or never
+            // started). Nothing is left to wait for.
+            return true;
         }
         catch (Win32Exception)
         {
-            // The OS refused the kill request for reasons outside our control
-            // (e.g. the process was already terminating). Best-effort only.
+            // The OS refused the kill (e.g. already terminating, or access denied).
+            return false;
+        }
+        catch (AggregateException)
+        {
+            // Documented for Kill(entireProcessTree: true) when part of the tree could not
+            // be killed -- the likely case for an unelevated parent and an elevated child.
+            // Escaping here would replace the OperationCanceledException the caller is
+            // about to rethrow, turning a cancel into a reported failure.
+            return false;
         }
     }
 
@@ -576,6 +751,7 @@ internal sealed class InstallerService
             Platform = request.Platform,
             Scope = request.Scope,
             Path = targetDir,
+            LauncherEntry = request.CreateLauncherEntry,
             AddedAt = DateTimeOffset.UtcNow
         };
 

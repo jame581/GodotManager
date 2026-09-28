@@ -32,3 +32,7 @@ TestResults/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Claude Code (per-machine)
+.claude/settings.local.json
+.claude/worktrees/

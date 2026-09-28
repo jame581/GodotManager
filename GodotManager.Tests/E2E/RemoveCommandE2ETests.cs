@@ -66,15 +66,19 @@ public class RemoveCommandE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task Remove_GlobalScopeEntry_WithoutPrivilege_RendersHint()
+    public async Task Remove_GlobalScopeEntry_ReadOnlyRegistryFile_StopsAtThePreCheckWithTheRealCommand()
     {
-        // Reproduces Jan's manual-test observation (task-13-brief.md Bug A): removing
-        // a global-scope entry unprivileged makes RegistryService.SaveAsync's global
-        // write throw a GodmanException whose Hint carries the "re-run with sudo"
-        // remedy. Before the fix RemoveCommand had no top-level catch, so Spectre's
-        // own default handler rendered a bare "Error: <message>" with the hint
-        // silently dropped. This POSIX permission simulation mirrors
-        // RegistryServiceTests.SaveAsync_WhenGlobalWriteFails_ThrowsGodmanExceptionWithHint.
+        // Originally reproduced Jan's manual-test observation (task-13-brief.md Bug A): the
+        // hint of RegistryService.SaveAsync's late global-write failure was dropped. Since
+        // LinuxElevation.Check probes the global registry file up front, a read-only file
+        // now stops the removal at the pre-check instead, before anything is written; this
+        // pins that the rendering (prefix, hint, the real arguments) survived the move.
+        //
+        // The late path itself -- SaveAsync's GodmanException, rewritten by
+        // GodmanException.WithArguments in RemoveCommand/InstallCommand/DeactivateCommand --
+        // is now reachable only through a race between the pre-check and the save (TOCTOU),
+        // which a test cannot set up deterministically; a user-registry failure raises no
+        // hint at all. WithArguments is covered by its unit test in LinuxElevationTests.
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess)
         {
             return; // Permission simulation below is POSIX-specific and root bypasses it.
@@ -117,8 +121,11 @@ public class RemoveCommandE2ETests : IDisposable
                 Assert.Contains("Remove failed:", result.Output);
                 Assert.DoesNotContain("Error:", result.Output);
 
-                Assert.Contains("hint:", result.Output);
-                Assert.Contains("sudo", result.Output, StringComparison.OrdinalIgnoreCase);
+                var output = result.Output.Replace("\r", "").Replace("\n", "");
+                Assert.Contains("hint:", output);
+                Assert.Contains("sudo", output, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains($"remove {entry.Id}", output);
+                Assert.DoesNotContain("<same arguments>", output);
             }
             finally
             {

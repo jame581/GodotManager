@@ -48,6 +48,7 @@ internal static class CliTestHarness
             config.AddCommand<DeactivateCommand>("deactivate");
             config.AddCommand<RemoveCommand>("remove");
             config.AddCommand<DoctorCommand>("doctor");
+            config.AddCommand<VersionCommand>("version");
             config.AddCommand<CleanCommand>("clean");
         });
 

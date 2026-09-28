@@ -1,6 +1,7 @@
 using GodotManager.Services;
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -41,6 +42,85 @@ public class InstallerServiceInternalsTests
             $"expected the process to be killed quickly, but this took {stopwatch.Elapsed}");
     }
 
+    [Fact]
+    public async Task TryKillProcessTreeAsync_WhenExitIsNeverObserved_GivesUpAfterTheTimeoutAndReturnsFalse()
+    {
+        using var process = StartLongRunningProcess();
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var confirmed = await InstallerService.TryKillProcessTreeAsync(
+                process,
+                TimeSpan.FromMilliseconds(200),
+                waitForExit: (_, token) => Task.Delay(Timeout.Infinite, token));
+
+            Assert.False(confirmed);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"took {stopwatch.Elapsed}");
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task TryKillProcessTreeAsync_WithARunningProcess_ReturnsTrue()
+    {
+        using var process = StartLongRunningProcess();
+
+        Assert.True(await InstallerService.TryKillProcessTreeAsync(process));
+        Assert.True(process.HasExited);
+    }
+
+    /// <summary>
+    /// Covers the pure helper the fix round 1 late-cancel race fix uses:
+    /// RunElevatedInstallAsync's OperationCanceledException handler calls this to
+    /// decide whether the cancellation token fired after the elevated child had
+    /// already exited 0 (in which case the install is reported completed rather
+    /// than cancelled), rather than the actual production call site, which is
+    /// Windows + Global-scope + unelevated only and not reachable from this
+    /// platform.
+    /// </summary>
+    [Fact]
+    public async Task ChildAlreadySucceeded_WithAProcessThatExitedZero_ReturnsTrue()
+    {
+        using var process = StartShortLivedProcess();
+        await process.WaitForExitAsync();
+
+        Assert.True(InstallerService.ChildAlreadySucceeded(process));
+    }
+
+    [Fact]
+    public async Task ChildAlreadySucceeded_WithAProcessThatExitedNonZero_ReturnsFalse()
+    {
+        using var process = StartFailingProcess();
+        await process.WaitForExitAsync();
+
+        Assert.False(InstallerService.ChildAlreadySucceeded(process));
+    }
+
+    [Fact]
+    public void ChildAlreadySucceeded_WithARunningProcess_ReturnsFalse()
+    {
+        using var process = StartLongRunningProcess();
+        try
+        {
+            Assert.False(InstallerService.ChildAlreadySucceeded(process));
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void ChildAlreadySucceeded_WithNoAssociatedProcess_ReturnsFalseRatherThanThrowing()
+    {
+        using var process = new Process();
+
+        Assert.False(InstallerService.ChildAlreadySucceeded(process));
+    }
+
     /// <summary>
     /// Covers the scenario the fix exists to survive -- cancellation lands after
     /// the elevated child has already exited on its own -- but not, it turns out,
@@ -55,9 +135,13 @@ public class InstallerServiceInternalsTests
     /// WaitForExitAsync() on a Process whose underlying OS process already exited
     /// simply does not throw -- so for exactly the input this test constructs, the
     /// guard and catches are not load-bearing here. They are kept in production
-    /// code regardless: .NET's own documentation states Kill() throws
-    /// InvalidOperationException for an already-exited process on Windows, which
-    /// this Linux environment cannot exercise either way. This test is retained as
+    /// code regardless, but not for the reason once given here: throwing on an
+    /// already-exited process was .NET Framework behaviour, and this project
+    /// targets net10.0 only. What the catches actually cover is
+    /// InvalidOperationException when no process is associated with the object any
+    /// more, Win32Exception when the OS refuses the kill, and AggregateException,
+    /// which Kill(entireProcessTree: true) documents when part of the tree cannot
+    /// be killed. This test is retained as
     /// a real behavioral pin (the documented contract genuinely holds: nothing
     /// throws for this input, on this platform, today) and as a regression guard --
     /// not as proof that the defensive code is what makes it hold here.
@@ -89,6 +173,16 @@ public class InstallerServiceInternalsTests
         var psi = OperatingSystem.IsWindows()
             ? new ProcessStartInfo("cmd.exe", "/c exit 0")
             : new ProcessStartInfo("true", string.Empty);
+        psi.UseShellExecute = false;
+
+        return Process.Start(psi) ?? throw new InvalidOperationException("Could not start test process.");
+    }
+
+    private static Process StartFailingProcess()
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe", "/c exit 1")
+            : new ProcessStartInfo("false", string.Empty);
         psi.UseShellExecute = false;
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Could not start test process.");

@@ -14,10 +14,14 @@ namespace GodotManager.Commands;
 internal sealed class CleanCommand : Command<CleanCommand.Settings>
 {
     private readonly AppPaths _paths;
+    private readonly RegistryService _registry;
+    private readonly DiagnosticContext? _diagnostics;
 
-    public CleanCommand(AppPaths paths)
+    public CleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
+        _registry = registry;
+        _diagnostics = diagnostics;
     }
 
     public sealed class Settings : GlobalSettings
@@ -29,11 +33,39 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godman installs, shims, and config. Continue?", false);
+        // Linux: stop before anything -- user-scope paths included -- is deleted when there
+        // are global targets this user cannot remove, rather than cleaning half and printing
+        // a "Failed to remove" line per global item. Before the prompt, so the user is not
+        // asked to confirm an operation that is about to be refused.
+        if (LinuxElevation.CheckClean(_paths, new LauncherService(_paths, _diagnostics), context.Arguments) is { } denied)
+        {
+            return GodmanExceptionRenderer.Render("Clean failed:", denied);
+        }
+
+        // Launcher entries do not follow GODMAN_HOME / GODMAN_GLOBAL_ROOT (see AppPaths), so
+        // even a sandboxed run removes the real ones -- say so before anything is deleted.
+        var confirm = settings.Yes || AnsiConsole.Confirm(
+            "This will remove godman installs, shims, config, and the launcher entries in your real application menu " +
+            "(those do not follow GODMAN_HOME or GODMAN_GLOBAL_ROOT). Continue?", false);
         if (!confirm)
         {
             AnsiConsole.MarkupLine("[yellow]Aborted.[/]");
             return 0;
+        }
+
+        // Read before anything is deleted: the registry is the only record of which desktop
+        // shortcuts on Windows are ours. Best-effort -- clean is the recovery tool, and it
+        // must still run on a machine whose installs.json is corrupt. The list only matters
+        // for Windows desktop shortcuts; everything else clean removes is found by location.
+        IReadOnlyList<InstallEntry> installs;
+        try
+        {
+            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+            installs = [];
         }
 
         if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated() && HasGlobalCleanupTargets(_paths))
@@ -42,12 +74,29 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             return RunElevatedCleanup();
         }
 
-        CleanupAll(_paths);
+        CleanupAll(_paths, installs, _diagnostics);
         return 0;
     }
 
-    internal static void CleanupAll(AppPaths paths)
+    internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
     {
+        var launcher = new LauncherService(paths, diagnostics);
+        foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
+        {
+            foreach (var removed in launcher.DeleteAll(scope, installs ?? []))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] launcher entry: {removed}");
+            }
+
+            // DeleteAll only returns what it did delete; without this an unprivileged
+            // clean was silent about the global entries it could not, unlike every
+            // neighbouring global item below.
+            foreach (var left in launcher.FindRemaining(scope))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] launcher entry: {left}");
+            }
+        }
+
         CleanupDirectory(paths.ConfigDirectory, "config");
         CleanupDirectory(paths.GetInstallRoot(InstallScope.User), "user installs");
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.User), "user shims");
@@ -70,6 +119,15 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
 
         CleanupDirectory(globalInstallRoot, "global installs");
+
+        // A root the migration has not moved yet still holds global installs -- `list` reads
+        // them from there -- so it goes too. Only existing directories are returned, so this
+        // prints nothing on a migrated machine.
+        foreach (var legacyRoot in paths.GetLegacyGlobalInstallRoots())
+        {
+            CleanupDirectory(legacyRoot, "unmigrated global installs");
+        }
+
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 
@@ -77,7 +135,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
     {
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
             || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
-            || File.Exists(paths.GlobalRegistryFile);
+            || File.Exists(paths.GlobalRegistryFile)
+            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global));
     }
 
     private static int RunElevatedCleanup()
