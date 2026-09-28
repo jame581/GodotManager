@@ -302,9 +302,11 @@ internal sealed class InstallerService
                 : new KnownChecksum(plan.Checksum, plan.ChecksumAlgorithm!, plan.ChecksumVerified)
         };
 
+        var completed = false;
         try
         {
             await RunElevatedInstallAsync(elevatedRequest, cancellationToken);
+            completed = true;
         }
         finally
         {
@@ -324,13 +326,19 @@ internal sealed class InstallerService
             // path). Only a genuine outcome -- success or a real failure -- clears
             // the cache. Non-null only for downloads, so a user-supplied --archive
             // is never touched.
-            if (plan.CacheFilePath is not null && !cancellationToken.IsCancellationRequested)
+            //
+            // A token cancelled *after* the child already succeeded does not make
+            // this a cancelled install -- keying on `completed` rather than the
+            // token alone is what stops that late cancel leaking the entry.
+            if (plan.CacheFilePath is not null && (completed || !cancellationToken.IsCancellationRequested))
             {
                 _download.DeleteCacheEntry(plan.CacheFilePath);
             }
         }
 
-        var registry = await _registry.LoadAsync(cancellationToken);
+        // A late cancel after `completed` must not make LoadAsync throw and report a
+        // finished install as cancelled -- CancellationToken.None only on that path.
+        var registry = await _registry.LoadAsync(completed ? CancellationToken.None : cancellationToken);
         var match = registry.Installs
             .OrderByDescending(x => x.AddedAt)
             .FirstOrDefault(x =>
@@ -565,7 +573,12 @@ internal sealed class InstallerService
                 // is what makes that report true, and doing it before this method
                 // returns is what lets the caller's finally block safely decide the
                 // cache entry's fate.
-                await TryKillProcessTreeAsync(process);
+                if (!await TryKillProcessTreeAsync(process))
+                {
+                    // The cache entry is kept on cancellation regardless (see InstallWithElevationAsync),
+                    // so an unconfirmed kill costs nothing but this warning.
+                    _diagnostics?.Warn("the elevated installer did not confirm exit after cancellation; it may still be running.");
+                }
                 throw;
             }
 
@@ -589,9 +602,14 @@ internal sealed class InstallerService
     /// must never fail because of this: the child may have already exited in the
     /// gap between the token firing and this call (or between the HasExited check
     /// and Kill itself), and Kill() only requests termination -- it does not wait
-    /// for it -- so this awaits WaitForExitAsync() afterward to confirm the
-    /// process, and whatever file handles it held, are actually gone before
-    /// returning.
+    /// for it -- so this awaits <paramref name="waitForExit"/> (real exit, by
+    /// default) afterward to try to confirm the process, and whatever file handles
+    /// it held, are actually gone before returning. That wait is itself bounded by
+    /// <paramref name="timeout"/>: an elevated child the OS will not let us reap
+    /// must not hang cancellation forever. The returned bool is true only when exit
+    /// was actually confirmed within that bound; false covers every other outcome
+    /// (timeout, a refused kill, or a partially-killed tree), and callers must
+    /// treat false as "may still be running", not as failure.
     /// </summary>
     /// <remarks>
     /// <c>internal</c> rather than <c>private</c> purely so
@@ -603,8 +621,13 @@ internal sealed class InstallerService
     /// Global-scope + unelevated branch. Do not call this from outside that call
     /// site and the tests that cover it directly.
     /// </remarks>
-    internal static async Task TryKillProcessTreeAsync(Process process)
+    internal static async Task<bool> TryKillProcessTreeAsync(
+        Process process,
+        TimeSpan? timeout = null,
+        Func<Process, CancellationToken, Task>? waitForExit = null)
     {
+        waitForExit ??= static (p, token) => p.WaitForExitAsync(token);
+
         try
         {
             if (!process.HasExited)
@@ -612,16 +635,34 @@ internal sealed class InstallerService
                 process.Kill(entireProcessTree: true);
             }
 
-            await process.WaitForExitAsync();
+            // Bounded: Kill() only requests termination, and an elevated child the OS
+            // will not let us reap must not hang cancellation forever.
+            using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(10));
+            await waitForExit(process, cts.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
         catch (InvalidOperationException)
         {
-            // Already exited between the HasExited check and Kill/WaitForExitAsync.
+            // No process is associated with this object any more (it was disposed or never
+            // started). Nothing is left to wait for.
+            return true;
         }
         catch (Win32Exception)
         {
-            // The OS refused the kill request for reasons outside our control
-            // (e.g. the process was already terminating). Best-effort only.
+            // The OS refused the kill (e.g. already terminating, or access denied).
+            return false;
+        }
+        catch (AggregateException)
+        {
+            // Documented for Kill(entireProcessTree: true) when part of the tree could not
+            // be killed -- the likely case for an unelevated parent and an elevated child.
+            // Escaping here would replace the OperationCanceledException the caller is
+            // about to rethrow, turning a cancel into a reported failure.
+            return false;
         }
     }
 

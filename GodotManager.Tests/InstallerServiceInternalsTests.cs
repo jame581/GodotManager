@@ -1,6 +1,7 @@
 using GodotManager.Services;
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -41,6 +42,36 @@ public class InstallerServiceInternalsTests
             $"expected the process to be killed quickly, but this took {stopwatch.Elapsed}");
     }
 
+    [Fact]
+    public async Task TryKillProcessTreeAsync_WhenExitIsNeverObserved_GivesUpAfterTheTimeoutAndReturnsFalse()
+    {
+        using var process = StartLongRunningProcess();
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var confirmed = await InstallerService.TryKillProcessTreeAsync(
+                process,
+                TimeSpan.FromMilliseconds(200),
+                waitForExit: (_, token) => Task.Delay(Timeout.Infinite, token));
+
+            Assert.False(confirmed);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"took {stopwatch.Elapsed}");
+        }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task TryKillProcessTreeAsync_WithARunningProcess_ReturnsTrue()
+    {
+        using var process = StartLongRunningProcess();
+
+        Assert.True(await InstallerService.TryKillProcessTreeAsync(process));
+        Assert.True(process.HasExited);
+    }
+
     /// <summary>
     /// Covers the scenario the fix exists to survive -- cancellation lands after
     /// the elevated child has already exited on its own -- but not, it turns out,
@@ -55,9 +86,13 @@ public class InstallerServiceInternalsTests
     /// WaitForExitAsync() on a Process whose underlying OS process already exited
     /// simply does not throw -- so for exactly the input this test constructs, the
     /// guard and catches are not load-bearing here. They are kept in production
-    /// code regardless: .NET's own documentation states Kill() throws
-    /// InvalidOperationException for an already-exited process on Windows, which
-    /// this Linux environment cannot exercise either way. This test is retained as
+    /// code regardless, but not for the reason once given here: throwing on an
+    /// already-exited process was .NET Framework behaviour, and this project
+    /// targets net10.0 only. What the catches actually cover is
+    /// InvalidOperationException when no process is associated with the object any
+    /// more, Win32Exception when the OS refuses the kill, and AggregateException,
+    /// which Kill(entireProcessTree: true) documents when part of the tree cannot
+    /// be killed. This test is retained as
     /// a real behavioral pin (the documented contract genuinely holds: nothing
     /// throws for this input, on this platform, today) and as a regression guard --
     /// not as proof that the defensive code is what makes it hold here.
