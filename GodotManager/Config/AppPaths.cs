@@ -47,6 +47,13 @@ internal sealed class AppPaths
     public string? LegacyGlobalRootOverrideWarning { get; }
 
     /// <summary>
+    /// The global-root variable in effect and its value (the primary name, or the legacy
+    /// alias when only that is set; an empty value counts as unset). Null without an
+    /// override. For remedies that must hand it to a sudo that would otherwise drop it.
+    /// </summary>
+    public (string Name, string Value)? GlobalRootOverride { get; }
+
+    /// <summary>
     /// True when <see cref="LegacyGlobalRootOverrideWarning"/> is set: the global shim and
     /// install directories under the misread prefix are then not created, since they
     /// would be junk directories inside the old shim directory.
@@ -92,6 +99,10 @@ internal sealed class AppPaths
         var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
         var overrideGlobalBase = ResolveOverride(overrideGlobalPrimary, overrideGlobalLegacy);
+        if (overrideGlobalBase is not null)
+        {
+            GlobalRootOverride = (string.IsNullOrEmpty(overrideGlobalPrimary) ? LegacyEnvGlobal : EnvGlobal, overrideGlobalBase);
+        }
 
         var (migrateUser, migrateGlobal) = MigrationGates(
             overrideBasePrimary, overrideBaseLegacy, overrideGlobalPrimary, overrideGlobalLegacy);
@@ -192,7 +203,7 @@ internal sealed class AppPaths
                 && UsesPre140GlobalRootMeaning(overrideGlobalBase, System.IO.Path.Combine(globalInstallRoot, "installs.json")))
             {
                 LegacyGlobalRootOverrideWarning = BuildLegacyGlobalRootOverrideWarning(
-                    string.IsNullOrEmpty(overrideGlobalPrimary) ? LegacyEnvGlobal : EnvGlobal, overrideGlobalBase);
+                    GlobalRootOverride!.Value.Name, overrideGlobalBase);
                 _skipGlobalDirectories = true;
             }
 

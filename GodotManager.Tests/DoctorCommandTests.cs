@@ -361,7 +361,7 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains("Reinstall or remove those installs", output);
         Assert.DoesNotContain("can be removed", output);
         Assert.DoesNotContain("to complete the move", output);
-        Assert.DoesNotContain(ElevatedCommandLine.Render("list"), output);
+        Assert.DoesNotContain(ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride), output);
     }
 
     // The four tests below follow TryMigrateDirectory's real rule: it no-ops whenever the
@@ -381,7 +381,7 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains(
             OperatingSystem.IsWindows()
                 ? "Run an elevated godman command to complete the move"
-                : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move",
+                : $"Run `{ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride)}` to complete the move",
             output);
         Assert.DoesNotContain("rmdir", output);
         Assert.DoesNotContain("can be removed", output);
@@ -402,7 +402,9 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains($"blocked only by the empty {destination}", output);
         if (!OperatingSystem.IsWindows())
         {
-            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list")}`", output);
+            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride)}`", output);
+            // The fixture sets GODMAN_GLOBAL_ROOT, which sudo would otherwise drop.
+            Assert.Contains($"GODMAN_GLOBAL_ROOT={Path.Combine(_fixture.TempRoot, "global")}", output);
         }
         Assert.Contains("Do not delete this directory", output);
         Assert.DoesNotContain("can be removed", output);

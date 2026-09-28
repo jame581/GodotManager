@@ -57,6 +57,31 @@ internal static class ElevatedCommandLine
         return $"sudo {Quote(processPath)} {arguments}";
     }
 
+    /// <summary>
+    /// <see cref="Render(string)"/> with one environment variable passed through sudo as
+    /// <c>sudo NAME=value …</c>. sudo's env_reset drops the caller's environment, so
+    /// without it an elevated run would not see, say, the GODMAN_GLOBAL_ROOT the rest of
+    /// the advice assumed. Null renders exactly what <see cref="Render(string)"/> does.
+    /// </summary>
+    public static string Render(string arguments, (string Name, string Value)? environment) =>
+        Render(arguments, environment, Environment.ProcessPath, OperatingSystem.IsWindows());
+
+    /// <param name="windows">
+    /// Ignored environment on Windows: elevation there is a UAC prompt, with no command
+    /// line to put the variable on.
+    /// </param>
+    internal static string Render(string arguments, (string Name, string Value)? environment, string? processPath, bool windows)
+    {
+        var command = Render(arguments, processPath, windows);
+        if (windows || environment is not { } variable)
+        {
+            return command;
+        }
+
+        // Render's Unix output always starts with "sudo "; the assignment goes right after it.
+        return $"sudo {variable.Name}={Quote(variable.Value)} {command["sudo ".Length..]}";
+    }
+
     private static string Quote(string path) =>
         path.IndexOfAny([' ', '\'', '"', '$', '`', '\\', '\t']) >= 0
             ? "'" + path.Replace("'", "'\\''") + "'"

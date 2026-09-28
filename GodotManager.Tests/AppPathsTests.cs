@@ -782,6 +782,20 @@ public class AppPathsTests
         }
     }
 
+    [Fact]
+    public void GlobalRootOverride_NamesTheVariableAndValueInEffect()
+    {
+        using var fixture = new GodmanTestFixture();
+        Assert.Equal(("GODMAN_GLOBAL_ROOT", Path.Combine(fixture.TempRoot, "global")), fixture.Paths.GlobalRootOverride);
+
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", null);
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", "/opt/legacy");
+        Assert.Equal(("GODOT_MANAGER_GLOBAL_ROOT", "/opt/legacy"), new AppPaths(applySideEffects: false).GlobalRootOverride);
+
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", null);
+        Assert.Null(new AppPaths(applySideEffects: false).GlobalRootOverride);
+    }
+
     // --- The env.sh the global shim sources (review 3, item M3) ---
 
     [Fact]

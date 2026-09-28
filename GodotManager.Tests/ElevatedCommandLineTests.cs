@@ -56,4 +56,38 @@ public class ElevatedCommandLineTests
     {
         Assert.Equal("godman list", ElevatedCommandLine.Render("list", @"C:\Tools\godman.exe", windows: true));
     }
+
+    // --- Passing GODMAN_GLOBAL_ROOT through sudo (review 3 follow-up, H3) ---
+
+    [Fact]
+    public void WithAnEnvironmentOverride_PassesItThroughSudo()
+    {
+        // sudo's env_reset drops GODMAN_GLOBAL_ROOT, so a plain `sudo godman list` would
+        // migrate the default /usr/local instead of the user's prefix.
+        Assert.Equal(
+            "sudo GODMAN_GLOBAL_ROOT=/opt/godot /home/jan/.local/bin/godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", "/opt/godot"), "/home/jan/.local/bin/godman", windows: false));
+        Assert.Equal(
+            "sudo GODMAN_GLOBAL_ROOT=/opt/godot godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", "/opt/godot"), "/usr/bin/godman", windows: false));
+    }
+
+    [Fact]
+    public void WithAnEnvironmentOverride_QuotesAValueTheShellWouldSplit()
+    {
+        Assert.Equal(
+            "sudo GODMAN_GLOBAL_ROOT='/opt/my godot' /usr/local/bin/godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", "/opt/my godot"), "/usr/local/bin/godman", windows: false));
+    }
+
+    [Fact]
+    public void WithoutAnEnvironmentOverride_IsUnchanged_AndWindowsIgnoresIt()
+    {
+        Assert.Equal(
+            ElevatedCommandLine.Render("list", "/home/jan/.local/bin/godman", windows: false),
+            ElevatedCommandLine.Render("list", null, "/home/jan/.local/bin/godman", windows: false));
+        Assert.Equal(
+            "godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", @"D:\Apps"), @"C:\Tools\godman.exe", windows: true));
+    }
 }
