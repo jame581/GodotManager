@@ -1,6 +1,8 @@
 using GodotManager.Commands;
 using GodotManager.Domain;
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
+using Spectre.Console.Testing;
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -152,6 +154,40 @@ public class CleanCommandTests : IDisposable
         Assert.False(_fixture.Launcher.Exists(global));
         Assert.False(File.Exists(_fixture.Paths.GetLauncherIconPath(InstallScope.User)));
         Assert.True(File.Exists(foreign));
+    }
+
+    [Fact]
+    public void CleanupAll_ReportsGlobalLauncherEntriesItCouldNotRemove()
+    {
+        // Parity-review F3: an unprivileged clean printed "Removed" for each launcher
+        // file it deleted and nothing at all for the global ones it could not, while
+        // neighbouring global items print "Failed to remove".
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var installPath = Path.Combine(_fixture.TempRoot, "i");
+        Directory.CreateDirectory(installPath);
+        var global = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        _fixture.Launcher.Create(global);
+        var globalLauncherDir = _fixture.Paths.GetLauncherDirectory(InstallScope.Global);
+        var desktopFile = Directory.GetFiles(globalLauncherDir, "godman-godot-*.desktop")[0];
+
+        var console = new TestConsole();
+        console.Profile.Width = 1000;
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        File.SetUnixFileMode(globalLauncherDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            CleanCommand.CleanupAll(_fixture.Paths, [global]);
+
+            Assert.True(File.Exists(desktopFile));
+            Assert.Contains($"Failed to remove launcher entry: {desktopFile}", console.Output);
+        }
+        finally
+        {
+            File.SetUnixFileMode(globalLauncherDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            AnsiConsole.Console = originalConsole;
+        }
     }
 
     [Fact]

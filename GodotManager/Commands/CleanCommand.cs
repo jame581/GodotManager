@@ -74,6 +74,14 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             {
                 AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] launcher entry: {removed}");
             }
+
+            // DeleteAll only returns what it did delete; without this an unprivileged
+            // clean was silent about the global entries it could not, unlike every
+            // neighbouring global item below.
+            foreach (var left in launcher.FindRemaining(scope))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] launcher entry: {left}");
+            }
         }
 
         CleanupDirectory(paths.ConfigDirectory, "config");

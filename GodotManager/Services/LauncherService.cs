@@ -149,6 +149,50 @@ internal sealed class LauncherService
         return removed;
     }
 
+    /// <summary>
+    /// The godman launcher files <see cref="DeleteAll"/> would target that are still
+    /// on disk -- after a DeleteAll, the ones it could not remove (an unprivileged
+    /// clean against the global directory). Same selection as DeleteAll: Linux the
+    /// prefixed <c>.desktop</c> files plus the icon, Windows the Start Menu folder.
+    /// Returned rather than reported: the caller owns the output. Best-effort; a
+    /// directory it cannot even enumerate yields an empty list.
+    /// </summary>
+    public IReadOnlyList<string> FindRemaining(InstallScope scope)
+    {
+        var remaining = new List<string>();
+        var dir = _paths.GetLauncherDirectory(scope);
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (Directory.Exists(dir))
+                {
+                    remaining.Add(dir);
+                }
+            }
+            else
+            {
+                if (Directory.Exists(dir))
+                {
+                    remaining.AddRange(Directory.EnumerateFiles(dir, DesktopFilePrefix + "*.desktop"));
+                }
+
+                var icon = _paths.GetLauncherIconPath(scope);
+                if (icon is not null && File.Exists(icon))
+                {
+                    remaining.Add(icon);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Warn($"Failed to list launcher entries in {dir}: {ex.Message}");
+        }
+
+        return remaining;
+    }
+
     internal static string DisplayName(InstallEntry entry) => $"Godot {entry.Version} ({entry.Edition})";
 
     /// <summary>
