@@ -707,6 +707,57 @@ public class AppPathsTests
             plan);
     }
 
+    // --- The env.sh the global shim sources (review 3, item M3) ---
+
+    [Fact]
+    public void LinuxRepairTargets_AddTheEnvScriptTheGlobalShimSources()
+    {
+        using var fixture = new GodmanTestFixture();
+        var userShim = Path.Combine(fixture.TempRoot, "u", "godot");
+        var globalShim = Path.Combine(fixture.TempRoot, "g", "godot");
+        var envScript = Path.Combine(fixture.TempRoot, "cfg", "env.sh");
+        var rootsEnv = Path.Combine(fixture.TempRoot, "root-cfg", "env.sh");
+
+        // No global shim: just the fixed three.
+        Assert.Equal(new[] { userShim, globalShim, envScript }, AppPaths.LinuxRepairTargets(userShim, globalShim, envScript).ToArray());
+
+        // A shim written under a HOME-resetting sudo sources root's env.sh, not this process's.
+        Directory.CreateDirectory(Path.GetDirectoryName(globalShim)!);
+        File.WriteAllText(globalShim, $"#!/usr/bin/env bash\nsource \"{rootsEnv}\" 2>/dev/null\nexec \"/x/Godot\" \"$@\"\n");
+        Assert.Equal(new[] { userShim, globalShim, envScript, rootsEnv }, AppPaths.LinuxRepairTargets(userShim, globalShim, envScript).ToArray());
+
+        // Sourcing this process's own env.sh adds nothing twice.
+        File.WriteAllText(globalShim, $"#!/usr/bin/env bash\nsource \"{envScript}\" 2>/dev/null\nexec \"/x/Godot\" \"$@\"\n");
+        Assert.Equal(new[] { userShim, globalShim, envScript }, AppPaths.LinuxRepairTargets(userShim, globalShim, envScript).ToArray());
+    }
+
+    [Fact]
+    public void Linux_GlobalMove_RepairsTheEnvScriptTheGlobalShimSources()
+    {
+        // Through the real constructor: a global shim written under `sudo -E` (or by another
+        // HOME) sources an env.sh that is not this run's EnvScriptPath, and that env.sh
+        // exports the old root as GODOT_HOME.
+        if (OperatingSystem.IsWindows()) return;
+
+        string? otherEnv = null;
+        string? oldInstall = null;
+        using var fixture = new GodmanTestFixture(globalRoot: "sudo-e", seed: prefix =>
+        {
+            oldInstall = Path.Combine(prefix, "bin", "godman", "4.5.1-standard-linux-global");
+            Directory.CreateDirectory(oldInstall);
+            File.WriteAllText(Path.Combine(oldInstall, "Godot"), "fake");
+            otherEnv = Path.Combine(Path.GetDirectoryName(prefix)!, "other-home", ".config", "godman", "env.sh");
+            Directory.CreateDirectory(Path.GetDirectoryName(otherEnv)!);
+            File.WriteAllText(otherEnv, $"export GODOT_HOME=\"{oldInstall}\"\n");
+            File.WriteAllText(Path.Combine(prefix, "bin", "godot"),
+                $"#!/usr/bin/env bash\nsource \"{otherEnv}\" 2>/dev/null\nexec \"{Path.Combine(oldInstall, "Godot")}\" \"$@\"\n");
+        });
+        var newInstall = Path.Combine(fixture.TempRoot, "sudo-e", "lib", "godman", "4.5.1-standard-linux-global");
+
+        Assert.True(Directory.Exists(newInstall), "precondition: the move ran");
+        Assert.Equal($"export GODOT_HOME=\"{newInstall}\"\n", File.ReadAllText(otherEnv!));
+    }
+
     [Fact]
     public void GetMigrationDestination_CoversEveryRelocation_AndContainsItsNewRoot()
     {

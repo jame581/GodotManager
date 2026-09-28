@@ -141,6 +141,34 @@ internal sealed class EnvironmentService
         return null;
     }
 
+    /// <summary>
+    /// The env script a Unix shim written by this service sources: the quoted
+    /// <c>source "…"</c> path. It is the writer's <see cref="AppPaths.EnvScriptPath"/>,
+    /// which for a global shim written under a HOME-resetting or <c>-E</c> sudo is not
+    /// necessarily the reader's. Null when there is no such line (<c>godot.cmd</c>, or a
+    /// foreign file).
+    /// </summary>
+    internal static string? ParseShimSourcedScript(string content)
+    {
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("source \"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var rest = line["source \"".Length..];
+            var end = rest.IndexOf('"');
+            if (end > 0)
+            {
+                return rest[..end];
+            }
+        }
+
+        return null;
+    }
+
     public Task RemoveActiveAsync(InstallEntry? entry, CancellationToken cancellationToken = default)
     {
         if (OperatingSystem.IsWindows())

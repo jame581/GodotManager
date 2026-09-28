@@ -181,6 +181,32 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void ParseShimSourcedScript_ReadsTheSourceLine_AndIgnoresEverythingElse()
+    {
+        Assert.Equal("/root/.config/godman/env.sh", GodotManager.Services.EnvironmentService.ParseShimSourcedScript(
+            "#!/usr/bin/env bash\nsource \"/root/.config/godman/env.sh\" 2>/dev/null\nexec \"/opt/g/Godot\" \"$@\"\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimSourcedScript("@echo off\r\n\"C:\\g\\Godot.exe\" %*\r\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimSourcedScript("#!/bin/sh\nexec \"/opt/g/Godot\"\n"));
+    }
+
+    [Fact]
+    public async Task ParseShimSourcedScript_ReadsBackTheEnvScriptTheWriterPutThere()
+    {
+        if (OperatingSystem.IsWindows()) return; // godot.cmd sources nothing
+        var tempDir = Path.Combine(_fixture.TempRoot, "shim-source");
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "Godot_v4.5.1-stable_linux.x86_64"), "fake executable");
+        var entry = InstallEntryFactory.Create(path: tempDir);
+        entry.LauncherEntry = false;
+
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        var shimPath = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        Assert.Equal(_fixture.Paths.EnvScriptPath,
+            GodotManager.Services.EnvironmentService.ParseShimSourcedScript(File.ReadAllText(shimPath)));
+    }
+
+    [Fact]
     public async Task RemoveActiveAsync_DeletesShimFile()
     {
         // Arrange

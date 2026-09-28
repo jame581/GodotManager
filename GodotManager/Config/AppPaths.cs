@@ -204,12 +204,10 @@ internal sealed class AppPaths
                         globalPrefix,
                         migrateUser: migrateUser && home == defaultHome,
                         migrateGlobal: migrateGlobal),
-                    new[]
-                    {
+                    LinuxRepairTargets(
                         System.IO.Path.Combine(userShimDirectory, "godot"),
                         System.IO.Path.Combine(globalShim, "godot"),
-                        System.IO.Path.Combine(userConfigRoot, "env.sh")
-                    });
+                        System.IO.Path.Combine(userConfigRoot, "env.sh")));
             }
 
             ConfigDirectory = userConfigRoot;
@@ -435,6 +433,43 @@ internal sealed class AppPaths
     /// not exist yet. Once the current layout has a registry the value is taken at its
     /// word. Reads the disk; an unreadable directory counts as holding nothing.
     /// </summary>
+    /// <summary>
+    /// The Linux files <see cref="MigrateAndRepair"/> rewrites after a move: both shims,
+    /// this run's env.sh, and -- when it is a different file -- the env.sh the global shim
+    /// sources. That one is whatever <c>EnvScriptPath</c> the activating run had, which
+    /// under <c>sudo -E</c> or a HOME-resetting sudo is not this run's, and it exports the
+    /// old root as GODOT_HOME just the same.
+    ///
+    /// Lazy: <see cref="RepairMovedRootReferences"/> stops before enumerating when nothing
+    /// moved, so the global shim is read only after a move. The shim is parsed before it
+    /// is yielded, i.e. before the repair rewrites it. An unreadable shim adds nothing.
+    /// </summary>
+    internal static IEnumerable<string> LinuxRepairTargets(string userShim, string globalShim, string envScript)
+    {
+        yield return userShim;
+
+        string? sourced = null;
+        try
+        {
+            if (System.IO.File.Exists(globalShim))
+            {
+                sourced = Services.EnvironmentService.ParseShimSourcedScript(System.IO.File.ReadAllText(globalShim));
+            }
+        }
+        catch
+        {
+            // Best-effort, like the rest of the repair.
+        }
+
+        yield return globalShim;
+        yield return envScript;
+
+        if (sourced is not null && !string.Equals(sourced, envScript, StringComparison.Ordinal))
+        {
+            yield return sourced;
+        }
+    }
+
     internal static bool UsesPre140GlobalRootMeaning(string overrideValue, string globalRegistryFile)
     {
         try
