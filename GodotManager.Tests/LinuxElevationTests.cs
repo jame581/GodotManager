@@ -122,6 +122,29 @@ public class LinuxElevationTests
     }
 
     [Fact]
+    public void Check_WithAPre140GlobalRootOverride_StopsEveryGlobalTarget()
+    {
+        // A 1.3.0 value (the shim directory) read as a prefix points at an empty <value>/lib/godman.
+        // A global write there would create a fresh registry, after which godman no longer
+        // recognises the old layout: the warning stops and the installs in <value>/godman drop
+        // out of sight. Writability says nothing about this, so it must not be what decides.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(globalRoot: Path.Combine("opt", "bin"), seed: value =>
+        {
+            Directory.CreateDirectory(Path.Combine(value, "godman", "4.5.1-standard-linux-global"));
+            File.WriteAllText(Path.Combine(value, "godman", "installs.json"), "{\"Installs\":[]}");
+        });
+        Assert.NotNull(fixture.Paths.LegacyGlobalRootOverrideWarning); // precondition
+
+        var denied = LinuxElevation.Check(fixture.Paths, InstallScope.Global, ["install", "--scope", "Global"]);
+
+        Assert.NotNull(denied);
+        Assert.Contains(fixture.Paths.LegacyGlobalRootOverrideWarning!, denied!.Message);
+        Assert.DoesNotContain("sudo", denied.Hint ?? ""); // sudo does not help: the value is wrong
+        Assert.Null(LinuxElevation.Check(fixture.Paths, InstallScope.User, ["install"]));
+    }
+
+    [Fact]
     public void ElevationHintFor_QuotesEachArgument_AndFallsBackWithoutArguments()
     {
         if (OperatingSystem.IsWindows()) return;

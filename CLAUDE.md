@@ -94,8 +94,10 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   `AppPaths.MigrationGates`), and `EnsureDirectories` never creates a global directory
   inside a destination whose source still exists. A value that still carries the 1.3.0
   meaning (the shim directory) is caught by `AppPaths.UsesPre140GlobalRootMeaning`: global
-  directories are then not created at all and `list`/`doctor` print
-  `LegacyGlobalRootOverrideWarning`. An empty value counts as unset
+  directories are then not created at all, `list`/`doctor` print
+  `LegacyGlobalRootOverrideWarning`, and `LinuxElevation.Check` stops every global target
+  with it (one global write would create a registry and end the detection for good). An
+  empty value counts as unset
   (`AppPaths.ResolveOverride`); a relative prefix is never migrated or created, since it
   resolves against the working directory.
 - **Empty and relative overrides.** Both `GODMAN_HOME` and `GODMAN_GLOBAL_ROOT` (and

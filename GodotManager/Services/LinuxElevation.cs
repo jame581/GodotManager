@@ -64,6 +64,15 @@ internal static class LinuxElevation
             return null;
         }
 
+        // A GODMAN_GLOBAL_ROOT still carrying its pre-1.4.0 meaning points at an empty prefix.
+        // The first global write there creates a registry, after which the old layout is no
+        // longer recognised and its installs drop out of sight -- so stop whatever the
+        // permissions. No sudo hint: the value is what needs fixing, and the warning says how.
+        if (paths.LegacyGlobalRootOverrideWarning is { } legacy)
+        {
+            return new GodmanException($"{legacy} Nothing was changed.");
+        }
+
         var blocked = FindUnwritable(GlobalLocations(paths));
         return MustStop(targetScope, globalWritable: blocked is null)
             ? Denied(blocked!, GodmanException.ElevationHintFor(arguments))
