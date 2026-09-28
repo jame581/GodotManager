@@ -85,7 +85,9 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   inside a destination whose source still exists. A value that still carries the 1.3.0
   meaning (the shim directory) is caught by `AppPaths.UsesPre140GlobalRootMeaning`: global
   directories are then not created at all and `list`/`doctor` print
-  `LegacyGlobalRootOverrideWarning`.
+  `LegacyGlobalRootOverrideWarning`. An empty value counts as unset
+  (`AppPaths.ResolveOverride`); a relative prefix is never migrated or created, since it
+  resolves against the working directory.
 
 Use `GodmanTestFixture` (saves/restores env vars, creates a temp `TempRoot`, builds
 wired-up `AppPaths`/`RegistryService`/`EnvironmentService`) for any test that hits
