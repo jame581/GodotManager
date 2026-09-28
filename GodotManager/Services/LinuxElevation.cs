@@ -114,6 +114,17 @@ internal static class LinuxElevation
             locations.Add(paths.GetShimDirectory(InstallScope.Global));
         }
 
+        // Not migrated yet: `list` still reads global installs from here, and clean deletes it
+        // (a write to it and to its parent, the global shim directory).
+        foreach (var legacyRoot in paths.GetLegacyGlobalInstallRoots())
+        {
+            locations.Add(legacyRoot);
+            if (Path.GetDirectoryName(legacyRoot) is { } parent)
+            {
+                locations.Add(parent);
+            }
+        }
+
         if (launcherEntries.Count > 0)
         {
             locations.Add(paths.GetLauncherDirectory(InstallScope.Global));

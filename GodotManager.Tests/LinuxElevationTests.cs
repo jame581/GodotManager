@@ -220,4 +220,30 @@ public class LinuxElevationTests
             File.SetUnixFileMode(root, (UnixFileMode)Convert.ToInt32("755", 8));
         }
     }
+
+    [Fact]
+    public void CheckClean_WithAnUnmigratedLegacyGlobalRootItCannotDelete_Stops()
+    {
+        // Before the first privileged run the global installs are still in <prefix>/bin/godman
+        // and `list` reads them from there. clean must count that root as global work, or an
+        // unprivileged clean "succeeds" while every global install is still listed.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        using var fixture = new GodmanTestFixture();
+        var shimDir = fixture.Paths.GetShimDirectory(InstallScope.Global);
+        var legacyRoot = Path.Combine(shimDir, "godman"); // created after AppPaths, so not migrated
+        Directory.CreateDirectory(legacyRoot);
+        File.WriteAllText(Path.Combine(legacyRoot, "installs.json"), "{\"Installs\":[]}");
+        File.SetUnixFileMode(shimDir, (UnixFileMode)Convert.ToInt32("555", 8));
+        try
+        {
+            var denied = LinuxElevation.CheckClean(fixture.Paths, fixture.Launcher, ["clean", "--yes"]);
+
+            Assert.NotNull(denied);
+            Assert.Contains(shimDir, denied!.Message);
+        }
+        finally
+        {
+            File.SetUnixFileMode(shimDir, (UnixFileMode)Convert.ToInt32("755", 8));
+        }
+    }
 }

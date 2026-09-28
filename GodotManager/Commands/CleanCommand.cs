@@ -119,6 +119,15 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
 
         CleanupDirectory(globalInstallRoot, "global installs");
+
+        // A root the migration has not moved yet still holds global installs -- `list` reads
+        // them from there -- so it goes too. Only existing directories are returned, so this
+        // prints nothing on a migrated machine.
+        foreach (var legacyRoot in paths.GetLegacyGlobalInstallRoots())
+        {
+            CleanupDirectory(legacyRoot, "unmigrated global installs");
+        }
+
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 

@@ -218,6 +218,27 @@ public class CleanCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Clean_RemovesAnUnmigratedLegacyGlobalRoot_ButNotAGodmanBinaryOfThatName()
+    {
+        // `list` reads global installs from <prefix>/bin/godman until the move has run, so
+        // clean has to remove that root too. The same name is where the godman binary itself
+        // lives once migrated -- a file, which clean must never touch.
+        if (OperatingSystem.IsWindows()) return; // Linux layout
+        var shimDir = _fixture.Paths.GetShimDirectory(InstallScope.Global);
+        var legacyRoot = Path.Combine(shimDir, "godman"); // created after AppPaths, so not migrated
+        Directory.CreateDirectory(Path.Combine(legacyRoot, "4.5.1-standard-linux-global"));
+        File.WriteAllText(Path.Combine(legacyRoot, "installs.json"), "{\"Installs\":[]}");
+        var legacyBinary = Path.Combine(shimDir, "godot-manager"); // the other legacy name, as a file
+        File.WriteAllText(legacyBinary, "binary");
+
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(Directory.Exists(legacyRoot), "the unmigrated global root is still there");
+        Assert.True(File.Exists(legacyBinary), "a file with a legacy root's name was deleted");
+    }
+
+    [Fact]
     public async Task Clean_WithCorruptRegistry_StillSucceeds()
     {
         // Unelevated on Windows, any global target sends clean through UAC (RunElevatedCleanup),

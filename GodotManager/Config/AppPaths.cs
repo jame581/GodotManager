@@ -481,6 +481,28 @@ internal sealed class AppPaths
     }
 
     /// <summary>
+    /// The pre-migration global install roots that still exist on this machine (Linux only):
+    /// <c>&lt;prefix&gt;/bin/godman</c> and <c>&lt;prefix&gt;/bin/godot-manager</c>. Until the
+    /// first privileged run moves them, <see cref="GetLegacyGlobalRegistryFiles"/> makes
+    /// <c>list</c> show their installs, so <c>clean</c> has to treat them as global targets.
+    /// Directories only: once migrated, <c>&lt;prefix&gt;/bin/godman</c> is the name the godman
+    /// binary itself takes, and that file must never be matched.
+    /// </summary>
+    public IReadOnlyList<string> GetLegacyGlobalInstallRoots()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return [];
+        }
+
+        return _legacyGlobalRegistryFiles
+            .Select(System.IO.Path.GetDirectoryName)
+            .OfType<string>()
+            .Where(Directory.Exists)
+            .ToList();
+    }
+
+    /// <summary>
     /// The Linux files <see cref="MigrateAndRepair"/> rewrites after a move: both shims,
     /// this run's env.sh, and -- when it is a different file -- the env.sh the global shim
     /// sources. That one is whatever <c>EnvScriptPath</c> the activating run had, which
