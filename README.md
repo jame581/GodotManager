@@ -12,7 +12,8 @@ godman (formerly Godot Manager) is a .NET 10 console/TUI tool to install, manage
 - Scope-aware installs: user or global (requires administrator privileges for global scope).
 - Each install is extracted into its own subfolder under the install root, based on downloaded archive name (with deterministic fallback when source URL has no archive filename).
 - Registry of installs with activation; sets `GODOT_HOME` and writes shims (`godot` or `godot.cmd`).
-- Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`).
+- Interactive TUI (`tui`) and CLI commands (`list`, `fetch`, `install`, `activate`, `deactivate`, `remove`, `doctor`, `clean`, `version`).
+- An application-launcher entry for every install: a GNOME/XDG `.desktop` file on Linux, a Start Menu shortcut on Windows.
 - Dry-run mode to preview install/activate operations without making changes.
 - Cleanup command to remove installs, shims, and config.
 - Downloads are verified against Godot's published SHA-512 checksums, resume automatically if interrupted, and are cleaned up after install.
@@ -161,8 +162,9 @@ install paths to match, and rewrites the global `godot` shim and the `env.sh` it
 (root's, under a HOME-resetting sudo -- the default on Fedora, Debian and Ubuntu) that
 pointed into the old directory.
 Until then nothing is lost: godman still reads the machine-wide registry from its old
-location, so `list`, `doctor` and the TUI keep showing your global installs. Run
-`godman doctor` to check whether anything was left behind.
+location, so `list`, `doctor` and the TUI keep showing your global installs, and
+`clean` removes them from there too. Run `godman doctor` to check whether anything was
+left behind.
 
 ### Windows
 - **Config**: `%APPDATA%\godman\`
@@ -196,9 +198,9 @@ dotnet test -v detailed
 
 ## Notes
 - **Anything touching a global-scope install requires elevated privileges**, because it writes machine-wide state — the shared install root, the machine-wide registry, system environment variables, and the shared shim.
-  - **Linux**: run the command with `sudo` — by full path if godman lives in `~/.local/bin`, since `sudo` will not find it there.
+  - **Linux**: run the command with `sudo` — by full path if godman lives in `~/.local/bin`, since `sudo` will not find it there. A global `install`, `activate`, `remove` or `clean` you can't write stops before changing anything and prints the exact `sudo` command to run. What counts is whether the global locations are writable, not whether you're root, so a `GODMAN_GLOBAL_ROOT` you own needs no sudo. Switching away from or deactivating a global install proceeds without sudo, because sudo would act on root's registry rather than yours. If the global `godot` shim couldn't be removed, godman names the file.
   - **Windows**: a UAC prompt appears automatically. This covers `install`, `activate`, `deactivate`, `remove`, and `clean`, from both the CLI and the TUI — you never need to quit and relaunch from an elevated shell.
-  - Note that `activate` needs elevation when the install you are switching *away from* is global, even if the one you are switching to is not; deactivating a global install has to clear machine-wide state either way.
+  - On Windows, `activate` needs elevation when the install you are switching *away from* is global, even if the one you are switching to is not; deactivating a global install has to clear machine-wide state either way.
 - Global scope sets system-wide environment variables and shims accessible to all users.
 - **A global install's shim takes precedence over a user one.** Windows searches the machine `PATH` before the user `PATH`, so a `godot` shim left behind by an earlier global activation keeps winning even after you activate a user-scope install. `activate` warns when it detects this and names the file to remove; removing it needs administrator rights, so godman reports the condition rather than silently failing to fix it.
 - The `fetch` command queries GitHub API to discover available Godot versions.
@@ -220,10 +222,9 @@ dotnet test -v detailed
     reinstall).
 
   While a value still looks like the old meaning (`<value>/godman` holds installs and
-  `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn. A
-  global `install` or `activate` under the old value creates the new layout inside it,
-  after which the warning stops, so fix the variable first. An empty value counts as
-  unset; a relative one is never migrated or created. On Windows it stands in for
+  `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn, and
+  global `install`, `activate` and `remove` refuse to run until it is fixed. An empty
+  value counts as unset; a relative one is never migrated or created. On Windows it stands in for
   `%ProgramFiles%`, as it always has.
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
@@ -232,7 +233,7 @@ dotnet test -v detailed
 - **Interrupted downloads resume**: partial downloads are kept under the download cache and resumed on the next `install`. Run `godman doctor` to see how much space they use, or `godman clean` to discard them.
 - **`--force` merges, it does not replace**: installing over an existing directory overwrites the files godman extracts and leaves anything else in that directory untouched. This matters when `--path` points at a directory you also use for other things.
 - **Application-launcher entries**: `install` creates one per install (skip with `--no-shortcut`), named for its version, edition, scope, and a short id so two installs never collide — except see the Windows limitation below. `activate` backfills the entry for installs made before 1.4.0. `remove` and `clean` delete it; `deactivate` leaves it in place, since the install itself is still there. `doctor` reports any install that's missing its entry (installs opted out with `--no-shortcut` are not reported).
-- **Known limitation (Windows)**: two installs of the same version and edition in the same scope at different `--path`s share one Start Menu name — the file has no per-install id like the Linux `.desktop` entry does, so the second install's shortcut overwrites the first's. Removing either of the two then deletes that shared shortcut too; re-run `godman activate <id>` on the surviving install to restore it.
+- **Known limitation (Windows)**: two installs of the same version and edition in the same scope at different `--path`s share one Start Menu name — the file has no per-install id like the Linux `.desktop` entry does, so the second install's shortcut overwrites the first's. Removing either of the two then deletes that shared Start Menu shortcut too; re-run `godman activate <id>` on the surviving install to restore it. The optional desktop shortcut (`activate --create-desktop-shortcut`) belongs to the active install and is only removed with it.
 - The Godot logo used for Linux launcher entries is by Andrea Calabró, licensed CC BY 4.0.
 
 ## Author

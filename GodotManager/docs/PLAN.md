@@ -380,3 +380,44 @@ follow-ups were closed in the same release.
   Linux `.desktop` filename does.
 
 Spec: `GodotManager/docs/superpowers/specs/2026-09-28-launcher-entries-and-1.3-followups-design.md`
+
+### Pre-release review fixes (PR #2) ✅ COMPLETE
+
+The first Windows run of the suite found three host-dependent test failures (a
+`Path.GetDirectoryName` split of Unix paths, two unguarded Linux-literal tests, a `clean`
+test that UAC-relaunched the test host). Copilot's review was cut off by its per-review
+cost cap on this diff, so a local `/code-review high` ran instead. Each of its 10
+findings was verified against the code; six were fixed with regression tests, and a
+parity review of those fixes found one regression and three smaller gaps, also fixed:
+
+- `LinuxElevation.Check` refuses global targets under a pre-1.4.0 `GODMAN_GLOBAL_ROOT`
+  (one write used to end the legacy-layout detection for good).
+- `clean` removes an unmigrated legacy global root (`AppPaths.GetLegacyGlobalInstallRoots`,
+  directories only so the godman binary never matches) and stops when it cannot.
+- Linux `_migrationMoves` equals what the constructor runs, so doctor no longer offers
+  user-root moves under `GODMAN_HOME` (`DoctorCommand.NoPlannedMoveAdvice`).
+- The Windows desktop shortcut belongs to the activation: `LauncherService.Delete` no
+  longer removes it; `--force` over the active install removes the replaced one's.
+- Printed `rmdir` / `sudo rm` remedies are shell-quoted (`ElevatedCommandLine.Quote`).
+- The TUI install dialog shows one "Installed, not activated" box
+  (`InstallProgressPresentation.BuildCompletionDialog`).
+
+## 1.4.1 — Open follow-ups
+
+Deferred from the 1.4.0 review; none is a regression from 1.3.0.
+
+- [#3](https://github.com/jame581/GodotManager/issues/3) — Linux: `sudo godman remove` of
+  an active global install skips deactivation, because sudo resets HOME and `ActiveId`
+  lives in the per-user registry. Hard to reach; the hint should say to `deactivate` first.
+- [#4](https://github.com/jame581/GodotManager/issues/4) — Refactor: move the
+  install → elevated-activate flow, duplicated in `InstallCommand` and `InstallDialog`,
+  into one `InstallerService` method.
+- [#5](https://github.com/jame581/GodotManager/issues/5) — The shadow-probe failure uses
+  `WarnAlways` in `ActivateCommand` (the best-effort convention says `-V` only).
+- [#6](https://github.com/jame581/GodotManager/issues/6) — Refactor: dedupe clean's
+  registry read, the extra `LauncherService` instances, and doctor's
+  `HasContent`/`ProbeDestination`.
+- [#7](https://github.com/jame581/GodotManager/issues/7) — Windows counterparts of the
+  Linux clean/doctor fixes (legacy global root in `clean`, doctor's plan must equal the
+  constructor's), doctor's view of legacy-only registry entries under a relative prefix,
+  and `install --force` over the active install leaving `ActiveId` dangling.
