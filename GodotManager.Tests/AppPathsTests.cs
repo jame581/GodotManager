@@ -847,6 +847,22 @@ public class AppPathsTests
             fixture.Paths.GetMigrationDestination(Path.Combine(fixture.TempRoot, "global", "bin", "godman")));
     }
 
+    [Fact]
+    public void Linux_WithGodmanHomeSet_PlansNoUserMoveForDoctor()
+    {
+        // The constructor moves user roots only without GODMAN_HOME (MigrationGates), so a
+        // planned user move would have doctor tell the user to clear the way for a move that
+        // never comes. The global moves run under any rooted prefix and stay planned.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(); // sets GODMAN_HOME
+        var userInstalls = fixture.Paths.GetInstallRoot(InstallScope.User);
+
+        var user = fixture.Paths.GetInstallRootRelocations().Where(r => r.NewRoot == userInstalls).ToList();
+        Assert.NotEmpty(user);
+        Assert.All(user, r => Assert.Null(fixture.Paths.GetMigrationDestination(r.OldRoot)));
+        Assert.NotNull(fixture.Paths.GetMigrationDestination(Path.Combine(fixture.TempRoot, "global", "bin", "godman")));
+    }
+
     // --- The env.sh the global shim sources (review 3, item M3) ---
 
     [Fact]
@@ -903,10 +919,16 @@ public class AppPathsTests
     {
         // Doctor asks this where the migration's existence check looks. On Linux that is
         // the relocation's new root; on Windows the whole godman root above installs\.
-        // Either way the relocation's new root must sit at or under it.
+        // Either way the relocation's new root must sit at or under it. (Linux user moves are
+        // not planned under the fixture's GODMAN_HOME: see
+        // Linux_WithGodmanHomeSet_PlansNoUserMoveForDoctor.)
         using var fixture = new GodmanTestFixture();
+        var planned = fixture.Paths.GetInstallRootRelocations()
+            .Where(r => OperatingSystem.IsWindows() || r.NewRoot != fixture.Paths.GetInstallRoot(InstallScope.User))
+            .ToList();
+        Assert.NotEmpty(planned);
 
-        Assert.All(fixture.Paths.GetInstallRootRelocations(), r =>
+        Assert.All(planned, r =>
         {
             var destination = fixture.Paths.GetMigrationDestination(r.OldRoot);
             Assert.NotNull(destination);

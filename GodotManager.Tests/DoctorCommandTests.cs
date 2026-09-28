@@ -460,38 +460,25 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Doctor_WithAnUnmovedUserRootAndAnAbsentDestination_DoesNotSendTheUserToSudo()
+    public async Task Doctor_WithAnUnmovedUserRootUnderGodmanHome_SaysGodmanDoesNotMoveIt()
     {
-        // User roots move on every ordinary run; under a HOME-resetting sudo an elevated
-        // run would migrate root's home instead. (Linux: on Windows the user migration's
-        // destination is the config root itself, which always exists.)
+        // godman moves user roots only without GODMAN_HOME (the fixture sets it). Doctor used
+        // to say "`rmdir <empty destination>`, then godman moves them on its next ordinary
+        // run" -- but no run ever did, and the next one recreated the empty directory.
+        // (Linux: on Windows the user migration's destination is the config root itself,
+        // which always exists.)
         if (OperatingSystem.IsWindows()) return;
-        var (_, destination) = UnmovedRoot(InstallScope.User);
-        Directory.Delete(destination, recursive: true);
+        var pending = PendingRelocation(InstallScope.User);
+        Directory.CreateDirectory(Path.Combine(pending.OldRoot, "4.5.1-standard"));
 
         var output = Flatten(await RunDoctorAsync(_fixture));
 
         Assert.Contains("Still in use", output);
-        Assert.Contains("next ordinary (non-sudo) run", output);
+        Assert.Contains("does not move user install roots while GODMAN_HOME is set", output);
+        Assert.DoesNotContain("rmdir", output);
+        Assert.DoesNotContain("next ordinary", output);
+        Assert.DoesNotContain("relative path", output);
         Assert.DoesNotContain("sudo ", output);
-        Assert.DoesNotContain("can be removed", output);
-    }
-
-    [Fact]
-    public async Task Doctor_WithAnUnmovedUserRootAndAnEmptyDestination_SaysToRemoveItWithoutSudo()
-    {
-        // The normal state: doctor's own run already attempted the user migration and then
-        // created the (empty) user install root, so "the next ordinary run" alone would
-        // never move anything.
-        if (OperatingSystem.IsWindows()) return;
-        var (_, destination) = UnmovedRoot(InstallScope.User);
-        Assert.True(Directory.Exists(destination) && !HasAnything(destination), "precondition: exists but empty");
-
-        var output = Flatten(await RunDoctorAsync(_fixture));
-
-        Assert.Contains($"blocked only by the empty {destination}", output);
-        Assert.Contains($"`rmdir {destination}`, then: godman moves them on its next ordinary (non-sudo) run", output);
-        Assert.DoesNotContain("sudo rmdir", output);
         Assert.DoesNotContain("can be removed", output);
     }
 

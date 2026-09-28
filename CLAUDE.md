@@ -107,6 +107,11 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   `_migrationMoves`, so doctor offers no move for it. Resolving via `Path.GetFullPath`
   was rejected: it would still create directories in whatever cwd godman ran from
   (root-owned under `sudo -E`).
+- **`_migrationMoves` must equal what the constructor runs.** Doctor reads it through
+  `GetMigrationDestination` and builds its remedy from it; a move planned there but never
+  run (user roots under any `GODMAN_HOME`) made doctor promise a migration that never came.
+  The suite always sets `GODMAN_HOME`, so the no-override user remedies are not reachable
+  end to end.
 - `ElevatedCommandLine.Render` adds a rooted `GODMAN_GLOBAL_ROOT` as `sudo NAME=value`
   to every printed elevated command, because sudo's env_reset drops it.
 

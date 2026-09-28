@@ -271,14 +271,29 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 && state == DestinationState.HasContent
                 && pending.All(r => HasContent(r.NewRoot));
 
-            if (pending.Count > 0 && _paths.GetMigrationDestination(pending[0].OldRoot) is null)
+            if (removable)
             {
-                // A relocation with no planned move: the root it would move into is
-                // relative, and godman never moves (or creates) anything relative to the
-                // working directory. Offering the move would send the user round in circles.
-                var variable = isGlobalRoot ? "GODMAN_GLOBAL_ROOT" : "GODMAN_HOME";
-                AnsiConsole.MarkupLineInterpolated(
-                    $"[grey]  Still in use -- godman does not move this directory while {variable} is a relative path. Set {variable} to an absolute path; do not delete this directory.[/]");
+                // First: once the installs have landed and nothing registered points here, the
+                // directory is a leftover whether or not godman would ever move it itself.
+                AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
+            }
+            else if (pending.Count > 0 && _paths.GetMigrationDestination(pending[0].OldRoot) is null)
+            {
+                // A relocation with no planned move. Offering the move would send the user
+                // round in circles, so say why there is none: user roots are never moved while
+                // GODMAN_HOME is set, and nothing is moved (or created) under a relative root,
+                // which would resolve against the working directory.
+                if (!isGlobalRoot && _paths.HomeOverride is { } home && Path.IsPathRooted(home))
+                {
+                    AnsiConsole.MarkupLine(
+                        "[grey]  Still in use -- godman does not move user install roots while GODMAN_HOME is set. If it names your own home, run godman once without it; otherwise move the installs by hand. Do not delete this directory.[/]");
+                }
+                else
+                {
+                    var variable = isGlobalRoot ? "GODMAN_GLOBAL_ROOT" : "GODMAN_HOME";
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[grey]  Still in use -- godman does not move this directory while {variable} is a relative path. Set {variable} to an absolute path; do not delete this directory.[/]");
+                }
             }
             else if (pending.Count == 0)
             {
@@ -290,10 +305,6 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 {
                     AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
                 }
-            }
-            else if (removable)
-            {
-                AnsiConsole.MarkupLine("[grey]  This directory can be removed after verifying your installs are intact.[/]");
             }
             else if (state == DestinationState.Absent)
             {

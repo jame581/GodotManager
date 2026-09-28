@@ -54,6 +54,13 @@ internal sealed class AppPaths
     public (string Name, string Value)? GlobalRootOverride { get; }
 
     /// <summary>
+    /// The GODMAN_HOME value in effect (or its legacy alias; an empty value counts as unset).
+    /// Null without an override. While it is set godman never moves user install roots
+    /// (<see cref="MigrationGates"/>), which doctor has to say rather than offer the move.
+    /// </summary>
+    public string? HomeOverride { get; }
+
+    /// <summary>
     /// True when <see cref="LegacyGlobalRootOverrideWarning"/> is set: the global shim and
     /// install directories under the misread prefix are then not created, since they
     /// would be junk directories inside the old shim directory.
@@ -102,6 +109,7 @@ internal sealed class AppPaths
         var overrideBasePrimary = Environment.GetEnvironmentVariable(EnvHome);
         var overrideBaseLegacy = Environment.GetEnvironmentVariable(LegacyEnvHome);
         var overrideBase = ResolveOverride(overrideBasePrimary, overrideBaseLegacy);
+        HomeOverride = overrideBase;
 
         var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
@@ -244,11 +252,12 @@ internal sealed class AppPaths
             // directly inside it), so the registry belongs there too.
             _globalConfigRoot = globalInstallRoot;
 
-            // What doctor consults (GetMigrationDestination). Mirrors MigrationGates' rule
-            // for relative roots -- nothing is ever moved under one, so doctor must not
-            // offer a move -- but not the GODMAN_HOME gate, which doctor reports as before.
+            // What doctor consults (GetMigrationDestination): exactly the moves the constructor
+            // runs. A planned move doctor cannot see through makes it give advice that never
+            // takes effect -- with GODMAN_HOME set it said "rmdir the empty destination, then
+            // godman moves them", but no run did and the next one recreated the directory.
             _migrationMoves = PlanLinuxMigrations(
-                home, globalPrefix, migrateUser: _homeRooted, migrateGlobal: migrateGlobal);
+                home, globalPrefix, migrateUser: migrateUser && home == defaultHome, migrateGlobal: migrateGlobal);
 
             _installRootRelocations = new[]
             {
