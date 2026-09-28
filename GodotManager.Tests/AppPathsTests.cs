@@ -796,6 +796,55 @@ public class AppPathsTests
         Assert.Null(new AppPaths(applySideEffects: false).GlobalRootOverride);
     }
 
+    [Fact]
+    public void MigrationGates_AnEmptyHomeOverride_CountsAsUnset()
+    {
+        Assert.Equal((true, true), AppPaths.MigrationGates("", null, null, null));
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, "", null, null));
+        Assert.Equal((false, true), AppPaths.MigrationGates("", "/legacy/home", null, null));
+    }
+
+    [Fact]
+    public void ARelativeHome_CreatesNothingUnderTheWorkingDirectory()
+    {
+        // `GODMAN_HOME=rel godman list` used to create ./rel/.config/godman/downloads,
+        // ./rel/.local/bin and ./rel/.local/share/godman/installs wherever it ran (root-owned
+        // under sudo -E).
+        using var fixture = new GodmanTestFixture();
+        var cwd = Path.Combine(fixture.TempRoot, "cwd-home");
+        Directory.CreateDirectory(cwd);
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(cwd);
+            Environment.SetEnvironmentVariable("GODMAN_HOME", "relhome");
+
+            var paths = new AppPaths();
+
+            Assert.False(Path.IsPathRooted(paths.ConfigDirectory), "paths still resolve as given");
+            Assert.Empty(Directory.EnumerateFileSystemEntries(cwd));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
+    }
+
+    [Fact]
+    public void Linux_ARelativeGlobalRoot_PlansNoGlobalMoveForDoctor()
+    {
+        // GetMigrationDestination is what doctor asks; it must agree with MigrationGates.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", "rel");
+
+        var paths = new AppPaths(applySideEffects: false);
+
+        Assert.Null(paths.GetMigrationDestination(Path.Combine("rel", "bin", "godman")));
+        Assert.Equal(Path.Combine(fixture.TempRoot, "global", "lib", "godman"),
+            fixture.Paths.GetMigrationDestination(Path.Combine(fixture.TempRoot, "global", "bin", "godman")));
+    }
+
     // --- The env.sh the global shim sources (review 3, item M3) ---
 
     [Fact]

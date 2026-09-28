@@ -271,7 +271,16 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 && state == DestinationState.HasContent
                 && pending.All(r => HasContent(r.NewRoot));
 
-            if (pending.Count == 0)
+            if (pending.Count > 0 && _paths.GetMigrationDestination(pending[0].OldRoot) is null)
+            {
+                // A relocation with no planned move: the root it would move into is
+                // relative, and godman never moves (or creates) anything relative to the
+                // working directory. Offering the move would send the user round in circles.
+                var variable = isGlobalRoot ? "GODMAN_GLOBAL_ROOT" : "GODMAN_HOME";
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[grey]  Still in use -- godman does not move this directory while {variable} is a relative path. Set {variable} to an absolute path; do not delete this directory.[/]");
+            }
+            else if (pending.Count == 0)
             {
                 if (referenced)
                 {

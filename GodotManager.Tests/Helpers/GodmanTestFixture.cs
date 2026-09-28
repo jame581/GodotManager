@@ -24,13 +24,15 @@ internal sealed class GodmanTestFixture : IDisposable
 
     /// <param name="globalRoot">
     /// GODMAN_GLOBAL_ROOT relative to <see cref="TempRoot"/>; defaults to <c>global</c>.
+    /// With <paramref name="globalRootVerbatim"/> it is set exactly as given instead (for
+    /// tests of a relative value, run with the working directory inside a temp directory).
     /// </param>
     /// <param name="seed">
     /// Runs with the resolved GODMAN_GLOBAL_ROOT value after the environment is set and
     /// before <see cref="AppPaths"/> is constructed, for tests about what the constructor
     /// does with a layout that is already on disk.
     /// </param>
-    public GodmanTestFixture(string globalRoot = "global", Action<string>? seed = null)
+    public GodmanTestFixture(string globalRoot = "global", Action<string>? seed = null, bool globalRootVerbatim = false)
     {
         TempRoot = Path.Combine(Path.GetTempPath(), "godman-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(TempRoot);
@@ -54,7 +56,7 @@ internal sealed class GodmanTestFixture : IDisposable
         _savedPersistentVars = ReadPersistentVars();
 
         System.Environment.SetEnvironmentVariable("GODMAN_HOME", TempRoot);
-        var globalRootPath = Path.Combine(TempRoot, globalRoot);
+        var globalRootPath = globalRootVerbatim ? globalRoot : Path.Combine(TempRoot, globalRoot);
         System.Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", globalRootPath);
         // Launcher entries resolve to the real desktop locations regardless of GODMAN_HOME,
         // so without this every install/activate test would write into the developer's real

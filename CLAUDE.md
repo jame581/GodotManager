@@ -88,6 +88,15 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
   `LegacyGlobalRootOverrideWarning`. An empty value counts as unset
   (`AppPaths.ResolveOverride`); a relative prefix is never migrated or created, since it
   resolves against the working directory.
+- **Empty and relative overrides.** Both `GODMAN_HOME` and `GODMAN_GLOBAL_ROOT` (and
+  their legacy aliases) go through `AppPaths.ResolveOverride`, so an empty value is
+  unset. A relative value still resolves as given, but `AppPaths` creates nothing under
+  it (`_homeRooted` / `_globalPrefixRooted`), migrates nothing, and leaves it out of
+  `_migrationMoves`, so doctor offers no move for it. Resolving via `Path.GetFullPath`
+  was rejected: it would still create directories in whatever cwd godman ran from
+  (root-owned under `sudo -E`).
+- `ElevatedCommandLine.Render` adds a rooted `GODMAN_GLOBAL_ROOT` as `sudo NAME=value`
+  to every printed elevated command, because sudo's env_reset drops it.
 
 Use `GodmanTestFixture` (saves/restores env vars, creates a temp `TempRoot`, builds
 wired-up `AppPaths`/`RegistryService`/`EnvironmentService`) for any test that hits

@@ -56,6 +56,36 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Doctor_UnderARelativeGlobalRoot_OffersNoMove_AndAsksForAnAbsolutePath()
+    {
+        // godman never migrates under a relative prefix (MigrationGates), so "run sudo …
+        // list to complete the move" would never complete anything.
+        if (OperatingSystem.IsWindows()) return; // Linux layout
+        var cwd = Path.Combine(Path.GetTempPath(), "godman-cwd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(cwd);
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(cwd);
+            using var fixture = new GodmanTestFixture(globalRoot: "rel", globalRootVerbatim: true,
+                seed: value => Directory.CreateDirectory(Path.Combine(value, "bin", "godman", "4.5.1")));
+            Assert.True(Directory.Exists(Path.Combine(cwd, "rel", "bin", "godman", "4.5.1")), "precondition: not moved");
+
+            var output = Flatten(await RunDoctorAsync(fixture));
+
+            Assert.Contains($"Legacy directory found: {Path.Combine("rel", "bin", "godman")}", output);
+            Assert.Contains("GODMAN_GLOBAL_ROOT is a relative path", output);
+            Assert.DoesNotContain("to complete the move", output);
+            Assert.DoesNotContain("can be removed", output);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+            Directory.Delete(cwd, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Doctor_ReportsAnInstallWhoseLauncherEntryWentMissing()
     {
         using var fixture = new GodmanTestFixture();

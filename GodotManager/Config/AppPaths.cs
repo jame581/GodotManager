@@ -66,6 +66,13 @@ internal sealed class AppPaths
     /// </summary>
     private readonly bool _globalPrefixRooted;
 
+    /// <summary>
+    /// False for a relative GODMAN_HOME: the same rule as <see cref="_globalPrefixRooted"/>.
+    /// Paths resolve as given, but no user directory is created under the working
+    /// directory; the writes that need one (registry, cache, install, shim) create it then.
+    /// </summary>
+    private readonly bool _homeRooted;
+
     private readonly string _userInstallRoot;
     private readonly string _globalInstallRoot;
     private readonly string _userShimDirectory;
@@ -94,7 +101,7 @@ internal sealed class AppPaths
     {
         var overrideBasePrimary = Environment.GetEnvironmentVariable(EnvHome);
         var overrideBaseLegacy = Environment.GetEnvironmentVariable(LegacyEnvHome);
-        var overrideBase = overrideBasePrimary ?? overrideBaseLegacy;
+        var overrideBase = ResolveOverride(overrideBasePrimary, overrideBaseLegacy);
 
         var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
@@ -109,6 +116,7 @@ internal sealed class AppPaths
             var defaultAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             var defaultProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             var appData = overrideBase ?? defaultAppData;
+            _homeRooted = System.IO.Path.IsPathRooted(appData);
             var programFiles = overrideGlobalBase ?? defaultProgramFiles;
             _globalPrefixRooted = System.IO.Path.IsPathRooted(programFiles);
 
@@ -183,6 +191,7 @@ internal sealed class AppPaths
         {
             var defaultHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var home = overrideBase ?? defaultHome;
+            _homeRooted = System.IO.Path.IsPathRooted(home);
             var globalPrefix = overrideGlobalBase ?? DefaultLinuxGlobalPrefix;
             _globalPrefixRooted = System.IO.Path.IsPathRooted(globalPrefix);
 
@@ -235,7 +244,11 @@ internal sealed class AppPaths
             // directly inside it), so the registry belongs there too.
             _globalConfigRoot = globalInstallRoot;
 
-            _migrationMoves = PlanLinuxMigrations(home, globalPrefix);
+            // What doctor consults (GetMigrationDestination). Mirrors MigrationGates' rule
+            // for relative roots -- nothing is ever moved under one, so doctor must not
+            // offer a move -- but not the GODMAN_HOME gate, which doctor reports as before.
+            _migrationMoves = PlanLinuxMigrations(
+                home, globalPrefix, migrateUser: _homeRooted, migrateGlobal: migrateGlobal);
 
             _installRootRelocations = new[]
             {
@@ -372,7 +385,7 @@ internal sealed class AppPaths
         string? homeOverride, string? legacyHomeOverride, string? globalOverride, string? legacyGlobalOverride)
     {
         var global = ResolveOverride(globalOverride, legacyGlobalOverride);
-        return (homeOverride == null && legacyHomeOverride == null,
+        return (ResolveOverride(homeOverride, legacyHomeOverride) is null,
                 global is null || System.IO.Path.IsPathRooted(global));
     }
 
@@ -601,10 +614,13 @@ internal sealed class AppPaths
 
     private void EnsureDirectories()
     {
-        System.IO.Directory.CreateDirectory(ConfigDirectory);
-        System.IO.Directory.CreateDirectory(DownloadCacheDirectory);
-        System.IO.Directory.CreateDirectory(_userShimDirectory);
-        System.IO.Directory.CreateDirectory(_userInstallRoot);
+        if (_homeRooted)
+        {
+            System.IO.Directory.CreateDirectory(ConfigDirectory);
+            System.IO.Directory.CreateDirectory(DownloadCacheDirectory);
+            System.IO.Directory.CreateDirectory(_userShimDirectory);
+            System.IO.Directory.CreateDirectory(_userInstallRoot);
+        }
 
         if (_skipGlobalDirectories || !_globalPrefixRooted)
         {
