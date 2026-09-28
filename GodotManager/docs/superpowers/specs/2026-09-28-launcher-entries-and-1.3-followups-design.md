@@ -10,7 +10,11 @@ Status: approved design, awaiting spec review. Ships in 1.4.0 on
 > (not a fixture-set `XDG_DATA_HOME`) isolates launcher paths, and on Windows the Start
 > Menu/Desktop derive from it; `activate` always rewrites the entry; the Linux file name
 > carries an 8-hex Id prefix; `remove` deletes the entry only after the registry save
-> succeeds; the new kill-wait result drives only a warning.
+> succeeds; the new kill-wait result drives only a warning. After independent plan
+> review: launcher paths ignore `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` (test-only
+> `GODMAN_LAUNCHER_ROOT` instead); no `StartupWMClass` or `%f` in the `.desktop` file;
+> `install --activate` splits off an elevated activation when switching away from a
+> global install; `--force` reinstalls delete the replaced entry's launcher file.
 
 ## Intent
 

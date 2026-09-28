@@ -26,16 +26,19 @@
 ## Deviations from the spec (decided while planning — spec updated to match)
 
 1. **Registry guard (2.1):** instead of a per-load snapshot, `SaveAsync` rebases the *on-disk* global entries with the same `RebaseRelocatedInstallPaths` logic and compares serialized content. Same guarantee (a rebase alone never triggers a write), no new state on `InstallRegistry`.
-2. **Test isolation:** no fixture change for `XDG_DATA_HOME`. On Linux `GODMAN_HOME` already substitutes `$HOME` wholesale, so when it is set it also wins over `XDG_DATA_HOME`. On Windows, with `GODMAN_HOME` set, the Start Menu and Desktop derive from it (`<appData>\Microsoft\Windows\Start Menu`, `<appData>\Desktop`) — the real Start Menu *is* `%APPDATA%\Microsoft\Windows\Start Menu`, so defaults are unchanged; tests stop writing into the developer's real Start Menu.
+2. **Test isolation (revised after plan review):** launcher paths do **not** follow `GODMAN_HOME` / `GODMAN_GLOBAL_ROOT` — those are documented user-facing overrides (README), and deriving from them would put a real user's entries somewhere no launcher looks (`$GODMAN_HOME/.local/share/applications` and `<custom prefix>/share/applications` are not on `XDG_DATA_DIRS`; `%GODMAN_HOME%\Microsoft\Windows\Start Menu` is not a Start Menu), and would orphan their 1.3.x shortcuts. Launcher paths always resolve to the real OS locations (`$XDG_DATA_HOME` or `~/.local/share`, `/usr/local/share`; `StartMenu`, `CommonStartMenu`, `Desktop`), overridable only by a new internal variable **`GODMAN_LAUNCHER_ROOT`** that `GodmanTestFixture` sets and restores. Tests run serially (`DisableTestParallelization = true` in `AssemblyInfo.cs`), so the process-wide variable is safe. This also stops Windows test runs writing into the developer's real Start Menu.
 3. **`activate` rewrites** the launcher entry every time (unless opted out) instead of create-if-missing: cheap and self-healing if the executable path changed.
 4. **Linux `.desktop` name includes the first 8 hex chars of the install Id** (`godman-godot-4.7.2-standard-user-1a2b3c4d.desktop`), so two installs of the same version/edition/scope at different `--path`s do not share one file.
 5. **Remove deletes the launcher entry after the registry save succeeds**, so an unprivileged `remove` of a global install that fails on the registry write leaves the entry intact.
 6. **2.2:** the cancel path already keeps the cache archive (`!cancellationToken.IsCancellationRequested` guard), so the new `bool` from `TryKillProcessTreeAsync` drives only a verbose warning.
+7. **No `StartupWMClass`, no `%f`** (plan review). Every version's entry would share `StartupWMClass=Godot`, so GNOME would group every running editor under one arbitrary entry — the opposite of the goal; and under native Wayland the app_id likely differs anyway. Without it GNOME associates the window with the entry it launched (startup notification / pid), so `StartupNotify=true` is written instead. `%f` is dropped because no `MimeType` is declared and passing a `project.godot` runs the project rather than editing it. Grouping is a manual-verification item.
+8. **`install --activate` goes through the activation elevation rule** (plan review). When `ElevatedActivator.IsRequired(scope, previousActive?.Scope)` is true for a user-scope install (Windows: a global install is currently active), `InstallCommand` and the TUI install dialog install with `Activate: false` and then activate through `ElevatedActivator.RunAsync`, exactly as `activate` does. Global-scope installs already run wholly in the elevated child.
+9. **Launcher create happens after the registry save**, symmetric with remove; a `--force` reinstall deletes the replaced entries' launcher files first (their Ids differ, so their `.desktop` names do too).
 
 ## Review Focus
 
 1. **Install path with spaces, quotes, `$`, backslash or `%`** — the `.desktop` `Exec=` line must still launch the right binary. Pinned by `BuildDesktopFile_EscapesExecPerDesktopEntrySpec` (Task 2).
-2. **Developer machine exports `XDG_DATA_HOME`** — tests must never write into the real launcher. Pinned by `LauncherDirectory_UnderGodmanHomeOverride_IgnoresXdgDataHome` (Task 1).
+2. **Developer machine exports `XDG_DATA_HOME`, or a user sets `GODMAN_HOME`** — tests must never write into the real launcher, and a user's override must not move their entries somewhere invisible. Pinned by `LauncherPaths_UnderTheFixture_StayInTempRootEvenWithXdgDataHome` and `LauncherPaths_IgnoreGodmanHomeAndGlobalRoot` (Task 1).
 3. **Unprivileged `remove` of a global install on Linux fails on the registry write** — the launcher entry must survive so the retry under sudo finds a consistent state. Pinned by `Remove_WhenRegistrySaveFails_KeepsLauncherEntry` (Task 5).
 4. **Unprivileged user-scope save on an un-migrated machine** — must not attempt the global write just because an in-memory path was rebased. Pinned by `SaveAsync_RebaseOnly_DoesNotRewriteGlobalFile` (Task 3).
 5. **`clean` in a shared `applications/` directory** — foreign `.desktop` files must survive. Pinned by `Clean_RemovesOnlyGodmanLauncherEntries` (Task 6).
@@ -46,6 +49,7 @@
 
 **Files:**
 - Modify: `GodotManager/Config/AppPaths.cs`
+- Modify: `GodotManager.Tests/Helpers/GodmanTestFixture.cs` (set/restore `GODMAN_LAUNCHER_ROOT`)
 - Test: `GodotManager.Tests/AppPathsTests.cs`
 
 **Interfaces:**
@@ -53,12 +57,14 @@
   - `string AppPaths.GetLauncherDirectory(InstallScope scope)` — Linux: `<dataDir>/applications`; Windows: `<StartMenu>\Programs\godman`.
   - `string? AppPaths.GetLauncherIconPath(InstallScope scope)` — Linux: `<dataDir>/icons/hicolor/scalable/apps/godman-godot.svg`; Windows: `null`.
   - `string AppPaths.DesktopDirectory` — the per-user desktop (Windows desktop shortcut target).
+  - Env var `GODMAN_LAUNCHER_ROOT` (internal, for tests): when set, user scope resolves under `<root>/user`, global under `<root>/global`, desktop `<root>/Desktop`, on both OSes.
+  - `GodmanTestFixture` sets `GODMAN_LAUNCHER_ROOT=<TempRoot>/launcher`.
 
 - [ ] **Step 1: Write the failing tests** (append to `AppPathsTests`)
 
 ```csharp
 [Fact]
-public void LauncherDirectory_UnderGodmanHomeOverride_IgnoresXdgDataHome()
+public void LauncherPaths_UnderTheFixture_StayInTempRootEvenWithXdgDataHome()
 {
     var savedXdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
     Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(Path.GetTempPath(), "must-not-be-used-" + Guid.NewGuid().ToString("N")));
@@ -85,7 +91,33 @@ public void LauncherDirectory_UnderGodmanHomeOverride_IgnoresXdgDataHome()
 }
 
 [Fact]
-public void Linux_LauncherPaths_FollowXdgLayoutUnderTheOverrides()
+public void LauncherPaths_IgnoreGodmanHomeAndGlobalRoot()
+{
+    // GODMAN_HOME / GODMAN_GLOBAL_ROOT are user-facing overrides for where godman keeps
+    // its own files. A launcher entry is only useful where the desktop looks for it, so
+    // those overrides must not move it. Only GODMAN_LAUNCHER_ROOT does.
+    using var fixture = new GodmanTestFixture();
+    var saved = Environment.GetEnvironmentVariable("GODMAN_LAUNCHER_ROOT");
+    Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", null);
+    try
+    {
+        var paths = new AppPaths();   // GODMAN_HOME / GODMAN_GLOBAL_ROOT still point into TempRoot
+
+        Assert.DoesNotContain(fixture.TempRoot, paths.GetLauncherDirectory(InstallScope.User));
+        Assert.DoesNotContain(fixture.TempRoot, paths.GetLauncherDirectory(InstallScope.Global));
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal("/usr/local/share/applications", paths.GetLauncherDirectory(InstallScope.Global));
+        }
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", saved);
+    }
+}
+
+[Fact]
+public void Linux_LauncherPaths_UnderLauncherRoot_FollowXdgLayout()
 {
     if (OperatingSystem.IsWindows())
     {
@@ -93,29 +125,16 @@ public void Linux_LauncherPaths_FollowXdgLayoutUnderTheOverrides()
     }
 
     using var fixture = new GodmanTestFixture();
-    var globalPrefix = Path.Combine(fixture.TempRoot, "global");
+    var root = Path.Combine(fixture.TempRoot, "launcher");
 
-    Assert.Equal(Path.Combine(fixture.TempRoot, ".local", "share", "applications"),
-        fixture.Paths.GetLauncherDirectory(InstallScope.User));
-    Assert.Equal(Path.Combine(globalPrefix, "share", "applications"),
-        fixture.Paths.GetLauncherDirectory(InstallScope.Global));
-    Assert.Equal(Path.Combine(globalPrefix, "share", "icons", "hicolor", "scalable", "apps", "godman-godot.svg"),
+    Assert.Equal(Path.Combine(root, "user", "applications"), fixture.Paths.GetLauncherDirectory(InstallScope.User));
+    Assert.Equal(Path.Combine(root, "global", "applications"), fixture.Paths.GetLauncherDirectory(InstallScope.Global));
+    Assert.Equal(Path.Combine(root, "global", "icons", "hicolor", "scalable", "apps", "godman-godot.svg"),
         fixture.Paths.GetLauncherIconPath(InstallScope.Global));
 }
-
-[Fact]
-public void Linux_DefaultGlobalLauncherDirectory_IsOnTheDefaultXdgDataDirs()
-{
-    if (OperatingSystem.IsWindows())
-    {
-        return;
-    }
-
-    // Constructed without overrides on purpose, like Linux_ScopePaths_KeepShimsInBinAndInstallsOutOfIt.
-    var paths = new AppPaths();
-    Assert.Equal("/usr/local/share/applications", paths.GetLauncherDirectory(InstallScope.Global));
-}
 ```
+
+`LauncherPaths_IgnoreGodmanHomeAndGlobalRoot` constructs a real-path `AppPaths` for *reading* only; `AppPaths` never creates launcher directories, and GODMAN_HOME is still set so no migration runs.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -124,7 +143,19 @@ Expected: build error — `GetLauncherDirectory` / `GetLauncherIconPath` / `Desk
 
 - [ ] **Step 3: Implement**
 
-In `AppPaths`, add fields next to the other `private readonly string` fields:
+In `AppPaths`, add a constant next to the others:
+
+```csharp
+/// <summary>
+/// Internal override for where launcher entries go, used by the test fixture. Launcher
+/// entries deliberately do NOT follow GODMAN_HOME / GODMAN_GLOBAL_ROOT: an entry is only
+/// useful where the desktop looks for it, and those user-facing overrides would move it
+/// somewhere no launcher reads.
+/// </summary>
+private const string EnvLauncherRoot = "GODMAN_LAUNCHER_ROOT";
+```
+
+fields next to the other `private readonly string` fields:
 
 ```csharp
 private readonly string _userLauncherDirectory;
@@ -139,54 +170,70 @@ and a public property next to `DownloadCacheDirectory`:
 public string DesktopDirectory { get; }
 ```
 
-In the Windows branch, after `_globalConfigRoot = globalRoot;`:
+At the end of the constructor, before `RegistryFile = …`, call `(… ) = ResolveLauncherLocations();` — implement it as a private method so both OS branches stay untouched:
 
 ```csharp
-// The real Start Menu *is* %APPDATA%\Microsoft\Windows\Start Menu, so deriving it
-// from appData changes nothing by default and keeps a GODMAN_HOME override --
-// every test run -- out of the developer's real Start Menu.
-var userStartMenu = overrideBase is null
-    ? Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)
-    : System.IO.Path.Combine(appData, "Microsoft", "Windows", "Start Menu");
-var globalStartMenu = overrideGlobalBase is null
-    ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-    : System.IO.Path.Combine(programFiles, "Microsoft", "Windows", "Start Menu");
+private static (string User, string Global, string? UserIcon, string? GlobalIcon, string Desktop) ResolveLauncherLocations()
+{
+    var root = Environment.GetEnvironmentVariable(EnvLauncherRoot);
 
-_userLauncherDirectory = System.IO.Path.Combine(userStartMenu, "Programs", WindowsFolderName);
-_globalLauncherDirectory = System.IO.Path.Combine(globalStartMenu, "Programs", WindowsFolderName);
-_userLauncherIconPath = null;   // .lnk files take the icon from the executable
-_globalLauncherIconPath = null;
-DesktopDirectory = overrideBase is null
-    ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
-    : System.IO.Path.Combine(appData, "Desktop");
-```
+    if (OperatingSystem.IsWindows())
+    {
+        var userStartMenu = root is null
+            ? Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)
+            : System.IO.Path.Combine(root, "user");
+        var globalStartMenu = root is null
+            ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
+            : System.IO.Path.Combine(root, "global");
+        var desktop = root is null
+            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            : System.IO.Path.Combine(root, "Desktop");
 
-In the Linux branch, after `_globalConfigRoot = globalInstallRoot;`:
+        // .lnk files take their icon from the executable, so no icon path on Windows.
+        return (System.IO.Path.Combine(userStartMenu, "Programs", WindowsFolderName),
+                System.IO.Path.Combine(globalStartMenu, "Programs", WindowsFolderName),
+                null, null, desktop);
+    }
 
-```csharp
-// GODMAN_HOME stands in for $HOME wholesale on Linux (the shim and installs already
-// resolve under it), so an override also wins over XDG_DATA_HOME -- otherwise a test
-// run on a machine that exports XDG_DATA_HOME would write into the real launcher.
-var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-var userDataDir = overrideBase is null && !string.IsNullOrEmpty(xdgDataHome) && System.IO.Path.IsPathRooted(xdgDataHome)
-    ? xdgDataHome
-    : System.IO.Path.Combine(home, ".local", "share");
-// <prefix>/share is on the default XDG_DATA_DIRS (/usr/local/share:/usr/share).
-var globalDataDir = System.IO.Path.Combine(globalPrefix, "share");
+    string userDataDir;
+    string globalDataDir;
+    if (root is not null)
+    {
+        userDataDir = System.IO.Path.Combine(root, "user");
+        globalDataDir = System.IO.Path.Combine(root, "global");
+    }
+    else
+    {
+        var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        userDataDir = !string.IsNullOrEmpty(xdgDataHome) && System.IO.Path.IsPathRooted(xdgDataHome)
+            ? xdgDataHome
+            : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        // On the default XDG_DATA_DIRS (/usr/local/share:/usr/share) regardless of
+        // GODMAN_GLOBAL_ROOT -- a custom install prefix is not a place GNOME looks.
+        globalDataDir = "/usr/local/share";
+    }
 
-_userLauncherDirectory = System.IO.Path.Combine(userDataDir, "applications");
-_globalLauncherDirectory = System.IO.Path.Combine(globalDataDir, "applications");
-_userLauncherIconPath = LauncherIconPath(userDataDir);
-_globalLauncherIconPath = LauncherIconPath(globalDataDir);
-DesktopDirectory = System.IO.Path.Combine(home, "Desktop");
-```
+    return (System.IO.Path.Combine(userDataDir, "applications"),
+            System.IO.Path.Combine(globalDataDir, "applications"),
+            LauncherIconPath(userDataDir),
+            LauncherIconPath(globalDataDir),
+            System.IO.Path.Combine(root ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"));
+}
 
-Add the helper and accessors next to `GetShimDirectory`:
-
-```csharp
 private static string LauncherIconPath(string dataDir) =>
     System.IO.Path.Combine(dataDir, "icons", "hicolor", "scalable", "apps", "godman-godot.svg");
+```
 
+In the constructor:
+
+```csharp
+(_userLauncherDirectory, _globalLauncherDirectory, _userLauncherIconPath, _globalLauncherIconPath, var desktop) = ResolveLauncherLocations();
+DesktopDirectory = desktop;
+```
+
+Accessors next to `GetShimDirectory`:
+
+```csharp
 /// <summary>
 /// Where godman writes each install's launcher entry: an XDG <c>applications/</c>
 /// directory on Linux, godman's own Start Menu folder on Windows. Not created here --
@@ -207,15 +254,25 @@ public string? GetLauncherIconPath(InstallScope scope)
 
 Do **not** add these directories to `EnsureDirectories()`.
 
+`GodmanTestFixture`: add `("GODMAN_LAUNCHER_ROOT", System.Environment.GetEnvironmentVariable("GODMAN_LAUNCHER_ROOT"))` to `_savedEnvVars`, and next to the other two `SetEnvironmentVariable` calls:
+
+```csharp
+// Launcher entries resolve to the real desktop locations regardless of GODMAN_HOME,
+// so without this every install/activate test would write into the developer's real
+// app menu (Linux) or Start Menu (Windows).
+System.Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", Path.Combine(TempRoot, "launcher"));
+```
+
+Update the fixture's class comment "Properly saves and restores all 4 env vars" to "all 5".
+
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `dotnet test --filter "FullyQualifiedName~AppPathsTests"`
-Expected: PASS.
+Run: `dotnet test --filter "FullyQualifiedName~AppPathsTests"` → PASS, then `dotnet test -v minimal` → all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add GodotManager/Config/AppPaths.cs GodotManager.Tests/AppPathsTests.cs
+git add GodotManager/Config/AppPaths.cs GodotManager.Tests
 git commit -m "feat(paths): resolve launcher entry locations per scope
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -256,7 +313,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ```bash
 mkdir -p GodotManager/Assets
-curl -fsSL https://raw.githubusercontent.com/godotengine/godot/master/icon.svg -o GodotManager/Assets/godot-icon.svg
+# Pinned to a release tag so the embedded asset is reproducible.
+curl -fsSL https://raw.githubusercontent.com/godotengine/godot/4.5-stable/icon.svg -o GodotManager/Assets/godot-icon.svg
 head -c 200 GodotManager/Assets/godot-icon.svg   # must start with <svg
 ```
 
@@ -315,10 +373,13 @@ public class LauncherServiceTests : IDisposable
         Assert.StartsWith("[Desktop Entry]\n", text);
         Assert.Contains("\nType=Application\n", text);
         Assert.Contains("\nName=Godot 4.7.2 (Standard)\n", text);
-        Assert.Contains("\nExec=\"/opt/godot/Godot\" %f\n", text);
+        Assert.Contains("\nExec=\"/opt/godot/Godot\"\n", text);
         Assert.Contains("\nIcon=/icons/godman-godot.svg\n", text);
         Assert.Contains("\nTerminal=false\n", text);
-        Assert.Contains("\nStartupWMClass=Godot\n", text);
+        Assert.Contains("\nStartupNotify=true\n", text);
+    // Every version would share one WM class, so GNOME would group all editors under
+    // one arbitrary entry; the entry must not claim it.
+    Assert.DoesNotContain("StartupWMClass", text);
     }
 
     [Fact]
@@ -331,7 +392,8 @@ public class LauncherServiceTests : IDisposable
 
         var text = LauncherService.BuildDesktopFile(entry, """/opt/my godot/a"b$c\d%e""", "/i.svg");
 
-        Assert.Contains("""Exec="/opt/my godot/a\\"b\\$c\\\\d%%e" %f""", text);
+        // File text is: Exec="/opt/my godot/a\\"b\\$c\\\\d%%e"
+        Assert.Contains("Exec=\"/opt/my godot/a\\\\\"b\\\\$c\\\\\\\\d%%e\"\n", text);
     }
 
     [Fact]
@@ -345,7 +407,7 @@ public class LauncherServiceTests : IDisposable
         var entryPath = LauncherService.GetEntryPath(entry, _fixture.Paths);
         Assert.True(File.Exists(entryPath));
         var binary = Path.Combine(entry.Path, Path.GetFileName(entry.Path));
-        Assert.Contains($"Exec=\"{binary}\" %f", File.ReadAllText(entryPath));
+        Assert.Contains($"Exec=\"{binary}\"\n", File.ReadAllText(entryPath));
 
         var icon = _fixture.Paths.GetLauncherIconPath(InstallScope.User)!;
         Assert.StartsWith("<svg", File.ReadAllText(icon).TrimStart());
@@ -397,7 +459,7 @@ public class LauncherServiceTests : IDisposable
 }
 ```
 
-Add to `GodotExecutableLocatorTests.cs`:
+Add to `GodotExecutableLocatorTests.cs` (the test project has no ImplicitUsings — add `using System;` to that file if it is missing; the new tests use `Guid`):
 
 ```csharp
 [Fact]
@@ -659,13 +721,16 @@ internal sealed class LauncherService
         builder.Append("Type=Application\n");
         builder.Append("Name=").Append(EscapeValue(DisplayName(entry))).Append('\n');
         builder.Append("Comment=Godot Engine editor, managed by godman\n");
-        builder.Append("Exec=").Append(QuoteExecArgument(exePath)).Append(" %f\n");
+        // No %f: no MimeType is declared, and a project.godot passed this way would run
+        // the project rather than open it in the editor.
+        builder.Append("Exec=").Append(QuoteExecArgument(exePath)).Append('\n');
         builder.Append("Icon=").Append(EscapeValue(iconPath)).Append('\n');
         builder.Append("Terminal=false\n");
         builder.Append("Categories=Development;IDE;\n");
-        // Godot's X11/Wayland window class; lets the shell group the running editor
-        // under this entry instead of showing an anonymous window.
-        builder.Append("StartupWMClass=Godot\n");
+        // No StartupWMClass: every version's entry would claim the same "Godot" class,
+        // so the shell would group every running editor under one arbitrary entry.
+        // Startup notification lets it tie the window to the entry that launched it.
+        builder.Append("StartupNotify=true\n");
         return builder.ToString();
     }
 
@@ -796,7 +861,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 2: Write the failing tests**
 
-In `RegistryServiceTests.cs`:
+In `RegistryServiceTests.cs` (add `using System.Linq;` — the test project has no ImplicitUsings):
 
 ```csharp
 [Fact]
@@ -816,6 +881,32 @@ public async Task SaveAsync_InPlaceFieldChangeOnGlobalEntry_IsPersisted()
     Assert.True(reloaded.Installs.Single().ChecksumVerified);
 }
 ```
+
+And, pinning the duplicate-Id tolerance:
+
+```csharp
+[Fact]
+public async Task SaveAsync_GlobalFileWithDuplicateId_DoesNotThrowOrRewriteIt()
+{
+    using var fixture = new GodmanTestFixture();
+    var installPath = Path.Combine(fixture.TempRoot, "global-install");
+    Directory.CreateDirectory(installPath);
+    var entry = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+    Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.GlobalRegistryFile)!);
+    var json = System.Text.Json.JsonSerializer.Serialize(
+        new InstallRegistry { Installs = [entry, entry] },
+        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+    await File.WriteAllTextAsync(fixture.Paths.GlobalRegistryFile, json);
+    var writeTimeBefore = File.GetLastWriteTimeUtc(fixture.Paths.GlobalRegistryFile);
+
+    var loaded = await fixture.Registry.LoadAsync();
+    await fixture.Registry.SaveAsync(loaded);
+
+    Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(fixture.Paths.GlobalRegistryFile));
+}
+```
+
+This passes today (the Id-set guard ignores duplicates); it exists to fail if the new comparison regresses to `ToDictionary` or a raw count.
 
 In `RegistryServicePathRelocationTests.cs`:
 
@@ -886,22 +977,27 @@ and update the comment above it to say "only when the legitimately global entrie
 /// </summary>
 private bool GlobalEntriesEquivalent(List<InstallEntry> current, List<InstallEntry> desired)
 {
-    if (current.Count != desired.Count)
-    {
-        return false;
-    }
+    // Keyed by Id with first-wins, on both sides: a global file carrying a duplicate Id
+    // (which MergeInstalls also passes through) must compare equal to itself. A
+    // ToDictionary here would throw on it and fail every save, and a count comparison
+    // including duplicates would demand a global write -- and elevation -- from an
+    // unrelated user-scope save.
+    var currentById = Serialized(current);
+    var desiredById = Serialized(desired);
 
-    var currentById = current.ToDictionary(x => x.Id, x => JsonSerializer.Serialize(x, _jsonOptions));
-    foreach (var entry in desired)
+    return currentById.Count == desiredById.Count
+        && desiredById.All(pair => currentById.TryGetValue(pair.Key, out var serialized) && serialized == pair.Value);
+
+    Dictionary<Guid, string> Serialized(List<InstallEntry> entries)
     {
-        if (!currentById.TryGetValue(entry.Id, out var serialized)
-            || serialized != JsonSerializer.Serialize(entry, _jsonOptions))
+        var byId = new Dictionary<Guid, string>();
+        foreach (var entry in entries)
         {
-            return false;
+            byId.TryAdd(entry.Id, JsonSerializer.Serialize(entry, _jsonOptions));
         }
-    }
 
-    return true;
+        return byId;
+    }
 }
 ```
 
@@ -930,7 +1026,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `GodotManager/Commands/InstallCommand.cs` (option, request, preview)
 - Modify: `GodotManager/Commands/ElevatedInstallCommand.cs` (`BuildRequest`)
 - Modify: `GodotManager/Services/EnvironmentService.cs` (`ApplyActiveAsync`, `RemoveWindows`)
-- Test: `GodotManager.Tests/E2E/LauncherLifecycleE2ETests.cs` (new), `GodotManager.Tests/InstallerServiceIntegrationTests.cs`
+- Modify: `GodotManager/Tui/Views/InstallDialog.cs`, `GodotManager/Tui/TuiApp.cs` (pass `RegistryService` to the dialog; elevated-activation split)
+- Test: `GodotManager.Tests/E2E/LauncherLifecycleE2ETests.cs` (new), `GodotManager.Tests/InstallerServiceIntegrationTests.cs`, `GodotManager.Tests/ElevatedActivatorTests.cs`, `GodotManager.Tests/EnvironmentServiceTests.cs`
 
 **Interfaces:**
 - Consumes: `EnvironmentService.Launcher` (Task 2).
@@ -940,6 +1037,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `ElevatedInstallPayload(..., bool CreateLauncherEntry = true)` — new last parameter.
   - `InstallCommand.Settings.NoShortcut` (`--no-shortcut`).
   - Semantics: `ApplyActiveAsync` rewrites the launcher entry unless `LauncherEntry == false`; `RemoveActiveAsync` deletes only the Windows desktop shortcut.
+  - `internal static bool InstallerService.NeedsSeparateElevatedActivation(InstallScope requestScope, InstallScope? previousActiveScope)` — pure: true when a **user**-scope install would activate over machine state (`ElevatedActivator.TouchesMachineState`). Global-scope installs already run wholly elevated.
 
 - [ ] **Step 1: Write the failing E2E tests** — create `GodotManager.Tests/E2E/LauncherLifecycleE2ETests.cs`
 
@@ -1025,6 +1123,9 @@ public class LauncherLifecycleE2ETests : IDisposable
         Assert.False(_fixture.Launcher.Exists(entry));
     }
 
+    // Regression guard only: on Linux deactivate never touched launcher files, and the
+    // one real change (RemoveWindows now deletes just the desktop shortcut, not the Start
+    // Menu entry) is Windows-only and covered by the manual checklist.
     [Fact]
     public async Task Deactivate_KeepsTheLauncherEntry()
     {
@@ -1126,19 +1227,28 @@ and replace the block from `registry.Installs.RemoveAll(…)` through the `if (r
 // run against the scope it was activated in.
 var previousActive = request.Activate ? registry.GetActive() : null;
 
+// A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
+// carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
+// in the app menu. Deleted here, before anything new is written: on Windows both
+// share one .lnk name, and deleting after the create would delete the new one.
+var replaced = registry.Installs
+    .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
+    .ToList();
+foreach (var old in replaced)
+{
+    _environment.Launcher.Delete(old);
+}
+
 registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
 registry.Installs.Add(entry);
-
-if (request.CreateLauncherEntry)
-{
-    _environment.Launcher.Create(entry);
-}
 
 if (request.Activate)
 {
     // Same cleanup `activate` does. Without it, switching the active install through
     // `install --activate` (and the TUI install dialog, which always activates) left
-    // the previous activation's shim, PATH entry and desktop shortcut behind.
+    // the previous activation's shim, PATH entry and desktop shortcut behind. Callers
+    // that would need elevation for this split the activation off beforehand -- see
+    // NeedsSeparateElevatedActivation.
     if (previousActive is not null)
     {
         try
@@ -1155,6 +1265,126 @@ if (request.Activate)
     await _environment.ApplyActiveAsync(entry, cancellationToken);
 }
 ```
+
+and directly after the existing `await _registry.SaveAsync(registry, cancellationToken);` that follows it:
+
+```csharp
+// After the save, symmetric with remove: an install whose registry write failed must
+// not leave a launcher entry pointing at an unregistered install. (Activation above
+// may already have written it; this rewrite is idempotent.)
+if (request.CreateLauncherEntry)
+{
+    _environment.Launcher.Create(entry);
+}
+```
+
+Add the pure predicate to `InstallerService`:
+
+```csharp
+/// <summary>
+/// True when activating a freshly installed <paramref name="requestScope"/> install
+/// would write machine-wide state -- i.e. a user-scope install switching away from an
+/// active global one. Such callers install with Activate = false and then activate
+/// through <see cref="ElevatedActivator"/>, exactly as <c>activate</c> does. A
+/// global-scope install needs no split: on Windows it already runs wholly in the
+/// elevated child.
+/// </summary>
+internal static bool NeedsSeparateElevatedActivation(InstallScope requestScope, InstallScope? previousActiveScope) =>
+    requestScope == InstallScope.User
+    && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
+```
+
+with tests in `ElevatedActivatorTests.cs`:
+
+```csharp
+[Theory]
+[InlineData(InstallScope.User, InstallScope.Global, true)]
+[InlineData(InstallScope.User, InstallScope.User, false)]
+[InlineData(InstallScope.User, null, false)]
+[InlineData(InstallScope.Global, InstallScope.Global, false)]
+[InlineData(InstallScope.Global, null, false)]
+public void NeedsSeparateElevatedActivation_OnlyForUserInstallOverActiveGlobal(
+    InstallScope request, InstallScope? previous, bool expected)
+{
+    Assert.Equal(expected, InstallerService.NeedsSeparateElevatedActivation(request, previous));
+}
+```
+
+`InstallCommand` — inject `RegistryService registry` and `AppPaths paths` (constructor + fields). Before `if (settings.DryRun)`, add:
+
+```csharp
+// Activation elevation is decided the same way `activate` decides it, before anything
+// is written: a user-scope install over an active global one must clear machine-wide
+// state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
+// the first machine-wide write").
+var activateSeparately = false;
+if (request.Activate && !settings.DryRun)
+{
+    var currentActive = (await _registry.LoadAsync()).GetActive();
+    if (ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
+        && InstallerService.NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope))
+    {
+        activateSeparately = true;
+        request = request with { Activate = false };
+    }
+}
+```
+
+and after the `[green]Installed[/]` line:
+
+```csharp
+if (activateSeparately)
+{
+    AnsiConsole.MarkupLine("[yellow]Administrator access is required to switch away from the active global install. A UAC prompt will appear.[/]");
+    var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
+    if (!elevated.Succeeded)
+    {
+        AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {elevated.Error}");
+        if (elevated.Hint is { } hint)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
+        }
+
+        return -1;
+    }
+}
+else if (settings.Activate && OperatingSystem.IsWindows())
+{
+    ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
+}
+```
+
+`request` is a positional record, so `with` works; make the local `var request` non-readonly if needed.
+
+`InstallDialog` — add a `RegistryService registry` constructor parameter and field (update both `new InstallDialog(...)` calls in `TuiApp.cs`, lines ~315 and ~634, to pass `_registry`). In `DoInstallAsync`, after building `request`:
+
+```csharp
+var currentActive = (await _registry.LoadAsync()).GetActive();
+var activateSeparately = ElevatedActivator.IsRequired(scope, currentActive?.Scope)
+    && InstallerService.NeedsSeparateElevatedActivation(scope, currentActive?.Scope);
+if (activateSeparately)
+{
+    request = request with { Activate = false };
+}
+```
+
+and after a successful install (where `result` is available, before the success message):
+
+```csharp
+if (activateSeparately)
+{
+    var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
+    if (!elevated.Succeeded)
+    {
+        _app.Invoke(() => MessageBox.ErrorQuery(
+            _app, "Error",
+            $"Installed, but activation failed: {elevated.Error}" + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+            "OK"));
+    }
+}
+```
+
+Keep the dialog's existing success path otherwise unchanged. This branch is Windows-only (`IsRequired` is false elsewhere) and the dialog cannot be instantiated under xunit; the pure predicate above is what is unit-tested, the rest is on the manual checklist.
 
 `DryRunInstallAsync` — read it; where it prints/returns its planned actions, add a line "Add application launcher entry" when `request.CreateLauncherEntry`. (If it only builds an entry, set `LauncherEntry = request.CreateLauncherEntry` on it.)
 
@@ -1183,9 +1413,27 @@ public bool NoShortcut { get; set; }
 
 pass `CreateLauncherEntry: !settings.NoShortcut` as a named argument to the `new InstallRequest(…)` call, and in `PreviewInstallAsync` renumber the action list so it prints, after "Register in installs.json", `"Add application launcher entry"` when `request.CreateLauncherEntry`, then the activation lines. Use a running `step` counter like `RemoveCommand.PreviewRemove` does.
 
-- [ ] **Step 5: Run** `dotnet test --filter "FullyQualifiedName~LauncherLifecycleE2ETests|FullyQualifiedName~RemovesThePreviouslyActiveInstallsShim"` → PASS; then `dotnet test -v minimal` → all pass. The existing Windows-only `ApplyActiveAsync_WithDesktopShortcut_CreatesShortcut` must still pass on Windows; it now resolves the desktop under `<GODMAN_HOME>\Desktop` — update its expected folder to `_fixture.Paths.DesktopDirectory`.
+- [ ] **Step 5: Run** `dotnet test --filter "FullyQualifiedName~LauncherLifecycleE2ETests|FullyQualifiedName~RemovesThePreviouslyActiveInstallsShim"` → PASS; then `dotnet test -v minimal` → all pass. The existing Windows-only `ApplyActiveAsync_WithDesktopShortcut_CreatesShortcut` (`EnvironmentServiceTests.cs` ~line 202) has no live assertion — its `Assert.True(File.Exists(...))` is commented out. Now that the desktop resolves under the fixture's `GODMAN_LAUNCHER_ROOT`, make it real: use `_fixture.Paths.DesktopDirectory` for the folder and restore the assertion. It only runs on Windows; say so in the report.
 
-- [ ] **Step 6: Mutation check (observed)** — comment out the `RemoveActiveAsync(previousActive…)` call, run `InstallAsync_WithActivate_RemovesThePreviouslyActiveInstallsShim`, confirm FAIL, restore. Report the result.
+- [ ] **Step 6: Mutation checks (observed)** — each separately, restoring after:
+  - comment out the `RemoveActiveAsync(previousActive…)` call → `InstallAsync_WithActivate_RemovesThePreviouslyActiveInstallsShim` must FAIL;
+  - change `entry.LauncherEntry != false` in `ApplyActiveAsync` to `true` → `Activate_OptedOutEntry_DoesNotCreateLauncherEntry` must FAIL;
+  - delete the `foreach (var old in replaced)` loop → add and run this test, which must FAIL:
+
+```csharp
+[Fact]
+public async Task Install_Force_OverTheSamePath_LeavesOneLauncherEntry()
+{
+    if (OperatingSystem.IsWindows()) return;
+    await InstallAsync("4.5.1");
+    await InstallAsync("4.5.1", "--force");
+
+    var files = Directory.GetFiles(_fixture.Paths.GetLauncherDirectory(InstallScope.User), "godman-godot-*.desktop");
+    Assert.Single(files);
+}
+```
+
+  (add this test to `LauncherLifecycleE2ETests` in Step 1; it is listed here so its mutation is not forgotten). Report every observed result.
 
 - [ ] **Step 7: Commit**
 
@@ -1307,7 +1555,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `LauncherService.DeleteAll(InstallScope, IEnumerable<InstallEntry>)`.
-- Produces: `CleanCommand.CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null)`.
+- Produces: `CleanCommand.CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)`.
 
 - [ ] **Step 1: Write the failing test** (in `CleanCommandTests`, using its `_fixture`)
 
@@ -1341,17 +1589,42 @@ public void Clean_RemovesOnlyGodmanLauncherEntries()
 `CleanCommand`: inject the registry — constructor `CleanCommand(AppPaths paths, RegistryService registry)`, field `_registry`. In `Execute`, before the elevation branch, load the installs (the registry files are about to be deleted):
 
 ```csharp
-// Read before anything is deleted: the registry is the only record of which
-// desktop shortcuts on Windows are ours.
-var installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+// Read before anything is deleted: the registry is the only record of which desktop
+// shortcuts on Windows are ours. Best-effort -- clean is the recovery tool, and it
+// must still run on a machine whose installs.json is corrupt. The list only matters
+// for Windows desktop shortcuts; everything else clean removes is found by location.
+IReadOnlyList<InstallEntry> installs;
+try
+{
+    installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+}
+catch (Exception ex)
+{
+    _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+    installs = [];
+}
 ```
 
-pass them to `CleanupAll(_paths, installs)`. Change `CleanupAll`:
+(`_diagnostics` is an injected `DiagnosticContext?`, added to the constructor with the registry.) Also add a test:
 
 ```csharp
-internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null)
+[Fact]
+public async Task Clean_WithCorruptRegistry_StillSucceeds()
 {
-    var launcher = new LauncherService(paths);
+    File.WriteAllText(_fixture.Paths.RegistryFile, "{ not json");
+    var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
+    Assert.Equal(0, result.ExitCode);
+}
+```
+
+(It fails without the try/catch — `JsonException` escapes `Execute`. Record the observed result.)
+
+pass them to `CleanupAll(_paths, installs, _diagnostics)`. Change `CleanupAll`:
+
+```csharp
+internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
+{
+    var launcher = new LauncherService(paths, diagnostics);
     foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
     {
         foreach (var removed in launcher.DeleteAll(scope, installs ?? []))
@@ -1367,7 +1640,7 @@ internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? ins
 
 Extend `HasGlobalCleanupTargets` with `|| Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global))` so a Windows machine whose only global leftover is the Start Menu folder still elevates.
 
-`ElevatedCleanCommand`: inject `RegistryService` too, load installs the same way, call `CleanCommand.CleanupAll(_paths, installs)`.
+`ElevatedCleanCommand`: inject `RegistryService` and `DiagnosticContext?` too, load installs with the same try/catch, call `CleanCommand.CleanupAll(_paths, installs, _diagnostics)`.
 
 Update the confirm prompt text to "This will remove godman installs, shims, launcher entries, and config. Continue?".
 
@@ -1458,7 +1731,9 @@ var launcher = new LauncherService(_paths, _diagnostics);
 foreach (var install in registry.Installs.Where(x => x.LauncherEntry != false && !launcher.Exists(x)))
 {
     AnsiConsole.MarkupLineInterpolated($"[yellow]Launcher entry missing[/] for {install.Version} ({install.Edition}, {install.Scope}) [grey]{install.Id}[/]");
-    AnsiConsole.MarkupLineInterpolated($"[grey]  Run: godman activate {install.Id}[/]");
+    // Honest about the side effects: activate is the only command that writes a missing
+    // entry, and it also switches the active version (and needs sudo for a global one).
+    AnsiConsole.MarkupLineInterpolated($"[grey]  Run: godman activate {install.Id} -- this also makes it the active version{(install.Scope == InstallScope.Global && !OperatingSystem.IsWindows() ? " (run with sudo)" : "")}. Or reinstall it with --force.[/]");
 }
 ```
 
@@ -1573,6 +1848,14 @@ internal static async Task<bool> TryKillProcessTreeAsync(
         // The OS refused the kill (e.g. already terminating, or access denied).
         return false;
     }
+    catch (AggregateException)
+    {
+        // Documented for Kill(entireProcessTree: true) when part of the tree could not
+        // be killed -- the likely case for an unelevated parent and an elevated child.
+        // Escaping here would replace the OperationCanceledException the caller is
+        // about to rethrow, turning a cancel into a reported failure.
+        return false;
+    }
 }
 ```
 
@@ -1608,11 +1891,11 @@ finally
 }
 ```
 
-This path is Windows-only and not unit-reachable on Linux; say so in the task report rather than writing a test that cannot fail.
+Also, after the `finally`, the registry reload `await _registry.LoadAsync(cancellationToken);` would still throw on that late cancel and report a completed install as cancelled. Change it to `await _registry.LoadAsync(completed ? CancellationToken.None : cancellationToken);` with a one-line comment. This path is Windows-only and not unit-reachable on Linux; say so in the task report rather than writing a test that cannot fail.
 
 - [ ] **Step 5: Implement 2.4** — in `InstallerServiceInternalsTests`, in the `<remarks>` of `TryKillProcessTreeAsync_WithAnAlreadyExitedProcess_DoesNotThrow`, replace the sentence beginning "They are kept in production code regardless: .NET's own documentation states Kill() throws InvalidOperationException for an already-exited process on Windows, which this Linux environment cannot exercise either way." with:
 
-"They are kept in production code regardless, but not for the reason once given here: throwing on an already-exited process was .NET Framework behaviour, and this project targets net10.0 only. What the catches actually cover is `InvalidOperationException` when no process is associated with the object any more, and `Win32Exception` when the OS refuses the kill."
+"They are kept in production code regardless, but not for the reason once given here: throwing on an already-exited process was .NET Framework behaviour, and this project targets net10.0 only. What the catches actually cover is `InvalidOperationException` when no process is associated with the object any more, `Win32Exception` when the OS refuses the kill, and `AggregateException`, which `Kill(entireProcessTree: true)` documents when part of the tree cannot be killed."
 
 - [ ] **Step 6: Run** `dotnet test --filter "FullyQualifiedName~InstallerServiceInternalsTests"` → PASS; then the full suite.
 
@@ -1665,6 +1948,8 @@ public class VersionCommandTests : IDisposable
             Assert.Equal(0, result.ExitCode);
             Assert.Contains("godman", result.Output);
             Assert.Contains(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, result.Output);
+            Assert.Contains($"godman {GodotManager.Commands.VersionCommand.GodmanVersion}", result.Output);
+            Assert.StartsWith("1.4", GodotManager.Commands.VersionCommand.GodmanVersion);
         }
         finally
         {
@@ -1681,20 +1966,22 @@ public class VersionCommandTests : IDisposable
 ```csharp
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace GodotManager.Commands;
 
 internal sealed class VersionCommand : Command<VersionCommand.Settings>
 {
-    internal sealed class Settings : CommandSettings { }
+    // GlobalSettings, like every other user-facing command, so `godman version -V` parses.
+    internal sealed class Settings : GlobalSettings { }
 
-    /// <summary>Same source Program.cs gives SetApplicationVersion, so the two never disagree.</summary>
+    /// <summary>
+    /// Same source Program.cs gives SetApplicationVersion, so the two never disagree.
+    /// This assembly, not GetEntryAssembly(): under the test host the entry assembly is
+    /// the test runner, which would print the wrong number and still pass.
+    /// </summary>
     internal static string GodmanVersion =>
-        Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)
-        ?? typeof(VersionCommand).Assembly.GetName().Version?.ToString(3)
-        ?? "unknown";
+        typeof(VersionCommand).Assembly.GetName().Version?.ToString(3) ?? "unknown";
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
@@ -1732,7 +2019,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Paths → Windows: Start Menu `Programs\godman\Godot <ver> (<edition>).lnk` per install.
   - Notes: "The Godot logo used for Linux launcher entries is by Andrea Calabró, licensed CC BY 4.0."
 - [ ] **Step 2: PLAN.md** — under Phase 8, add "Launcher entries per install + 1.3.0 follow-ups" with bullets for each task and the two dropped follow-ups (and why).
-- [ ] **Step 3: CLAUDE.md** — under Conventions add: "Launcher entries (`.desktop` / Start Menu `.lnk`) are owned by `LauncherService`, reached through `EnvironmentService.Launcher` so CLI, elevated mirrors and TUI share one path. Remove deletes them only after the registry save succeeds."
+- [ ] **Step 3: CLAUDE.md** — under Conventions add: "Launcher entries (`.desktop` / Start Menu `.lnk`) are owned by `LauncherService`, reached through `EnvironmentService.Launcher` so CLI, elevated mirrors and TUI share one path. Install creates and remove deletes them only after the registry save succeeds." Under "Path resolution & test isolation" add: "Launcher paths deliberately ignore `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` — an entry is only useful where the desktop looks — and are redirected only by the internal `GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` sets." Update the fixture description there from 4 to 5 env vars if it names a count.
+- README Notes: known limitation — on Windows two installs of the same version and edition in one scope at different `--path`s share one Start Menu name; the second overwrites the first's shortcut.
 - [ ] **Step 4: Verify** — `dotnet build` (no new warnings), `dotnet test -v minimal` (all pass; report counts).
 - [ ] **Step 5: Commit**
 
