@@ -426,14 +426,6 @@ internal sealed class AppPaths
     }
 
     /// <summary>
-    /// Whether a GODMAN_GLOBAL_ROOT value still means what it did before 1.4.0, when it
-    /// named the shim directory and installs lived in <c>&lt;value&gt;/godman</c>: that
-    /// directory holds a registry (<c>installs.json</c>) or at least one install directory,
-    /// and the registry of the current layout (<paramref name="globalRegistryFile"/>) does
-    /// not exist yet. Once the current layout has a registry the value is taken at its
-    /// word. Reads the disk; an unreadable directory counts as holding nothing.
-    /// </summary>
-    /// <summary>
     /// The Linux files <see cref="MigrateAndRepair"/> rewrites after a move: both shims,
     /// this run's env.sh, and -- when it is a different file -- the env.sh the global shim
     /// sources. That one is whatever <c>EnvScriptPath</c> the activating run had, which
@@ -470,6 +462,14 @@ internal sealed class AppPaths
         }
     }
 
+    /// <summary>
+    /// Whether a GODMAN_GLOBAL_ROOT value still means what it did before 1.4.0, when it
+    /// named the shim directory and installs lived in <c>&lt;value&gt;/godman</c>: that
+    /// directory holds a registry (<c>installs.json</c>) or at least one install directory,
+    /// and the registry of the current layout (<paramref name="globalRegistryFile"/>) does
+    /// not exist yet. Once the current layout has a registry the value is taken at its
+    /// word. Reads the disk; an unreadable directory counts as holding nothing.
+    /// </summary>
     internal static bool UsesPre140GlobalRootMeaning(string overrideValue, string globalRegistryFile)
     {
         try
