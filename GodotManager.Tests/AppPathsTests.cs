@@ -157,6 +157,7 @@ public class AppPathsTests
         // carrying both old roots the one planned first is the one that survives. The
         // godman root has to come first: it is the newer layout, and letting the
         // abandoned godot-manager root win would replace live installs with stale ones.
+        if (OperatingSystem.IsWindows()) return; // Unix path literals
         var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local");
 
         var godman = plan.ToList().FindIndex(m => m.Source == "/usr/local/bin/godman");
@@ -170,6 +171,7 @@ public class AppPathsTests
     [Fact]
     public void Linux_MigrationPlan_SendsBothOldGlobalRootsOutOfTheShimDirectory()
     {
+        if (OperatingSystem.IsWindows()) return; // Unix path literals
         var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local");
 
         Assert.Contains(("/usr/local/bin/godman", "/usr/local/lib/godman"), plan);

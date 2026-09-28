@@ -220,6 +220,15 @@ public class CleanCommandTests : IDisposable
     [Fact]
     public async Task Clean_WithCorruptRegistry_StillSucceeds()
     {
+        // Unelevated on Windows, any global target sends clean through UAC (RunElevatedCleanup),
+        // which would relaunch the test host. The fixture creates the global root and shim
+        // directory, so remove them: the corrupt user registry is what this test is about.
+        if (OperatingSystem.IsWindows() && !GodotManager.Services.WindowsElevationHelper.IsElevated())
+        {
+            Directory.Delete(_fixture.Paths.GetInstallRoot(InstallScope.Global), recursive: true);
+            Directory.Delete(_fixture.Paths.GetShimDirectory(InstallScope.Global), recursive: true);
+        }
+
         File.WriteAllText(_fixture.Paths.RegistryFile, "{ not json");
         var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
         Assert.Equal(0, result.ExitCode);

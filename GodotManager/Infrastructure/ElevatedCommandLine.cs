@@ -67,10 +67,13 @@ internal static class ElevatedCommandLine
             return $"sudo godman {arguments}";
         }
 
-        var directory = Path.GetDirectoryName(processPath)?.TrimEnd('/');
+        // Split on '/' by hand: this branch renders a Unix path whatever the host, and
+        // Path.GetDirectoryName on Windows would turn /usr/bin into \usr\bin.
+        var slash = processPath.LastIndexOf('/');
+        var directory = slash >= 0 ? processPath[..slash].TrimEnd('/') : null;
         if (directory is not null && SecurePathDirectories.Contains(directory, StringComparer.Ordinal))
         {
-            return $"sudo {Quote(Path.GetFileName(processPath))} {arguments}";
+            return $"sudo {Quote(processPath[(slash + 1)..])} {arguments}";
         }
 
         return $"sudo {Quote(processPath)} {arguments}";
