@@ -85,6 +85,10 @@ internal sealed class ElevatedRemoveCommand : AsyncCommand<ElevatedRemoveCommand
 
             registry.Installs.RemoveAll(x => x.Id == install.Id);
             await _registry.SaveAsync(registry);
+
+            // After the save, not before: if the registry write fails (a global entry without
+            // privileges), the entry stays registered and its launcher entry must stay with it.
+            _environment.Launcher.Delete(install);
         }
         catch (Exception ex)
         {

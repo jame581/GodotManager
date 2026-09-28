@@ -86,6 +86,10 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
             }
 
             await _registry.SaveAsync(registry);
+
+            // After the save, not before: if the registry write fails (a global entry without
+            // privileges), the entry stays registered and its launcher entry must stay with it.
+            _environment.Launcher.Delete(install);
             AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] {install.Version} ({install.Edition}, {install.Platform})");
             return 0;
         }
@@ -119,8 +123,9 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
         AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
         AnsiConsole.MarkupLine("[grey]1.[/] Unregister from installs.json");
+        AnsiConsole.MarkupLine("[grey]2.[/] Remove application launcher entry");
 
-        var step = 2;
+        var step = 3;
         if (registry.ActiveId == install.Id)
         {
             AnsiConsole.MarkupLine($"[grey]{step}.[/] Deactivate (clear GODOT_HOME, remove shims)");

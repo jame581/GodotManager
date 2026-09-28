@@ -122,4 +122,53 @@ public class LauncherLifecycleE2ETests : IDisposable
         var files = Directory.GetFiles(_fixture.Paths.GetLauncherDirectory(InstallScope.User), "godman-godot-*.desktop");
         Assert.Single(files);
     }
+
+    [Fact]
+    public async Task Remove_NonActiveInstall_DeletesItsLauncherEntry()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var entry = await InstallAsync("4.5.1");
+
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", entry.Id.ToString()]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(_fixture.Launcher.Exists(entry));
+    }
+
+    [Fact]
+    public async Task Remove_ActiveInstall_DeletesItsLauncherEntry()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var entry = await InstallAsync("4.5.1", "--activate");
+
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", entry.Id.ToString()]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(_fixture.Launcher.Exists(entry));
+    }
+
+    [Fact]
+    public async Task Remove_WhenRegistrySaveFails_KeepsLauncherEntry()
+    {
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var installPath = Path.Combine(_fixture.TempRoot, "global-install");
+        Directory.CreateDirectory(installPath);
+        var entry = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        entry.LauncherEntry = true;
+        await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+        _fixture.Launcher.Create(entry);
+        File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead);
+
+        try
+        {
+            var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", entry.Id.ToString()]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.True(_fixture.Launcher.Exists(entry));
+        }
+        finally
+        {
+            File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
 }
