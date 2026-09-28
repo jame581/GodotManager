@@ -209,14 +209,20 @@ dotnet test -v detailed
   in `<value>/godman`:
   - `/usr/local/bin` → set `/usr/local`, or unset it.
   - `<X>/bin` → set `<X>`; the next run that can write there moves `<X>/bin/godman`
-    to `<X>/lib/godman`.
+    to `<X>/lib/godman`. For a system directory that run is under sudo, which drops
+    the variable by default: use `sudo GODMAN_GLOBAL_ROOT=<X> <full path to godman> list`
+    (or `sudo -E`), since a plain `sudo … list` would migrate `/usr/local` instead.
+    `doctor` prints the command with the variable included.
   - any other value `<V>` → godman does not move `<V>/godman`; pick a prefix `<P>`, move
     it to `<P>/lib/godman` yourself and update the paths in its `installs.json` (or
     reinstall).
 
   While a value still looks like the old meaning (`<value>/godman` holds installs and
-  `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn. On
-  Windows it stands in for `%ProgramFiles%`, as it always has.
+  `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn. A
+  global `install` or `activate` under the old value creates the new layout inside it,
+  after which the warning stops, so fix the variable first. An empty value counts as
+  unset; a relative one is never migrated or created. On Windows it stands in for
+  `%ProgramFiles%`, as it always has.
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 - **Troubleshooting**: If something seems off after install/activate, run the command again with `--verbose` (`-V`) to see diagnostic warnings for any best-effort operations that failed silently.
