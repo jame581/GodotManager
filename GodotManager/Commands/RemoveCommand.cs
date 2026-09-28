@@ -40,7 +40,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
             // Linux cannot hand off to an elevated child, so it stops here -- before the
             // files are deleted -- instead of deleting them and then failing to unregister.
-            if (LinuxElevation.Check(_paths, install.Scope, null, context.Arguments) is { } denied)
+            if (LinuxElevation.Check(_paths, install.Scope, context.Arguments) is { } denied)
             {
                 throw denied;
             }
@@ -105,7 +105,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
         }
         catch (GodmanException ex)
         {
-            return GodmanExceptionRenderer.Render("Remove failed:", ex);
+            return GodmanExceptionRenderer.Render("Remove failed:", ex.WithArguments(context.Arguments));
         }
         catch (Exception ex)
         {

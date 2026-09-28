@@ -34,11 +34,6 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
                 return 0;
             }
 
-            if (LinuxElevation.Check(_paths, activeInstall.Scope, null, context.Arguments) is { } denied)
-            {
-                throw denied;
-            }
-
             // Deactivating a global install clears GODOT_HOME and strips PATH through
             // machine-scope writes, which throw SecurityException unelevated. Hand the
             // whole operation over rather than failing on the first write, matching
@@ -68,6 +63,14 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
 
             AnsiConsole.MarkupLineInterpolated($"[green]Deactivated[/] {activeInstall.Version} ({activeInstall.Edition}, {activeInstall.Platform})");
 
+            // Linux does not stop an unprivileged deactivation of a global install -- its only
+            // global write is a best-effort shim delete (LinuxElevation.MustStop) -- so report
+            // the shim when it survived.
+            if (ShimShadowing.GetDeactivateWarning(_paths, activeInstall.Scope) is { } shimWarning)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{shimWarning}[/]");
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 AnsiConsole.MarkupLine("[grey]Environment variable GODOT_HOME has been removed. Restart your terminal/shell.[/]");
@@ -77,7 +80,7 @@ internal sealed class DeactivateCommand : AsyncCommand<DeactivateCommand.Setting
         }
         catch (GodmanException ex)
         {
-            return GodmanExceptionRenderer.Render("Deactivate failed:", ex);
+            return GodmanExceptionRenderer.Render("Deactivate failed:", ex.WithArguments(context.Arguments));
         }
         catch (Exception ex)
         {

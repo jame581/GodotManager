@@ -17,23 +17,15 @@ namespace GodotManager.Tests;
 public class LinuxElevationTests
 {
     [Theory]
-    // target, previous active, writable, expected
-    [InlineData(InstallScope.User, null, false, false)]
-    [InlineData(InstallScope.User, null, true, false)]
-    [InlineData(InstallScope.User, InstallScope.User, false, false)]
-    [InlineData(InstallScope.Global, null, true, false)]
-    [InlineData(InstallScope.Global, null, false, true)]
-    [InlineData(InstallScope.Global, InstallScope.User, false, true)]
-    [InlineData(InstallScope.Global, InstallScope.Global, false, true)]
-    [InlineData(InstallScope.Global, InstallScope.Global, true, false)]
-    // Switching away from an active global install touches the global shim even when the
-    // target is user-scope -- the clause that is easy to drop (see ElevatedActivator).
-    [InlineData(InstallScope.User, InstallScope.Global, false, true)]
-    [InlineData(InstallScope.User, InstallScope.Global, true, false)]
-    public void MustStop_OnlyWhenMachineStateIsTouchedAndNotWritable(
-        InstallScope target, InstallScope? previousActive, bool globalWritable, bool expected)
+    [InlineData(InstallScope.User, false, false)]
+    [InlineData(InstallScope.User, true, false)]
+    [InlineData(InstallScope.Global, true, false)]
+    [InlineData(InstallScope.Global, false, true)]
+    public void MustStop_OnlyForAGlobalTargetThatIsNotWritable(InstallScope target, bool globalWritable, bool expected)
     {
-        Assert.Equal(expected, LinuxElevation.MustStop(target, previousActive, globalWritable));
+        // Unlike Windows (ElevatedActivator.TouchesMachineState), the previously active
+        // install does not count: see LinuxElevation.MustStop.
+        Assert.Equal(expected, LinuxElevation.MustStop(target, globalWritable));
     }
 
     [Fact]
@@ -102,7 +94,7 @@ public class LinuxElevationTests
         File.SetUnixFileMode(root, (UnixFileMode)Convert.ToInt32("555", 8));
         try
         {
-            var denied = LinuxElevation.Check(fixture.Paths, InstallScope.Global, null, ["remove", "abc", "--delete"]);
+            var denied = LinuxElevation.Check(fixture.Paths, InstallScope.Global, ["remove", "abc", "--delete"]);
 
             Assert.NotNull(denied);
             Assert.Contains(root, denied!.Message);
@@ -111,7 +103,7 @@ public class LinuxElevationTests
             Assert.DoesNotContain("<same arguments>", denied.Hint);
 
             // A user-scope operation never probes -- and never stops.
-            Assert.Null(LinuxElevation.Check(fixture.Paths, InstallScope.User, InstallScope.User, ["activate", "x"]));
+            Assert.Null(LinuxElevation.Check(fixture.Paths, InstallScope.User, ["activate", "x"]));
         }
         finally
         {
@@ -126,7 +118,7 @@ public class LinuxElevationTests
         // writable temp root: a uid check would stop every one of them.
         using var fixture = new GodmanTestFixture();
 
-        Assert.Null(LinuxElevation.Check(fixture.Paths, InstallScope.Global, InstallScope.Global, ["remove", "x"]));
+        Assert.Null(LinuxElevation.Check(fixture.Paths, InstallScope.Global, ["remove", "x"]));
     }
 
     [Fact]
@@ -140,5 +132,42 @@ public class LinuxElevationTests
 
         Assert.Equal(GodmanException.ElevationHint, GodmanException.ElevationHintFor(null));
         Assert.Equal(GodmanException.ElevationHint, GodmanException.ElevationHintFor([]));
+    }
+
+    [Fact]
+    public void IsFileWritable_ReadOnlyFile_IsFalse_AndDoesNotTruncate()
+    {
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        using var fixture = new GodmanTestFixture();
+        var file = Path.Combine(fixture.TempRoot, "installs.json");
+        File.WriteAllText(file, "{}");
+
+        Assert.True(LinuxElevation.IsFileWritable(file));
+        Assert.Equal("{}", File.ReadAllText(file));
+
+        File.SetUnixFileMode(file, UnixFileMode.UserRead);
+        try
+        {
+            Assert.False(LinuxElevation.IsFileWritable(file));
+        }
+        finally
+        {
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    [Fact]
+    public void WithArguments_ReplacesOnlyThePlaceholderElevationHint()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        var late = new GodmanException("Failed to update the machine-wide registry", GodmanException.ElevationHint);
+
+        var rewritten = late.WithArguments(["remove", "abc", "--delete"]);
+        Assert.Equal(late.Message, rewritten.Message);
+        Assert.EndsWith(" remove abc --delete", rewritten.Hint);
+
+        var other = new GodmanException("x", "try --force");
+        Assert.Same(other, other.WithArguments(["remove"]));
     }
 }

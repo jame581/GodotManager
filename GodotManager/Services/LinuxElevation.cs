@@ -32,32 +32,41 @@ internal static class LinuxElevation
 
     /// <summary>
     /// The domain rule alone, free of any probing so it is directly testable: stop when the
-    /// operation touches machine state and the global locations are not writable. Machine
-    /// state is touched exactly when <see cref="ElevatedActivator.TouchesMachineState"/> says
-    /// so -- the target is global, or the install being deactivated/switched away from is.
-    /// Operations with no "previous" install (remove, deactivate, install without
-    /// <c>--activate</c>) pass null.
+    /// operation's own <paramref name="targetScope"/> is global and the global locations are
+    /// not writable.
     /// </summary>
-    internal static bool MustStop(InstallScope targetScope, InstallScope? previousActiveScope, bool globalWritable) =>
-        !globalWritable && ElevatedActivator.TouchesMachineState(targetScope, previousActiveScope);
+    /// <remarks>
+    /// Deliberately narrower than Windows' <see cref="ElevatedActivator.TouchesMachineState"/>:
+    /// the install being switched away from (or deactivated) does not count. On Linux the
+    /// active pointer lives in the per-user registry, and leaving a global install writes only
+    /// the user's env.sh plus a best-effort delete of the global shim; the global registry is
+    /// written only when its set of entries changes. Stopping there was a dead end: the UAC
+    /// child on Windows keeps the user's profile, but sudo resets HOME, so the printed
+    /// <c>sudo godman activate &lt;user-id&gt;</c> / <c>deactivate</c> / <c>tui</c> ran against
+    /// root's registry ("No install found"). Those operations proceed, and a surviving global
+    /// shim is reported by <see cref="ShimShadowing"/> instead.
+    /// </remarks>
+    internal static bool MustStop(InstallScope targetScope, bool globalWritable) =>
+        !globalWritable && targetScope == InstallScope.Global;
 
     /// <summary>
     /// Null when the operation may proceed; otherwise the failure to report, carrying the
     /// sudo command for <paramref name="arguments"/> (the command's own arguments, program
-    /// excluded) as its hint. Always null on Windows, whose UAC path is unchanged. Probes
-    /// only when the operation touches machine state, so user-scope work never pays for it.
+    /// excluded) as its hint. <paramref name="targetScope"/> is the scope the operation itself
+    /// writes -- the install being installed, activated or removed -- never the previously
+    /// active one (see <see cref="MustStop"/>). Always null on Windows, whose UAC path is
+    /// unchanged. Probes only for a global target, so user-scope work never pays for it.
     /// </summary>
-    public static GodmanException? Check(
-        AppPaths paths, InstallScope targetScope, InstallScope? previousActiveScope, IReadOnlyList<string>? arguments)
+    public static GodmanException? Check(AppPaths paths, InstallScope targetScope, IReadOnlyList<string>? arguments)
     {
-        if (OperatingSystem.IsWindows() || !ElevatedActivator.TouchesMachineState(targetScope, previousActiveScope))
+        if (OperatingSystem.IsWindows() || targetScope != InstallScope.Global)
         {
             return null;
         }
 
         var blocked = FindUnwritable(GlobalLocations(paths));
-        return MustStop(targetScope, previousActiveScope, globalWritable: blocked is null)
-            ? Denied(blocked!, arguments)
+        return MustStop(targetScope, globalWritable: blocked is null)
+            ? Denied(blocked!, GodmanException.ElevationHintFor(arguments))
             : null;
     }
 
@@ -83,6 +92,12 @@ internal static class LinuxElevation
         if (Directory.Exists(globalInstallRoot) || File.Exists(paths.GlobalRegistryFile))
         {
             locations.Add(globalInstallRoot);
+
+            // clean deletes the root itself, which is a write to its parent (/usr/local/lib).
+            if (Directory.Exists(globalInstallRoot) && Path.GetDirectoryName(globalInstallRoot) is { } parent)
+            {
+                locations.Add(parent);
+            }
         }
 
         if (File.Exists(globalShim))
@@ -96,28 +111,64 @@ internal static class LinuxElevation
         }
 
         var blocked = FindUnwritable(locations);
-        var touchesGlobal = locations.Count > 0 ? InstallScope.Global : InstallScope.User;
-        return MustStop(touchesGlobal, null, globalWritable: blocked is null)
-            ? Denied(blocked!, arguments)
-            : null;
+        var target = locations.Count > 0 ? InstallScope.Global : InstallScope.User;
+        if (!MustStop(target, globalWritable: blocked is null))
+        {
+            return null;
+        }
+
+        // sudo resets HOME, so the elevated clean removes root's user-scope files, not this
+        // user's: say so, or the user's own installs and config silently survive.
+        return Denied(
+            blocked!,
+            GodmanException.ElevationHintFor(arguments)
+                + " That cleans the global files only (sudo uses root's home), so afterwards run "
+                + "`godman clean` again without sudo to remove your own user-scope files.");
     }
 
     /// <summary>
-    /// The global locations every global-scope operation may write: the install root (which
-    /// on Linux also holds the global registry) and the shim directory.
+    /// The global locations every global-target operation may write: the install root, the
+    /// shim directory, and -- when it exists -- the global registry file itself (inside the
+    /// root on Linux). The file is probed separately because a read-only registry in a
+    /// writable root passes the directory probes, and the operation would then extract,
+    /// write the shim or delete files before the registry save failed.
     /// </summary>
     private static IEnumerable<string> GlobalLocations(AppPaths paths)
     {
         yield return paths.GetInstallRoot(InstallScope.Global);
         yield return paths.GetShimDirectory(InstallScope.Global);
+        if (File.Exists(paths.GlobalRegistryFile))
+        {
+            yield return paths.GlobalRegistryFile;
+        }
     }
 
-    private static GodmanException Denied(string blocked, IReadOnlyList<string>? arguments) =>
-        new($"{blocked} is not writable by this user, so nothing was changed.",
-            GodmanException.ElevationHintFor(arguments));
+    private static GodmanException Denied(string blocked, string hint) =>
+        new($"{blocked} is not writable by this user, so nothing was changed.", hint);
 
     internal static string? FindUnwritable(IEnumerable<string> paths) =>
-        paths.FirstOrDefault(path => !IsWritable(path));
+        paths.FirstOrDefault(path => File.Exists(path) ? !IsFileWritable(path) : !IsWritable(path));
+
+    /// <summary>
+    /// Whether this process can open the existing file <paramref name="path"/> for writing.
+    /// Opened without truncating (FileMode.Open) and closed at once, so the probe changes
+    /// nothing. Best-effort: never throws, and any failure means "not writable".
+    /// </summary>
+    internal static bool IsFileWritable(string path)
+    {
+        try
+        {
+            using (new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+            {
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Whether this process can create a file in <paramref name="path"/>, or -- when it does

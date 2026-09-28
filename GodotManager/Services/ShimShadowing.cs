@@ -72,6 +72,35 @@ internal static class ShimShadowing
     }
 
     /// <summary>
+    /// The deactivate counterpart of <see cref="GetWarning"/>, run by DeactivateCommand and
+    /// TuiApp after a successful in-process deactivation. On Linux an unprivileged
+    /// deactivation of a global install proceeds (LinuxElevation.MustStop) but cannot delete
+    /// the global shim, so `godot` keeps launching the install that was just deactivated.
+    /// Null on Windows, where a global deactivation runs elevated and removes it. Best-effort.
+    /// </summary>
+    public static string? GetDeactivateWarning(AppPaths paths, InstallScope deactivatedScope)
+    {
+        if (OperatingSystem.IsWindows() || deactivatedScope != InstallScope.Global)
+        {
+            return null;
+        }
+
+        try
+        {
+            var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot");
+            return File.Exists(globalShim)
+                ? $"The global shim at {globalShim} could not be removed, so `godot` still launches the " +
+                  $"install that was just deactivated. Remove it with `sudo rm {globalShim}` if no other " +
+                  "user relies on the machine-wide install."
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Linux counterpart of <see cref="BuildWarning"/>: names the file, where it wins,
     /// and the remedy -- conditionally, since the shim may be a live machine-wide
     /// activation that other users on the machine still rely on.

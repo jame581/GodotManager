@@ -366,9 +366,10 @@ internal sealed class TuiApp
             var registry = await _registry.LoadAsync();
             var previous = registry.GetActive();
 
-            // Linux has no elevated hand-off: stop before RemoveActiveAsync, the first
-            // machine-wide write, exactly as ActivateCommand does.
-            if (LinuxElevation.Check(_paths, entry.Scope, previous?.Scope, LinuxElevation.TuiArguments) is { } denied)
+            // Linux has no elevated hand-off: stop before anything is written when the target
+            // is global and not writable, exactly as ActivateCommand does. Switching away from
+            // an active global install proceeds; the shadow warning below reports its shim.
+            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
             {
                 throw denied;
             }
@@ -464,11 +465,6 @@ internal sealed class TuiApp
                 return;
             }
 
-            if (LinuxElevation.Check(_paths, active.Scope, null, LinuxElevation.TuiArguments) is { } denied)
-            {
-                throw denied;
-            }
-
             // Clearing GODOT_HOME for a global entry is a machine-scope write that
             // throws SecurityException unelevated, so without this the TUI could not
             // deactivate a global install at all -- the same hole the CLI had.
@@ -499,9 +495,18 @@ internal sealed class TuiApp
             registry.ClearActive();
             await _registry.SaveAsync(registry);
 
+            // Same report as DeactivateCommand: on Linux an unprivileged deactivation of a
+            // global install proceeds but cannot delete the global shim.
+            var shimWarning = ShimShadowing.GetDeactivateWarning(_paths, active.Scope);
+
             app.Invoke(() =>
             {
-                MessageBox.Query(app, "Deactivated", $"Deactivated {active.Version} ({active.Edition})", "OK");
+                MessageBox.Query(
+                    app,
+                    "Deactivated",
+                    $"Deactivated {active.Version} ({active.Edition})"
+                        + (shimWarning is null ? "" : $"\n\n{shimWarning}"),
+                    "OK");
             });
             await RefreshRegistryAsync(app);
             app.Invoke(() => SetStatus($"Deactivated {active.Version}"));
@@ -536,7 +541,7 @@ internal sealed class TuiApp
         try
         {
             // Linux: before the files are deleted, exactly as RemoveCommand does.
-            if (LinuxElevation.Check(_paths, entry.Scope, null, LinuxElevation.TuiArguments) is { } denied)
+            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
             {
                 throw denied;
             }

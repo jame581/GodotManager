@@ -42,9 +42,11 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
 
         var currentActive = registry.GetActive();
 
-        // Linux: stop before the previous activation is cleaned up, which for a global
-        // install is already a machine-wide write (the global shim).
-        if (LinuxElevation.Check(_paths, install.Scope, currentActive?.Scope, context.Arguments) is { } denied)
+        // Linux: stop before anything is written when the install being activated is global
+        // and its locations are not writable. Only the target counts there -- switching away
+        // from an active global install proceeds and WarnIfShadowedByGlobalShim reports a
+        // shim it could not delete (LinuxElevation.MustStop says why).
+        if (LinuxElevation.Check(_paths, install.Scope, context.Arguments) is { } denied)
         {
             return GodmanExceptionRenderer.Render("Activation failed:", denied);
         }

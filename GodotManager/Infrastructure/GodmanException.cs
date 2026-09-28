@@ -21,6 +21,16 @@ internal class GodmanException : Exception
     /// text as <see cref="ElevationHintFor"/> with no arguments, so the wording does
     /// not drift between call sites.
     /// </summary>
+    /// <summary>
+    /// This failure with its placeholder <see cref="ElevationHint"/> replaced by one naming
+    /// <paramref name="arguments"/>; any other hint is left as it is. For a command whose
+    /// late failure (RegistryService.SaveAsync, which has no arguments) reaches its catch.
+    /// </summary>
+    public GodmanException WithArguments(IReadOnlyList<string>? arguments) =>
+        Hint == ElevationHint && arguments is { Count: > 0 }
+            ? new GodmanException(Message, ElevationHintFor(arguments), this)
+            : this;
+
     public static string ElevationHint => ElevationHintFor(null);
 
     /// <summary>

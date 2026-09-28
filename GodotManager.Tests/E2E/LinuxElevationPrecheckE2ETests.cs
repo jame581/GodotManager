@@ -47,10 +47,14 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
         return entry;
     }
 
-    private async Task<(int ExitCode, string Output)> RunLockedAsync(params string[] args)
+    private Task<(int ExitCode, string Output)> RunLockedAsync(params string[] args) =>
+        RunWithLockedAsync([GlobalRoot], args);
+
+    /// <summary>Runs with <paramref name="lockedDirectories"/> at 0555, restored afterwards.</summary>
+    private async Task<(int ExitCode, string Output)> RunWithLockedAsync(string[] lockedDirectories, params string[] args)
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
-        File.SetUnixFileMode(GlobalRoot, ReadOnlyDir);
+        foreach (var dir in lockedDirectories) File.SetUnixFileMode(dir, ReadOnlyDir);
         try
         {
             var app = CliTestHarness.Create(_fixture);
@@ -69,8 +73,36 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
         }
         finally
         {
-            File.SetUnixFileMode(GlobalRoot, WritableDir);
+            foreach (var dir in lockedDirectories) File.SetUnixFileMode(dir, WritableDir);
         }
+    }
+
+    private string GlobalShimDir => _fixture.Paths.GetShimDirectory(InstallScope.Global);
+
+    /// <summary>
+    /// An active global install whose shim is on disk and, like /usr/local/bin for an
+    /// ordinary user, cannot be deleted: the state an unprivileged switch or deactivate
+    /// leaves behind and has to report.
+    /// </summary>
+    private async Task<(InstallEntry Global, string Shim)> SeedActiveGlobalWithShimAsync()
+    {
+        var global = await SeedGlobalEntryAsync(active: true);
+        Directory.CreateDirectory(GlobalShimDir);
+        var shim = Path.Combine(GlobalShimDir, "godot");
+        File.WriteAllText(shim, "#!/bin/sh\n");
+        return (global, shim);
+    }
+
+    private async Task<InstallEntry> AddUserEntryAsync()
+    {
+        var userPath = Path.Combine(_fixture.TempRoot, "user-install");
+        Directory.CreateDirectory(userPath);
+        File.WriteAllText(Path.Combine(userPath, "Godot_v4.5.1-stable_linux.x86_64"), "fake");
+        var user = InstallEntryFactory.Create(version: "4.5.1", path: userPath);
+        var registry = await _fixture.Registry.LoadAsync();
+        registry.Installs.Add(user);
+        await _fixture.Registry.SaveAsync(registry);
+        return user;
     }
 
     [Fact]
@@ -93,28 +125,26 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task Remove_Delete_DeletableFilesButUnwritableRegistry_KeepsTheFiles()
+    public async Task Remove_Delete_WritableRootButReadOnlyRegistryFile_KeepsTheFilesAndTheEntry()
     {
-        // The dangerous half of Jan's report: a global install whose files *are* deletable
-        // (a --path outside the locked root) while the registry is not. Without the
-        // pre-check the files went first and the registry write failed after, leaving a
-        // registered install with nothing on disk.
+        // The dangerous half of Jan's report: the install's files *are* deletable (the root
+        // is writable) while the registry is not. Probing directories alone let this through,
+        // so the files went first and the registry write failed after, leaving a registered
+        // install with nothing on disk.
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
-        var installPath = Path.Combine(_fixture.TempRoot, "opt-godot");
-        Directory.CreateDirectory(installPath);
-        var exe = Path.Combine(installPath, "Godot_v4.5.1-stable_linux.x86_64");
-        File.WriteAllText(exe, "fake");
-        var entry = InstallEntryFactory.Create(scope: InstallScope.Global, version: "4.5.1", path: installPath);
-        await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+        var entry = await SeedGlobalEntryAsync();
+        var exe = Path.Combine(entry.Path, "Godot_v4.5.1-stable_linux.x86_64");
         var registryFile = _fixture.Paths.GlobalRegistryFile;
         File.SetUnixFileMode(registryFile, UnixFileMode.UserRead);
         try
         {
-            var (exitCode, output) = await RunLockedAsync("remove", entry.Id.ToString("N"), "--delete");
+            var (exitCode, output) = await RunWithLockedAsync([], "remove", entry.Id.ToString("N"), "--delete");
 
             Assert.True(File.Exists(exe), "the install's files must not be deleted when the removal is refused");
             Assert.NotEqual(0, exitCode);
+            Assert.Contains($"{registryFile} is not writable", output);
             Assert.Contains($"remove {entry.Id:N} --delete", output);
+            Assert.DoesNotContain("<same arguments>", output);
         }
         finally
         {
@@ -141,39 +171,89 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
         Assert.Null((await _fixture.Registry.LoadAsync()).ActiveId);
     }
 
+    // K1: only a global *target* stops on Linux. Switching away from (or deactivating) an
+    // active global install writes the user's registry and env.sh plus a best-effort delete
+    // of the global shim; stopping there was a dead end, because the printed `sudo godman
+    // activate <user-id>` runs against root's HOME and registry. The surviving shim is
+    // reported instead.
+
     [Fact]
-    public async Task Activate_UserEntry_OverActiveGlobal_Unwritable_StopsAndKeepsTheGlobalActive()
+    public async Task Activate_UserEntry_OverActiveGlobal_Unwritable_ActivatesAndWarnsAboutTheGlobalShim()
     {
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
-        var global = await SeedGlobalEntryAsync(active: true);
-        var userPath = Path.Combine(_fixture.TempRoot, "user-install");
-        Directory.CreateDirectory(userPath);
-        File.WriteAllText(Path.Combine(userPath, "Godot_v4.5.1-stable_linux.x86_64"), "fake");
-        var user = InstallEntryFactory.Create(version: "4.5.1", path: userPath);
-        var registry = await _fixture.Registry.LoadAsync();
-        registry.Installs.Add(user);
-        await _fixture.Registry.SaveAsync(registry);
+        var (_, shim) = await SeedActiveGlobalWithShimAsync();
+        var user = await AddUserEntryAsync();
 
-        var (exitCode, output) = await RunLockedAsync("activate", user.Id.ToString("N"));
+        var (exitCode, output) = await RunWithLockedAsync([GlobalRoot, GlobalShimDir], "activate", user.Id.ToString("N"));
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("Activation failed:", output);
-        Assert.Equal(global.Id, (await _fixture.Registry.LoadAsync()).ActiveId);
+        Assert.Equal(0, exitCode);
+        Assert.Equal(user.Id, (await _fixture.Registry.LoadAsync()).ActiveId);
+        Assert.True(File.Exists(Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot")));
+        Assert.Contains($"The global shim at {shim}", output);
+        Assert.DoesNotContain("Activation failed", output);
     }
 
     [Fact]
-    public async Task Deactivate_ActiveGlobal_Unwritable_StopsAndKeepsItActive()
+    public async Task Deactivate_ActiveGlobal_Unwritable_DeactivatesAndWarnsAboutTheGlobalShim()
     {
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
-        var entry = await SeedGlobalEntryAsync(active: true);
+        var (_, shim) = await SeedActiveGlobalWithShimAsync();
 
-        var (exitCode, output) = await RunLockedAsync("deactivate");
+        var (exitCode, output) = await RunWithLockedAsync([GlobalRoot, GlobalShimDir], "deactivate");
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("Deactivate failed:", output);
-        Assert.Contains("sudo", output);
-        Assert.EndsWith(" deactivate", output.TrimEnd());
-        Assert.Equal(entry.Id, (await _fixture.Registry.LoadAsync()).ActiveId);
+        Assert.Equal(0, exitCode);
+        Assert.Null((await _fixture.Registry.LoadAsync()).ActiveId);
+        Assert.Contains("Deactivated", output);
+        Assert.Contains(shim, output);
+        Assert.Contains($"sudo rm {shim}", output);
+    }
+
+    [Fact]
+    public async Task Install_UserScope_OverActiveGlobal_Unwritable_Installs()
+    {
+        // K4: reaches InstallCommand's pre-check with a global install active and the global
+        // locations locked, without --activate.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        var (global, _) = await SeedActiveGlobalWithShimAsync();
+        var archive = MockArchiveFactory.CreateMockGodotArchive();
+        try
+        {
+            var (exitCode, output) = await RunWithLockedAsync([GlobalRoot, GlobalShimDir],
+                "install", "--version", "4.5.1", "--archive", archive, "--platform", "linux", "--no-shortcut");
+
+            Assert.Equal(0, exitCode);
+            var registry = await _fixture.Registry.LoadAsync();
+            Assert.Contains(registry.Installs, x => x.Scope == InstallScope.User);
+            Assert.Equal(global.Id, registry.ActiveId);
+        }
+        finally
+        {
+            File.Delete(archive);
+        }
+    }
+
+    [Fact]
+    public async Task Install_UserScope_Activate_OverActiveGlobal_Unwritable_ActivatesAndWarns()
+    {
+        // K4 with --activate: the previously active global install must not stop it (K1).
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        var (_, shim) = await SeedActiveGlobalWithShimAsync();
+        var archive = MockArchiveFactory.CreateMockGodotArchive();
+        try
+        {
+            var (exitCode, output) = await RunWithLockedAsync([GlobalRoot, GlobalShimDir],
+                "install", "--version", "4.5.1", "--archive", archive, "--platform", "linux", "--no-shortcut", "--activate");
+
+            Assert.Equal(0, exitCode);
+            var registry = await _fixture.Registry.LoadAsync();
+            var user = Assert.Single(registry.Installs, x => x.Scope == InstallScope.User);
+            Assert.Equal(user.Id, registry.ActiveId);
+            Assert.Contains($"The global shim at {shim}", output);
+        }
+        finally
+        {
+            File.Delete(archive);
+        }
     }
 
     [Fact]
@@ -215,6 +295,34 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
         Assert.Contains("clean --yes", output);
         Assert.True(File.Exists(Path.Combine(userInstallRoot, "marker")));
         Assert.True(File.Exists(_fixture.Paths.GlobalRegistryFile));
+    }
+
+    [Fact]
+    public async Task Clean_GlobalRootWritableButItsParentIsNot_Stops()
+    {
+        // Deleting the root itself is a write to its parent (/usr/local/lib).
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        await SeedGlobalEntryAsync();
+        var parent = Path.GetDirectoryName(GlobalRoot)!;
+
+        var (exitCode, output) = await RunWithLockedAsync([parent], "clean", "--yes");
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Contains($"{parent} is not writable", output);
+        Assert.True(File.Exists(_fixture.Paths.GlobalRegistryFile));
+    }
+
+    [Fact]
+    public async Task Clean_Refused_TellsTheUserToCleanTheirOwnFilesWithoutSudo()
+    {
+        // `sudo godman clean` cleans root's HOME, not the user's.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        await SeedGlobalEntryAsync();
+
+        var (_, output) = await RunLockedAsync("clean", "--yes");
+
+        Assert.Contains("clean --yes", output);
+        Assert.Contains("without sudo", output);
     }
 
     [Fact]

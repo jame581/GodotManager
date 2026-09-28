@@ -197,9 +197,10 @@ internal sealed class InstallDialog : Dialog
             // try so a registry read failure lands in the dialog's own error handling.
             var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
 
-            // Same Linux pre-check as InstallCommand, before anything is downloaded; the
-            // dialog always activates, so the install being switched away from counts too.
-            if (LinuxElevation.Check(_paths, scope, currentActive?.Scope, LinuxElevation.TuiArguments) is { } denied)
+            // Same Linux pre-check as InstallCommand, before anything is downloaded. Only the
+            // target scope counts: the dialog always activates, but switching away from an
+            // active global install is not stopped -- the shadow warning below reports it.
+            if (LinuxElevation.Check(_paths, scope, LinuxElevation.TuiArguments) is { } denied)
             {
                 throw denied;
             }
