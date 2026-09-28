@@ -37,6 +37,25 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Doctor_GlobalActivateRemedy_CarriesTheGlobalRootOverrideThroughSudo()
+    {
+        // sudo drops GODMAN_GLOBAL_ROOT; without it the suggested activate would act on
+        // /usr/local instead of the prefix this install lives under.
+        if (OperatingSystem.IsWindows()) return; // UAC, no command-line prefix
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "g");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", scope: InstallScope.Global, path: path);
+        entry.LauncherEntry = true;   // godman wrote one; it has since been deleted
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = (await RunDoctorAsync(fixture)).Replace("\r", "").Replace("\n", "");
+
+        Assert.Contains($"Run: sudo GODMAN_GLOBAL_ROOT={Path.Combine(fixture.TempRoot, "global")} ", output);
+        Assert.Contains($" activate {entry.Id}", output);
+    }
+
+    [Fact]
     public async Task Doctor_ReportsAnInstallWhoseLauncherEntryWentMissing()
     {
         using var fixture = new GodmanTestFixture();
@@ -361,7 +380,7 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains("Reinstall or remove those installs", output);
         Assert.DoesNotContain("can be removed", output);
         Assert.DoesNotContain("to complete the move", output);
-        Assert.DoesNotContain(ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride), output);
+        Assert.DoesNotContain(ElevatedCommandLine.Render("list"), output);
     }
 
     // The four tests below follow TryMigrateDirectory's real rule: it no-ops whenever the
@@ -381,7 +400,7 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains(
             OperatingSystem.IsWindows()
                 ? "Run an elevated godman command to complete the move"
-                : $"Run `{ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride)}` to complete the move",
+                : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move",
             output);
         Assert.DoesNotContain("rmdir", output);
         Assert.DoesNotContain("can be removed", output);
@@ -402,7 +421,7 @@ public class DoctorCommandTests : IDisposable
         Assert.Contains($"blocked only by the empty {destination}", output);
         if (!OperatingSystem.IsWindows())
         {
-            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list", _fixture.Paths.GlobalRootOverride)}`", output);
+            Assert.Contains($"`sudo rmdir {destination}`, then: run `{ElevatedCommandLine.Render("list")}`", output);
             // The fixture sets GODMAN_GLOBAL_ROOT, which sudo would otherwise drop.
             Assert.Contains($"GODMAN_GLOBAL_ROOT={Path.Combine(_fixture.TempRoot, "global")}", output);
         }

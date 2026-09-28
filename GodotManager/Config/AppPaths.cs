@@ -98,11 +98,8 @@ internal sealed class AppPaths
 
         var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
-        var overrideGlobalBase = ResolveOverride(overrideGlobalPrimary, overrideGlobalLegacy);
-        if (overrideGlobalBase is not null)
-        {
-            GlobalRootOverride = (string.IsNullOrEmpty(overrideGlobalPrimary) ? LegacyEnvGlobal : EnvGlobal, overrideGlobalBase);
-        }
+        GlobalRootOverride = ReadGlobalRootOverride();
+        var overrideGlobalBase = GlobalRootOverride?.Value;
 
         var (migrateUser, migrateGlobal) = MigrationGates(
             overrideBasePrimary, overrideBaseLegacy, overrideGlobalPrimary, overrideGlobalLegacy);
@@ -377,6 +374,19 @@ internal sealed class AppPaths
         var global = ResolveOverride(globalOverride, legacyGlobalOverride);
         return (homeOverride == null && legacyHomeOverride == null,
                 global is null || System.IO.Path.IsPathRooted(global));
+    }
+
+    /// <summary>
+    /// The global-root variable in effect, read from the process environment: its name
+    /// (the primary one, or the legacy alias when only that is set) and value. Null when
+    /// neither is set to a non-empty value. Relative values are returned as they are;
+    /// callers decide what to do with them.
+    /// </summary>
+    internal static (string Name, string Value)? ReadGlobalRootOverride()
+    {
+        var primary = Environment.GetEnvironmentVariable(EnvGlobal);
+        var value = ResolveOverride(primary, Environment.GetEnvironmentVariable(LegacyEnvGlobal));
+        return value is null ? null : (string.IsNullOrEmpty(primary) ? LegacyEnvGlobal : EnvGlobal, value);
     }
 
     /// <summary>

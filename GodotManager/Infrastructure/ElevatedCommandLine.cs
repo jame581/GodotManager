@@ -24,8 +24,20 @@ internal static class ElevatedCommandLine
     internal static readonly IReadOnlyList<string> SecurePathDirectories =
         ["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
+    /// <summary>
+    /// The command to print. On Linux it also carries a rooted GODMAN_GLOBAL_ROOT (or the
+    /// legacy alias) as <c>sudo NAME=value …</c>: sudo's env_reset drops it, and every
+    /// elevated command godman suggests would otherwise act on the default /usr/local
+    /// instead of the prefix the rest of the advice assumed. A relative value is left out,
+    /// since godman never acts on one (see AppPaths.MigrationGates).
+    /// </summary>
     public static string Render(string arguments) =>
-        Render(arguments, Environment.ProcessPath, OperatingSystem.IsWindows());
+        Render(arguments, SudoEnvironment(), Environment.ProcessPath, OperatingSystem.IsWindows());
+
+    private static (string Name, string Value)? SudoEnvironment() =>
+        Config.AppPaths.ReadGlobalRootOverride() is { } variable && Path.IsPathRooted(variable.Value)
+            ? variable
+            : null;
 
     /// <param name="processPath">The running executable; injected for tests.</param>
     /// <param name="windows">
@@ -58,14 +70,10 @@ internal static class ElevatedCommandLine
     }
 
     /// <summary>
-    /// <see cref="Render(string)"/> with one environment variable passed through sudo as
-    /// <c>sudo NAME=value …</c>. sudo's env_reset drops the caller's environment, so
-    /// without it an elevated run would not see, say, the GODMAN_GLOBAL_ROOT the rest of
-    /// the advice assumed. Null renders exactly what <see cref="Render(string)"/> does.
+    /// <see cref="Render(string, string?, bool)"/> with one environment variable passed
+    /// through sudo as <c>sudo NAME=value …</c> (quoted like the path). Null renders the
+    /// plain command.
     /// </summary>
-    public static string Render(string arguments, (string Name, string Value)? environment) =>
-        Render(arguments, environment, Environment.ProcessPath, OperatingSystem.IsWindows());
-
     /// <param name="windows">
     /// Ignored environment on Windows: elevation there is a UAC prompt, with no command
     /// line to put the variable on.

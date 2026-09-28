@@ -1,4 +1,7 @@
 using GodotManager.Infrastructure;
+using GodotManager.Tests.Helpers;
+using System;
+using System.IO;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -89,5 +92,32 @@ public class ElevatedCommandLineTests
         Assert.Equal(
             "godman list",
             ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", @"D:\Apps"), @"C:\Tools\godman.exe", windows: true));
+    }
+
+    [Fact]
+    public void Render_CarriesARootedGlobalRootOverride_AndOnlyThatOne()
+    {
+        // Every elevated command godman prints goes through Render, so the override rides
+        // along everywhere, not just in the callers that remembered it.
+        using var fixture = new GodmanTestFixture();
+        var prefix = Path.Combine(fixture.TempRoot, "global");
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("godman list", ElevatedCommandLine.Render("list"));
+            return;
+        }
+
+        Assert.StartsWith($"sudo GODMAN_GLOBAL_ROOT={prefix} ", ElevatedCommandLine.Render("list"));
+
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", "rel");   // relative: never acted on
+        Assert.DoesNotContain("GLOBAL_ROOT", ElevatedCommandLine.Render("list"));
+
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", null);
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", "/opt/legacy");
+        Assert.StartsWith("sudo GODOT_MANAGER_GLOBAL_ROOT=/opt/legacy ", ElevatedCommandLine.Render("list"));
+
+        Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", null);
+        Assert.DoesNotContain("GLOBAL_ROOT", ElevatedCommandLine.Render("list"));
     }
 }

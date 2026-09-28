@@ -68,13 +68,14 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
     /// <summary>
     /// What runs the migration once nothing blocks it. The elevated command carries any
-    /// GODMAN_GLOBAL_ROOT along: sudo would drop it and move the default prefix instead.
+    /// GODMAN_GLOBAL_ROOT along (ElevatedCommandLine adds it): sudo would drop it and move
+    /// the default prefix instead.
     /// </summary>
-    private string MoveRemedy(bool globalRoot) => !globalRoot
+    private static string MoveRemedy(bool globalRoot) => !globalRoot
         ? "godman moves them on its next ordinary (non-sudo) run"
         : OperatingSystem.IsWindows()
             ? "run an elevated godman command to complete the move"
-            : $"run `{ElevatedCommandLine.Render("list", _paths.GlobalRootOverride)}` to complete the move";
+            : $"run `{ElevatedCommandLine.Render("list")}` to complete the move";
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {

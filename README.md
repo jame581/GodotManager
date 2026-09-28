@@ -212,7 +212,7 @@ dotnet test -v detailed
     to `<X>/lib/godman`. For a system directory that run is under sudo, which drops
     the variable by default: use `sudo GODMAN_GLOBAL_ROOT=<X> <full path to godman> list`
     (or `sudo -E`), since a plain `sudo … list` would migrate `/usr/local` instead.
-    `doctor` prints the command with the variable included.
+    Every `sudo` command godman prints includes the variable.
   - any other value `<V>` → godman does not move `<V>/godman`; pick a prefix `<P>`, move
     it to `<P>/lib/godman` yourself and update the paths in its `installs.json` (or
     reinstall).
