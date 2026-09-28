@@ -73,13 +73,6 @@ internal sealed class EnvironmentService
     }
 
     /// <summary>
-    /// The executable a shim written by this service launches: the quoted
-    /// <c>exec "…"</c> target of the Unix shim, or the quoted <c>"…" %*</c> command of
-    /// <c>godot.cmd</c>. Null when the content has neither shape (a hand-written or
-    /// foreign file). Lives beside the writers so the two formats cannot drift apart
-    /// unnoticed; <c>doctor</c> uses it to check what the shim really points at.
-    /// </summary>
-    /// <summary>
     /// The shim check both doctors run (CLI <c>doctor</c> and the TUI dialog): where the
     /// scope's shim is, whether it exists, and -- when it does -- the target it names if
     /// that file is missing. A shim that exists says nothing about whether it still
@@ -112,6 +105,13 @@ internal sealed class EnvironmentService
         }
     }
 
+    /// <summary>
+    /// The executable a shim written by this service launches: the quoted
+    /// <c>exec "…"</c> target of the Unix shim, or the quoted <c>"…" %*</c> command of
+    /// <c>godot.cmd</c>. Null when the content has neither shape (a hand-written or
+    /// foreign file). Lives beside the writers so the two formats cannot drift apart
+    /// unnoticed; <c>doctor</c> uses it to check what the shim really points at.
+    /// </summary>
     internal static string? ParseShimTarget(string content)
     {
         foreach (var raw in content.Split('\n'))
