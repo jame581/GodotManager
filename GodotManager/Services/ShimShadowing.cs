@@ -1,5 +1,6 @@
 using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 
 namespace GodotManager.Services;
 
@@ -90,7 +91,7 @@ internal static class ShimShadowing
             var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot");
             return File.Exists(globalShim)
                 ? $"The global shim at {globalShim} could not be removed, so `godot` still launches the " +
-                  $"install that was just deactivated. Remove it with `sudo rm {globalShim}` if no other " +
+                  $"install that was just deactivated. Remove it with `sudo rm {ElevatedCommandLine.Quote(globalShim)}` if no other " +
                   "user relies on the machine-wide install."
                 : null;
         }
@@ -109,7 +110,7 @@ internal static class ShimShadowing
         $"The global shim at {globalShimFile} takes precedence over this user-scope activation " +
         $"wherever {Path.GetDirectoryName(globalShimFile)} comes before ~/.local/bin on PATH (including under sudo), " +
         "so `godot` there will keep running whatever that shim points at. If it is a leftover from an " +
-        $"earlier global activation, remove it with `sudo rm {globalShimFile}`; if other users rely on the " +
+        $"earlier global activation, remove it with `sudo rm {ElevatedCommandLine.Quote(globalShimFile)}`; if other users rely on the " +
         "machine-wide install, leave it.";
 
     /// <summary>

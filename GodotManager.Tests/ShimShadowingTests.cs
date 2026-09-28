@@ -82,6 +82,28 @@ public class ShimShadowingTests
     // dialog) call. On Linux an unprivileged RemoveUnix cannot delete the global shim
     // (EACCES), which then outranks the user shim wherever /usr/local/bin comes first.
 
+    [Fact]
+    public void BuildUnixWarning_QuotesTheShimPathInTheRemedy()
+    {
+        // The remedy is meant to be pasted: an unquoted path with a space would make
+        // `sudo rm` act on two wrong paths.
+        var warning = ShimShadowing.BuildUnixWarning("/opt/my godot/bin/godot");
+
+        Assert.Contains("`sudo rm '/opt/my godot/bin/godot'`", warning);
+    }
+
+    [Fact]
+    public void GetDeactivateWarning_QuotesTheShimPathInTheRemedy()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(globalRoot: "my global");
+        var shim = CreateGlobalShim(fixture);
+
+        var warning = ShimShadowing.GetDeactivateWarning(fixture.Paths, InstallScope.Global);
+
+        Assert.Contains($"`sudo rm '{shim}'`", warning);
+    }
+
     private static string CreateGlobalShim(GodmanTestFixture fixture)
     {
         var dir = fixture.Paths.GetShimDirectory(InstallScope.Global);

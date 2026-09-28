@@ -318,7 +318,7 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             {
                 var removeEmpty = OperatingSystem.IsWindows()
                     ? $"remove the empty {destination}{(isGlobalRoot ? " from an elevated terminal" : string.Empty)}"
-                    : $"run `{(isGlobalRoot ? "sudo " : string.Empty)}rmdir {destination}`";
+                    : $"run `{(isGlobalRoot ? "sudo " : string.Empty)}rmdir {ElevatedCommandLine.Quote(destination!)}`"; // Empty only after probing a destination
                 AnsiConsole.MarkupLineInterpolated(
                     $"[grey]  Still in use -- installs here have not moved: the move is blocked only by the empty {destination}. To complete it, {removeEmpty}, then: {MoveRemedy(isGlobalRoot)}. Do not delete this directory.[/]");
             }

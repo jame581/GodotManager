@@ -104,9 +104,10 @@ internal static class ElevatedCommandLine
     /// Single-quotes anything outside a conservative set of characters no shell treats
     /// specially, so a printed command survives being pasted: globs, <c>~</c>, <c>#</c>,
     /// <c>!</c>, braces, redirections and separators included. A single quote inside is
-    /// written as <c>'\''</c>.
+    /// written as <c>'\''</c>. Also used for the non-godman commands godman prints
+    /// (<c>rmdir</c>, <c>sudo rm</c>), which are pasted the same way.
     /// </summary>
-    private static string Quote(string value) =>
+    internal static string Quote(string value) =>
         value.Length > 0 && value.All(IsShellSafe)
             ? value
             : "'" + value.Replace("'", "'\\''") + "'";

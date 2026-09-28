@@ -460,6 +460,22 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Doctor_EmptyDestinationRemedy_QuotesAPathWithASpace()
+    {
+        // The rmdir remedy is meant to be pasted; unquoted, a space splits it into two paths.
+        if (OperatingSystem.IsWindows()) return; // the Windows remedy is prose, not a command
+        using var fixture = new GodmanTestFixture(globalRoot: "my global");
+        var destination = fixture.Paths.GetInstallRoot(InstallScope.Global);
+        Directory.CreateDirectory(destination); // empty: the move is blocked by it
+        var legacy = Path.Combine(fixture.Paths.GetShimDirectory(InstallScope.Global), "godman");
+        Directory.CreateDirectory(Path.Combine(legacy, "4.5.1-standard"));
+
+        var output = Flatten(await RunDoctorAsync(fixture));
+
+        Assert.Contains($"`sudo rmdir '{destination}'`", output);
+    }
+
+    [Fact]
     public async Task Doctor_WithAnUnmovedUserRootUnderGodmanHome_SaysGodmanDoesNotMoveIt()
     {
         // godman moves user roots only without GODMAN_HOME (the fixture sets it). Doctor used
