@@ -11,26 +11,24 @@ namespace GodotManager.Tests;
 public class AppPathsTests
 {
     /// <summary>
-    /// The tests that construct <c>new AppPaths()</c> with no overrides run the real
-    /// migrations, which include moving <c>/usr/local/bin/godman</c> to
-    /// <c>/usr/local/lib/godman</c> and rewriting <c>/usr/local/bin/godot</c>. Unprivileged
-    /// those moves fail harmlessly; as root they would migrate the developer's real machine.
-    /// Never run the suite as root -- but if it is, these skip rather than do that.
+    /// The default layout, resolved without side effects. The public constructor with no
+    /// overrides would run the real migrations (moving directories in the developer's
+    /// home, rewriting ~/.local/bin/godot, and -- as root -- moving /usr/local/bin/godman)
+    /// and create directories. No test in this class may do that: anything that moves or
+    /// creates goes through temp paths (a fixture, or the internal planner/MigrateAndRepair).
     /// </summary>
-    private static bool RunsMachineWideMigrations() => Environment.IsPrivilegedProcess;
+    private static AppPaths DefaultPaths() => new AppPaths(applySideEffects: false);
 
     [Fact]
     public void Linux_ScopePaths_KeepShimsInBinAndInstallsOutOfIt()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (OperatingSystem.IsWindows())
         {
             return; // Skip on Windows; paths differ.
         }
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
 
         Assert.Equal(Path.Combine(home, ".local", "share", "godman", "installs"), paths.GetInstallRoot(InstallScope.User));
         // Global installs must NOT sit in the shim directory. /usr/local/bin/godman is
@@ -46,8 +44,6 @@ public class AppPathsTests
     [Fact]
     public void Windows_ScopePaths_AreInAppDataAndProgramFiles()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (!OperatingSystem.IsWindows())
         {
             return; // Skip on Linux; paths differ.
@@ -55,7 +51,7 @@ public class AppPathsTests
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
 
         Assert.Equal(Path.Combine(appData, "godman", "installs"), paths.GetInstallRoot(InstallScope.User));
         Assert.Equal(Path.Combine(programFiles, "godman", "installs"), paths.GetInstallRoot(InstallScope.Global));
@@ -66,8 +62,6 @@ public class AppPathsTests
     [Fact]
     public void Linux_GlobalRegistryFile_SitsBesideGlobalInstallRoot()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (OperatingSystem.IsWindows())
         {
             return;
@@ -76,7 +70,7 @@ public class AppPathsTests
         // On Linux the global install root IS the shared directory (installs sit
         // directly inside it, per GetInstallRoot(Global) above), so the registry
         // belongs right there beside them, not in some other parent.
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
 
         Assert.Equal("/usr/local/lib/godman/installs.json", paths.GlobalRegistryFile);
     }
@@ -84,8 +78,6 @@ public class AppPathsTests
     [Fact]
     public void Windows_GlobalRegistryFile_SitsInGlobalRootParent()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -95,7 +87,7 @@ public class AppPathsTests
         // registry has to sit one level up, beside installs\ and bin\ -- not
         // inside the installs directory itself.
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
 
         Assert.Equal(Path.Combine(programFiles, "godman", "installs.json"), paths.GlobalRegistryFile);
     }
@@ -116,54 +108,27 @@ public class AppPathsTests
     [Fact]
     public void Linux_MigratesOldInstallRoot_WhenDirectoryExists()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (OperatingSystem.IsWindows())
         {
             return;
         }
 
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // A temp home driven through the same planner + MigrateAndRepair the constructor
+        // uses, so nothing under the real home is created, moved or rewritten.
+        using var fixture = new GodmanTestFixture();
+        var home = Path.Combine(fixture.TempRoot, "home");
         var oldInstallRoot = Path.Combine(home, ".local", "bin", "godman");
         var newInstallRoot = Path.Combine(home, ".local", "share", "godman", "installs");
-
-        // Skip if the godman binary file exists at this path (e.g. installed via install.sh)
-        if (File.Exists(oldInstallRoot))
-        {
-            return;
-        }
-
-        // This runs against the real home directory. The new root is where a developer's
-        // real user installs live, so never delete it when it holds anything -- skip instead.
-        if (Directory.Exists(newInstallRoot) && Directory.EnumerateFileSystemEntries(newInstallRoot).Any())
-        {
-            return;
-        }
-
-        if (Directory.Exists(newInstallRoot))
-            Directory.Delete(newInstallRoot, true);
-
-        // Create old install root as a directory with a marker file
         Directory.CreateDirectory(oldInstallRoot);
-        var markerPath = Path.Combine(oldInstallRoot, "test-marker.txt");
-        File.WriteAllText(markerPath, "migration-test");
+        File.WriteAllText(Path.Combine(oldInstallRoot, "test-marker.txt"), "migration-test");
 
-        try
-        {
-            var paths = new AppPaths();
+        var moves = AppPaths.MigrateAndRepair(
+            AppPaths.PlanLinuxMigrations(home, Path.Combine(fixture.TempRoot, "prefix"), migrateUser: true, migrateGlobal: false),
+            []);
 
-            // Old directory should have been migrated to new location
-            Assert.False(Directory.Exists(oldInstallRoot), "Old install root should be removed after migration");
-            Assert.True(Directory.Exists(newInstallRoot), "New install root should exist after migration");
-            Assert.True(File.Exists(Path.Combine(newInstallRoot, "test-marker.txt")), "Marker file should be migrated");
-        }
-        finally
-        {
-            if (Directory.Exists(oldInstallRoot))
-                Directory.Delete(oldInstallRoot, true);
-            if (File.Exists(Path.Combine(newInstallRoot, "test-marker.txt")))
-                File.Delete(Path.Combine(newInstallRoot, "test-marker.txt"));
-        }
+        Assert.Contains((oldInstallRoot, newInstallRoot), moves);
+        Assert.False(Directory.Exists(oldInstallRoot), "Old install root should be removed after migration");
+        Assert.True(File.Exists(Path.Combine(newInstallRoot, "test-marker.txt")), "Marker file should be migrated");
     }
 
     [Fact]
@@ -288,15 +253,13 @@ public class AppPathsTests
     [Fact]
     public void Linux_GetLegacyPaths_ReturnsExpectedPaths()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (OperatingSystem.IsWindows())
         {
             return;
         }
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
         var legacyPaths = paths.GetLegacyPaths();
 
         Assert.Contains(legacyPaths, p => p.Path == Path.Combine(home, ".config", "godot-manager"));
@@ -309,8 +272,6 @@ public class AppPathsTests
     [Fact]
     public void Windows_GetLegacyPaths_ReturnsExpectedPaths()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -318,7 +279,7 @@ public class AppPathsTests
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var paths = new AppPaths();
+        var paths = DefaultPaths();
         var legacyPaths = paths.GetLegacyPaths();
 
         Assert.Contains(legacyPaths, p => p.Path == Path.Combine(appData, "GodotManager"));
@@ -326,46 +287,53 @@ public class AppPathsTests
     }
 
     [Fact]
+    public void WithoutSideEffects_ResolvesTheSamePathsAndCreatesNothing()
+    {
+        // DefaultPaths() is only safe for the default-layout tests if it really touches
+        // nothing; checked against fresh override roots that do not exist yet.
+        using var fixture = new GodmanTestFixture();
+        var home = Path.Combine(fixture.TempRoot, "fresh-home");
+        var prefix = Path.Combine(fixture.TempRoot, "fresh-prefix");
+        Environment.SetEnvironmentVariable("GODMAN_HOME", home);
+        Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", prefix);
+
+        var inert = new AppPaths(applySideEffects: false);
+
+        Assert.False(Directory.Exists(home), "no user directory may be created");
+        Assert.False(Directory.Exists(prefix), "no global directory may be created");
+
+        var live = new AppPaths();
+        Assert.Equal(live.GetInstallRoot(InstallScope.User), inert.GetInstallRoot(InstallScope.User));
+        Assert.Equal(live.GetInstallRoot(InstallScope.Global), inert.GetInstallRoot(InstallScope.Global));
+        Assert.Equal(live.GetShimDirectory(InstallScope.Global), inert.GetShimDirectory(InstallScope.Global));
+        Assert.Equal(live.GlobalRegistryFile, inert.GlobalRegistryFile);
+        Assert.Equal(live.EnvScriptPath, inert.EnvScriptPath);
+    }
+
+    [Fact]
     public void Linux_DoesNotMigrateOldInstallRoot_WhenFileExists()
     {
-        if (RunsMachineWideMigrations()) return;
-
         if (OperatingSystem.IsWindows())
         {
             return;
         }
 
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // ~/.local/bin/godman is the godman *binary* on any machine that used install.sh.
+        // A file must never be mistaken for an install root. Temp home, as above.
+        using var fixture = new GodmanTestFixture();
+        var home = Path.Combine(fixture.TempRoot, "home");
         var binaryPath = Path.Combine(home, ".local", "bin", "godman");
         var newInstallRoot = Path.Combine(home, ".local", "share", "godman", "installs");
+        Directory.CreateDirectory(Path.GetDirectoryName(binaryPath)!);
+        File.WriteAllText(binaryPath, "fake-binary");
 
-        // Skip if the path is already a directory (e.g. from another test)
-        if (Directory.Exists(binaryPath))
-        {
-            return;
-        }
+        var moves = AppPaths.MigrateAndRepair(
+            AppPaths.PlanLinuxMigrations(home, Path.Combine(fixture.TempRoot, "prefix"), migrateUser: true, migrateGlobal: false),
+            []);
 
-        // Ensure the binary file exists (simulating install.sh behavior)
-        var binaryExisted = File.Exists(binaryPath);
-        if (!binaryExisted)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(binaryPath)!);
-            File.WriteAllText(binaryPath, "fake-binary");
-        }
-
-        try
-        {
-            // This should NOT throw — the file at the path should be left alone
-            var paths = new AppPaths();
-
-            Assert.True(File.Exists(binaryPath), "Binary file should still exist");
-            Assert.True(Directory.Exists(newInstallRoot), "New install root should be created independently");
-        }
-        finally
-        {
-            if (!binaryExisted)
-                File.Delete(binaryPath);
-        }
+        Assert.Empty(moves);
+        Assert.Equal("fake-binary", File.ReadAllText(binaryPath));
+        Assert.False(Directory.Exists(newInstallRoot), "nothing may be moved onto the user install root");
     }
 
     [Fact]

@@ -50,7 +50,17 @@ internal sealed class AppPaths
     private readonly IReadOnlyList<string> _legacyGlobalRegistryFiles;
     private readonly IReadOnlyList<(string Path, string Description)> _legacyPaths;
 
-    public AppPaths()
+    public AppPaths() : this(applySideEffects: true)
+    {
+    }
+
+    /// <summary>
+    /// <paramref name="applySideEffects"/> false resolves every path exactly as the public
+    /// constructor does but runs no migration, no shim/env repair and creates no directory.
+    /// For tests that assert the default layout: with no overrides set, the public
+    /// constructor would act on the developer's real home and, as root, on /usr/local.
+    /// </summary>
+    internal AppPaths(bool applySideEffects)
     {
         var overrideBasePrimary = Environment.GetEnvironmentVariable(EnvHome);
         var overrideBaseLegacy = Environment.GetEnvironmentVariable(LegacyEnvHome);
@@ -89,11 +99,14 @@ internal sealed class AppPaths
 
             // The shims live inside the roots on Windows, so after a move they sit at the
             // new location still naming the old one.
-            MigrateAndRepair(windowsPlan, new[]
+            if (applySideEffects)
             {
-                System.IO.Path.Combine(userRoot, "bin", "godot.cmd"),
-                System.IO.Path.Combine(globalRoot, "bin", "godot.cmd")
-            });
+                MigrateAndRepair(windowsPlan, new[]
+                {
+                    System.IO.Path.Combine(userRoot, "bin", "godot.cmd"),
+                    System.IO.Path.Combine(globalRoot, "bin", "godot.cmd")
+                });
+            }
 
             ConfigDirectory = userRoot;
             _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
@@ -148,18 +161,21 @@ internal sealed class AppPaths
 
             // Gated per scope, not on "any override set": exporting GODMAN_HOME must not
             // stop `sudo -E godman ... --scope Global` from moving the default global root.
-            MigrateAndRepair(
-                PlanLinuxMigrations(
-                    home,
-                    globalPrefix,
-                    migrateUser: migrateUser && home == defaultHome,
-                    migrateGlobal: migrateGlobal && globalPrefix == DefaultLinuxGlobalPrefix),
-                new[]
-                {
-                    System.IO.Path.Combine(userShimDirectory, "godot"),
-                    System.IO.Path.Combine(globalShim, "godot"),
-                    System.IO.Path.Combine(userConfigRoot, "env.sh")
-                });
+            if (applySideEffects)
+            {
+                MigrateAndRepair(
+                    PlanLinuxMigrations(
+                        home,
+                        globalPrefix,
+                        migrateUser: migrateUser && home == defaultHome,
+                        migrateGlobal: migrateGlobal && globalPrefix == DefaultLinuxGlobalPrefix),
+                    new[]
+                    {
+                        System.IO.Path.Combine(userShimDirectory, "godot"),
+                        System.IO.Path.Combine(globalShim, "godot"),
+                        System.IO.Path.Combine(userConfigRoot, "env.sh")
+                    });
+            }
 
             ConfigDirectory = userConfigRoot;
             _userShimDirectory = userShimDirectory;
@@ -204,7 +220,10 @@ internal sealed class AppPaths
         (_userLauncherDirectory, _globalLauncherDirectory, _userLauncherIconPath, _globalLauncherIconPath, var desktop) = ResolveLauncherLocations();
         DesktopDirectory = desktop;
 
-        EnsureDirectories();
+        if (applySideEffects)
+        {
+            EnsureDirectories();
+        }
     }
 
     public string GetInstallRoot(InstallScope scope)
