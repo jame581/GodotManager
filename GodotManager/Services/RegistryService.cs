@@ -329,7 +329,7 @@ internal sealed class RegistryService
 
             foreach (var (oldRoot, newRoot) in relocations)
             {
-                if (!TryRebasePath(entry.Path, oldRoot, newRoot, out var rebased))
+                if (!PathRebase.TryRebase(entry.Path, oldRoot, newRoot, out var rebased))
                 {
                     continue;
                 }
@@ -353,42 +353,6 @@ internal sealed class RegistryService
                 break;
             }
         }
-    }
-
-    /// <summary>
-    /// Rewrites <paramref name="path"/> from under <paramref name="oldRoot"/> to under
-    /// <paramref name="newRoot"/>. Matching is segment-aware, so a sibling root that
-    /// merely shares a textual prefix (<c>/usr/local/bin/godman-old</c> against
-    /// <c>/usr/local/bin/godman</c>) is not treated as a child.
-    /// </summary>
-    private static bool TryRebasePath(string path, string oldRoot, string newRoot, out string rebased)
-    {
-        rebased = string.Empty;
-
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        var root = oldRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (root.Length == 0 || !path.StartsWith(root, comparison))
-        {
-            return false;
-        }
-
-        if (path.Length == root.Length)
-        {
-            rebased = newRoot;
-            return true;
-        }
-
-        var separator = path[root.Length];
-        if (separator != Path.DirectorySeparatorChar && separator != Path.AltDirectorySeparatorChar)
-        {
-            return false;
-        }
-
-        rebased = Path.Combine(newRoot, path[(root.Length + 1)..]);
-        return true;
     }
 
     private async Task<InstallRegistry> LoadFileAsync(string path, CancellationToken cancellationToken)

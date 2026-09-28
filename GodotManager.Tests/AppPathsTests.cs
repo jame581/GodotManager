@@ -417,4 +417,150 @@ public class AppPathsTests
         Assert.Equal(Path.Combine(root, "global", "icons", "hicolor", "scalable", "apps", "godman-godot.svg"),
             fixture.Paths.GetLauncherIconPath(InstallScope.Global));
     }
+
+    // --- Repairing godman-authored files after a root move (review 2, item 1) ---
+
+    private static readonly (string Source, string Destination)[] GlobalMove =
+        [("/usr/local/bin/godman", "/usr/local/lib/godman")];
+
+    [Fact]
+    public void RewriteMovedRootReferences_RewritesAShimTargetUnderTheMovedRoot()
+    {
+        if (OperatingSystem.IsWindows()) return; // Unix separators in the fixtures below
+
+        var shim = "#!/usr/bin/env bash\nsource \"/home/u/.config/godman/env.sh\" 2>/dev/null\nexec \"/usr/local/bin/godman/4.6.2-standard-linux-global/Godot_v4.6.2\" \"$@\"\n";
+
+        var repaired = AppPaths.RewriteMovedRootReferences(shim, GlobalMove);
+
+        Assert.Equal(
+            "#!/usr/bin/env bash\nsource \"/home/u/.config/godman/env.sh\" 2>/dev/null\nexec \"/usr/local/lib/godman/4.6.2-standard-linux-global/Godot_v4.6.2\" \"$@\"\n",
+            repaired);
+    }
+
+    [Fact]
+    public void RewriteMovedRootReferences_RewritesTheEnvScriptExport()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var repaired = AppPaths.RewriteMovedRootReferences(
+            "export GODOT_HOME=\"/usr/local/bin/godman/4.6.2-standard-linux-global\"\n", GlobalMove);
+
+        Assert.Equal("export GODOT_HOME=\"/usr/local/lib/godman/4.6.2-standard-linux-global\"\n", repaired);
+    }
+
+    [Fact]
+    public void RewriteMovedRootReferences_LeavesASiblingThatOnlySharesAPrefixAlone()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var shim = "exec \"/usr/local/bin/godman-old/4.6.2/Godot\" \"$@\"\n";
+
+        Assert.Equal(shim, AppPaths.RewriteMovedRootReferences(shim, GlobalMove));
+    }
+
+    [Fact]
+    public void RewriteMovedRootReferences_WithNoReference_ReturnsTheContentUnchanged()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var shim = "#!/usr/bin/env bash\nexec \"/home/u/.local/share/godman/installs/4.7.2/Godot\" \"$@\"\n";
+
+        Assert.Equal(shim, AppPaths.RewriteMovedRootReferences(shim, GlobalMove));
+    }
+
+    [Fact]
+    public void RepairMovedRootReferences_TouchesOnlyFilesThatNameAMovedRoot()
+    {
+        using var fixture = new GodmanTestFixture();
+        var oldRoot = Path.Combine(fixture.TempRoot, "old");
+        var newRoot = Path.Combine(fixture.TempRoot, "new");
+        var stale = Path.Combine(fixture.TempRoot, "stale-shim");
+        var unrelated = Path.Combine(fixture.TempRoot, "unrelated-shim");
+        var missing = Path.Combine(fixture.TempRoot, "missing-shim");
+        File.WriteAllText(stale, $"exec \"{Path.Combine(oldRoot, "v", "Godot")}\" \"$@\"\n");
+        File.WriteAllText(unrelated, "exec \"/somewhere/else/Godot\" \"$@\"\n");
+        var unrelatedWrite = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(unrelated, unrelatedWrite);
+
+        AppPaths.RepairMovedRootReferences([stale, unrelated, missing], [(oldRoot, newRoot)]);
+
+        Assert.Contains(Path.Combine(newRoot, "v", "Godot"), File.ReadAllText(stale));
+        Assert.Equal(unrelatedWrite, File.GetLastWriteTimeUtc(unrelated));
+        Assert.False(File.Exists(missing), "a file that does not exist must not be created");
+    }
+
+    [Fact]
+    public void MigrateAndRepair_WhenTheMoveIsBlocked_LeavesTheShimAlone()
+    {
+        // A blocked migration leaves the files where the shim already points; rewriting it
+        // then would break a working `godot`.
+        using var fixture = new GodmanTestFixture();
+        var oldRoot = Path.Combine(fixture.TempRoot, "old");
+        var newRoot = Path.Combine(fixture.TempRoot, "new");
+        Directory.CreateDirectory(oldRoot);
+        Directory.CreateDirectory(newRoot); // destination exists -> TryMigrateDirectory no-ops
+        var shim = Path.Combine(fixture.TempRoot, "shim");
+        var content = $"exec \"{Path.Combine(oldRoot, "v", "Godot")}\" \"$@\"\n";
+        File.WriteAllText(shim, content);
+
+        var moves = AppPaths.MigrateAndRepair([(oldRoot, newRoot)], [shim]);
+
+        Assert.Empty(moves);
+        Assert.Equal(content, File.ReadAllText(shim));
+    }
+
+    // --- Per-scope migration gating (review 2, item 2b) ---
+
+    [Fact]
+    public void MigrationGates_AHomeOverrideDoesNotBlockTheGlobalMigration()
+    {
+        // `export GODMAN_HOME=...; sudo -E godman list --scope Global` used to skip every
+        // migration, so the default global root never moved.
+        Assert.Equal((false, true), AppPaths.MigrationGates("/custom/home", null, null, null));
+        Assert.Equal((false, true), AppPaths.MigrationGates(null, "/legacy/home", null, null));
+    }
+
+    [Fact]
+    public void MigrationGates_AGlobalOverrideDoesNotBlockTheUserMigration()
+    {
+        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, "/opt/prefix", null));
+        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, null, "/opt/legacy"));
+    }
+
+    [Fact]
+    public void MigrationGates_NoOverrides_MigratesBothScopes()
+    {
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, null, null));
+        Assert.Equal((false, false), AppPaths.MigrationGates("/h", null, "/p", null));
+    }
+
+    [Fact]
+    public void Linux_MigrationPlan_FilteredToGlobal_KeepsOnlyTheGlobalMovesInOrder()
+    {
+        if (OperatingSystem.IsWindows()) return; // Unix path literals
+
+        var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local", migrateUser: false, migrateGlobal: true);
+
+        Assert.Equal(
+            new[]
+            {
+                ("/usr/local/bin/godman", "/usr/local/lib/godman"),
+                ("/usr/local/bin/godot-manager", "/usr/local/lib/godman")
+            },
+            plan);
+    }
+
+    [Fact]
+    public void Linux_MigrationPlan_FilteredToUser_KeepsOnlyTheUserMoves()
+    {
+        if (OperatingSystem.IsWindows()) return; // Unix path literals
+
+        var plan = AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local", migrateUser: true, migrateGlobal: false);
+
+        Assert.Equal(3, plan.Count);
+        Assert.All(plan, m => Assert.StartsWith("/home/tester/", m.Source));
+        Assert.Equal(
+            AppPaths.PlanLinuxMigrations("/home/tester", "/usr/local").Where(m => m.Source.StartsWith("/home/tester/", StringComparison.Ordinal)),
+            plan);
+    }
 }

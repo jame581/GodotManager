@@ -60,10 +60,8 @@ internal sealed class AppPaths
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
         var overrideGlobalBase = overrideGlobalPrimary ?? overrideGlobalLegacy;
 
-        var allowMigration = overrideBasePrimary == null
-            && overrideBaseLegacy == null
-            && overrideGlobalPrimary == null
-            && overrideGlobalLegacy == null;
+        var (migrateUser, migrateGlobal) = MigrationGates(
+            overrideBasePrimary, overrideBaseLegacy, overrideGlobalPrimary, overrideGlobalLegacy);
 
         if (OperatingSystem.IsWindows())
         {
@@ -75,13 +73,27 @@ internal sealed class AppPaths
             var userRoot = System.IO.Path.Combine(appData, WindowsFolderName);
             var globalRoot = System.IO.Path.Combine(programFiles, WindowsFolderName);
 
-            if (allowMigration && appData == defaultAppData && programFiles == defaultProgramFiles)
+            // Each scope migrates only when its own root is at the default: a user who
+            // exports GODMAN_HOME and runs `sudo -E godman ... --scope Global` still has a
+            // default global root that needs moving.
+            var windowsPlan = new List<(string Source, string Destination)>();
+            if (migrateUser && appData == defaultAppData)
             {
-                var legacyUserRoot = System.IO.Path.Combine(defaultAppData, LegacyWindowsFolderName);
-                var legacyGlobalRoot = System.IO.Path.Combine(defaultProgramFiles, LegacyWindowsFolderName);
-                TryMigrateDirectory(legacyUserRoot, userRoot);
-                TryMigrateDirectory(legacyGlobalRoot, globalRoot);
+                windowsPlan.Add((System.IO.Path.Combine(defaultAppData, LegacyWindowsFolderName), userRoot));
             }
+
+            if (migrateGlobal && programFiles == defaultProgramFiles)
+            {
+                windowsPlan.Add((System.IO.Path.Combine(defaultProgramFiles, LegacyWindowsFolderName), globalRoot));
+            }
+
+            // The shims live inside the roots on Windows, so after a move they sit at the
+            // new location still naming the old one.
+            MigrateAndRepair(windowsPlan, new[]
+            {
+                System.IO.Path.Combine(userRoot, "bin", "godot.cmd"),
+                System.IO.Path.Combine(globalRoot, "bin", "godot.cmd")
+            });
 
             ConfigDirectory = userRoot;
             _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
@@ -134,13 +146,20 @@ internal sealed class AppPaths
             var oldUserInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LinuxFolderName);
             var legacyUserInstallRoot = System.IO.Path.Combine(home, ".local", "bin", LegacyLinuxFolderName);
 
-            if (allowMigration && home == defaultHome && globalPrefix == DefaultLinuxGlobalPrefix)
-            {
-                foreach (var (source, destination) in PlanLinuxMigrations(home, globalPrefix))
+            // Gated per scope, not on "any override set": exporting GODMAN_HOME must not
+            // stop `sudo -E godman ... --scope Global` from moving the default global root.
+            MigrateAndRepair(
+                PlanLinuxMigrations(
+                    home,
+                    globalPrefix,
+                    migrateUser: migrateUser && home == defaultHome,
+                    migrateGlobal: migrateGlobal && globalPrefix == DefaultLinuxGlobalPrefix),
+                new[]
                 {
-                    TryMigrateDirectory(source, destination);
-                }
-            }
+                    System.IO.Path.Combine(userShimDirectory, "godot"),
+                    System.IO.Path.Combine(globalShim, "godot"),
+                    System.IO.Path.Combine(userConfigRoot, "env.sh")
+                });
 
             ConfigDirectory = userConfigRoot;
             _userShimDirectory = userShimDirectory;
@@ -243,6 +262,39 @@ internal sealed class AppPaths
     /// </summary>
     internal static IReadOnlyList<(string Source, string Destination)> PlanLinuxMigrations(string home, string globalPrefix)
     {
+        return PlanLinuxMigrationsByScope(home, globalPrefix)
+            .Select(m => (m.Source, m.Destination))
+            .ToList();
+    }
+
+    /// <summary>
+    /// <see cref="PlanLinuxMigrations(string, string)"/> restricted to the scopes allowed
+    /// to migrate. The relative order within the plan is preserved.
+    /// </summary>
+    internal static IReadOnlyList<(string Source, string Destination)> PlanLinuxMigrations(
+        string home, string globalPrefix, bool migrateUser, bool migrateGlobal)
+    {
+        return PlanLinuxMigrationsByScope(home, globalPrefix)
+            .Where(m => m.Scope == InstallScope.Global ? migrateGlobal : migrateUser)
+            .Select(m => (m.Source, m.Destination))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Which scopes may run their default-layout migrations. Pure so the gating is
+    /// unit-testable without a real home directory or root. Each scope looks only at its
+    /// own overrides: the migrations move default locations, and an override on one scope
+    /// says nothing about whether the other scope is at its default.
+    /// </summary>
+    internal static (bool MigrateUser, bool MigrateGlobal) MigrationGates(
+        string? homeOverride, string? legacyHomeOverride, string? globalOverride, string? legacyGlobalOverride)
+    {
+        return (homeOverride == null && legacyHomeOverride == null,
+                globalOverride == null && legacyGlobalOverride == null);
+    }
+
+    private static IReadOnlyList<(string Source, string Destination, InstallScope Scope)> PlanLinuxMigrationsByScope(string home, string globalPrefix)
+    {
         var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
         var userInstallRoot = System.IO.Path.Combine(home, ".local", "share", LinuxFolderName, "installs");
         var userBin = System.IO.Path.Combine(home, ".local", "bin");
@@ -255,11 +307,11 @@ internal sealed class AppPaths
         // cases apart, which is why these entries can be listed unconditionally.
         return new[]
         {
-            (System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), userConfigRoot),
-            (System.IO.Path.Combine(globalShim, LinuxFolderName), globalInstallRoot),
-            (System.IO.Path.Combine(globalShim, LegacyLinuxFolderName), globalInstallRoot),
-            (System.IO.Path.Combine(userBin, LinuxFolderName), userInstallRoot),
-            (System.IO.Path.Combine(userBin, LegacyLinuxFolderName), userInstallRoot)
+            (System.IO.Path.Combine(home, ".config", LegacyLinuxFolderName), userConfigRoot, InstallScope.User),
+            (System.IO.Path.Combine(globalShim, LinuxFolderName), globalInstallRoot, InstallScope.Global),
+            (System.IO.Path.Combine(globalShim, LegacyLinuxFolderName), globalInstallRoot, InstallScope.Global),
+            (System.IO.Path.Combine(userBin, LinuxFolderName), userInstallRoot, InstallScope.User),
+            (System.IO.Path.Combine(userBin, LegacyLinuxFolderName), userInstallRoot, InstallScope.User)
         };
     }
 
@@ -365,13 +417,109 @@ internal sealed class AppPaths
         }
     }
 
-    private static void TryMigrateDirectory(string source, string destination)
+    /// <summary>
+    /// Runs <paramref name="plan"/> in order, then repairs the godman-authored files that
+    /// still name a root that just moved. Returns the moves that actually happened.
+    ///
+    /// The repair is the half that is easy to forget. The shim hard-codes
+    /// <c>exec "&lt;old root&gt;/&lt;version&gt;/…"</c> and env.sh exports the old root as
+    /// GODOT_HOME, and nothing else rewrites them -- while the registry rebases its
+    /// entries onto the new root by itself, so every other check (doctor's "active install
+    /// directory missing" included) sees a healthy machine whose <c>godot</c> no longer
+    /// runs. Only a move that succeeded triggers it: a blocked migration leaves the files
+    /// where the shim already points.
+    ///
+    /// Never throws: it runs inside the <see cref="AppPaths"/> constructor, and a failed
+    /// migration or repair must not stop an unrelated command.
+    /// </summary>
+    internal static IReadOnlyList<(string Source, string Destination)> MigrateAndRepair(
+        IEnumerable<(string Source, string Destination)> plan,
+        IEnumerable<string> filesToRepair)
+    {
+        var moves = new List<(string Source, string Destination)>();
+        foreach (var (source, destination) in plan)
+        {
+            if (TryMigrateDirectory(source, destination))
+            {
+                moves.Add((source, destination));
+            }
+        }
+
+        RepairMovedRootReferences(filesToRepair, moves);
+        return moves;
+    }
+
+    /// <summary>
+    /// Best-effort file-applying wrapper around <see cref="RewriteMovedRootReferences"/>:
+    /// only files that exist and actually name a moved root are rewritten. The write
+    /// truncates in place, so the shim keeps its executable bit.
+    /// </summary>
+    internal static void RepairMovedRootReferences(
+        IEnumerable<string> files, IReadOnlyList<(string Source, string Destination)> moves)
+    {
+        if (moves.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var file in files)
+        {
+            try
+            {
+                if (!System.IO.File.Exists(file))
+                {
+                    continue;
+                }
+
+                var content = System.IO.File.ReadAllText(file);
+                var repaired = RewriteMovedRootReferences(content, moves);
+                if (!string.Equals(content, repaired, StringComparison.Ordinal))
+                {
+                    System.IO.File.WriteAllText(file, repaired);
+                }
+            }
+            catch
+            {
+                // Best-effort, like the move itself: doctor reports a shim whose target is
+                // missing, and `activate` rewrites it.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rewrites every double-quoted path in <paramref name="content"/> that lies under a
+    /// moved source root onto its destination. Every path godman writes into the shim
+    /// (<c>source "…"</c>, <c>exec "…"</c>), <c>godot.cmd</c> (<c>"…" %*</c>) and env.sh
+    /// (<c>GODOT_HOME="…"</c>) is quoted, so matching quoted strings with the registry's
+    /// segment-aware rule (<see cref="PathRebase"/>) reaches exactly those paths and never a
+    /// sibling that only shares a textual prefix. Pure.
+    /// </summary>
+    internal static string RewriteMovedRootReferences(
+        string content, IReadOnlyList<(string Source, string Destination)> moves)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(content, "\"([^\"\r\n]*)\"", match =>
+        {
+            var value = match.Groups[1].Value;
+            foreach (var (source, destination) in moves)
+            {
+                if (PathRebase.TryRebase(value, source, destination, out var rebased))
+                {
+                    return "\"" + rebased + "\"";
+                }
+            }
+
+            return match.Value;
+        });
+    }
+
+    /// <summary>True only when the directory was actually moved.</summary>
+    internal static bool TryMigrateDirectory(string source, string destination)
     {
         try
         {
             if (!System.IO.Directory.Exists(source) || System.IO.Directory.Exists(destination))
             {
-                return;
+                return false;
             }
 
             var parentDir = System.IO.Path.GetDirectoryName(destination);
@@ -381,10 +529,12 @@ internal sealed class AppPaths
             }
 
             System.IO.Directory.Move(source, destination);
+            return true;
         }
         catch
         {
             // Best-effort migration; leave legacy paths intact on failure.
+            return false;
         }
     }
 }
