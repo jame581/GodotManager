@@ -37,18 +37,42 @@ public class DoctorCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Doctor_ReportsInstallMissingItsLauncherEntry()
+    public async Task Doctor_ReportsAnInstallWhoseLauncherEntryWentMissing()
     {
         using var fixture = new GodmanTestFixture();
         var path = Path.Combine(fixture.TempRoot, "i");
         Directory.CreateDirectory(path);
-        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);   // LauncherEntry null: legacy, wanted
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);
+        entry.LauncherEntry = true;   // godman wrote one; it has since been deleted
         await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
 
         var output = await RunDoctorAsync(fixture);
 
         Assert.Contains("Launcher entry missing", output);
         Assert.Contains(entry.Id.ToString(), output);
+        Assert.DoesNotContain("predate launcher entries", output);
+    }
+
+    [Fact]
+    public async Task Doctor_SummarisesPreLauncherInstallsInOneLine()
+    {
+        // Every install on a machine upgraded from 1.3.x has LauncherEntry == null. One
+        // two-line block per install buried the rest of the report.
+        using var fixture = new GodmanTestFixture();
+        var installs = new[] { "a", "b" }.Select(name =>
+        {
+            var path = Path.Combine(fixture.TempRoot, name);
+            Directory.CreateDirectory(path);
+            return InstallEntryFactory.Create(version: "4.5.1", path: path);   // LauncherEntry null: pre-1.4.0
+        }).ToList();
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = installs });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.Contains("2 install(s) predate launcher entries", output);
+        Assert.Contains("godman activate <id>", output);
+        Assert.DoesNotContain("Launcher entry missing", output);
+        Assert.All(installs, x => Assert.DoesNotContain(x.Id.ToString(), output));
     }
 
     [Fact]
@@ -63,7 +87,9 @@ public class DoctorCommandTests : IDisposable
 
         var output = await RunDoctorAsync(fixture);
 
+        Assert.Contains("Registry", output);
         Assert.DoesNotContain("Launcher entry missing", output);
+        Assert.DoesNotContain("predate launcher entries", output);
     }
 
     [Fact]
@@ -251,6 +277,33 @@ public class DoctorCommandTests : IDisposable
         finally
         {
             AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_WithARegisteredInstallStillInTheLegacyRoot_DoesNotSayItCanBeRemoved()
+    {
+        // A destination with content is not proof this root moved: on a machine with two
+        // old roots only the first planned one migrates, and a blocked or partial move
+        // leaves entries behind. A registry entry pointing into the directory makes it live.
+        var pending = FirstPendingRelocation();
+        var installDir = Path.Combine(pending.OldRoot, "4.5.1-standard-linux-global");
+        Directory.CreateDirectory(installDir);
+        Directory.CreateDirectory(pending.NewRoot);
+        File.WriteAllText(Path.Combine(pending.NewRoot, "4.6.2-standard-linux-global.marker"), "migrated");
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: installDir);
+        entry.LauncherEntry = false;
+        await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = await RunDoctorAsync(_fixture);
+
+        Assert.Contains("Legacy directory found", output);
+        Assert.Contains("Still in use", output);
+        Assert.DoesNotContain("can be removed", output);
+        if (!OperatingSystem.IsWindows())
+        {
+            // The remedy names a command sudo can actually find (see ElevatedCommandLine).
+            Assert.Contains(ElevatedCommandLine.Render("list"), output.Replace("\r", "").Replace("\n", ""));
         }
     }
 

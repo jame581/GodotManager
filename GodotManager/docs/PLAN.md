@@ -307,13 +307,22 @@ default sudo configuration, and the obvious fix was blocked by godman's own dire
   the destination exists, so on a machine carrying both old roots whichever runs first
   wins. That lives in the pure, unit-tested `AppPaths.PlanLinuxMigrations` rather than
   inline in the constructor, for the same reason `TouchesMachineState` does.
-- **`doctor` gained two checks**: an active install whose directory is missing (a shim
-  hard-codes an absolute path, so a blocked migration leaves `godot` resolving to
-  nothing, and nothing but `activate` can repair a shim), and a legacy root that is
-  still in use — the stock "this can be removed" advice would have destroyed installs
-  that had not moved yet. Existence cannot answer "did the migration run", since
-  `AppPaths` best-effort creates both roots on startup; the signal is whether anything
-  landed in the destination.
+- **A completed move repairs the files that name the old root.** The shim hard-codes
+  `exec "<old root>/<version>/…"` and `env.sh` exports the old root as `GODOT_HOME`.
+  After a *successful* directory move, `AppPaths.MigrateAndRepair` rewrites those
+  (user and global shim, `env.sh`), matching quoted paths with the same segment-aware
+  rule the registry rebase uses (`PathRebase`). A blocked move rewrites nothing: the
+  files are still where the shim points.
+- **`doctor` gained three checks**: the shim's own target (parsed out of `godot` /
+  `godot.cmd`) is missing — the only check that sees a completed migration whose shim
+  was not repaired, since the registry rebases the active entry onto the new root,
+  which exists; an active install whose directory is missing (a vanished install — it
+  catches neither a blocked migration, which leaves the shim working, nor a completed
+  one); and a legacy root that is still in use — the stock "this can be removed" advice
+  would have destroyed installs that had not moved yet. Existence cannot answer "did
+  the migration run", since `AppPaths` best-effort creates both roots on startup; the
+  signal is whether anything landed in the destination and whether any registry entry
+  still points into the old root.
 - **`install.sh` refuses to install over a directory**, which `cp` would otherwise
   nest the binary inside — reachable now that the docs point at
   `GODMAN_INSTALL_DIR=/usr/local/bin`.

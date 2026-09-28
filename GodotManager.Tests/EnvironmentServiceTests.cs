@@ -111,6 +111,37 @@ public class EnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ParseShimTarget_ReadsBackTheExecutableTheWriterPutThere()
+    {
+        // Round-trips through the real writer, so doctor's parser cannot drift away from
+        // the shim format without this failing -- on either OS's shim.
+        var tempDir = Path.Combine(_fixture.TempRoot, "shim-parse");
+        Directory.CreateDirectory(tempDir);
+        var exeName = OperatingSystem.IsWindows() ? "Godot_v4.5.1-stable_win64.exe" : "Godot_v4.5.1-stable_linux.x86_64";
+        var exePath = Path.Combine(tempDir, exeName);
+        File.WriteAllText(exePath, "fake executable");
+        var entry = InstallEntryFactory.Create(path: tempDir);
+        entry.LauncherEntry = false;
+
+        await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: false);
+
+        var shimPath = Path.Combine(
+            _fixture.Paths.GetShimDirectory(InstallScope.User),
+            OperatingSystem.IsWindows() ? "godot.cmd" : "godot");
+        Assert.Equal(exePath, GodotManager.Services.EnvironmentService.ParseShimTarget(File.ReadAllText(shimPath)));
+    }
+
+    [Fact]
+    public void ParseShimTarget_ParsesBothShimFormats_AndIgnoresForeignFiles()
+    {
+        Assert.Equal("/opt/g/Godot", GodotManager.Services.EnvironmentService.ParseShimTarget(
+            "#!/usr/bin/env bash\nsource \"/h/.config/godman/env.sh\" 2>/dev/null\nexec \"/opt/g/Godot\" \"$@\"\n"));
+        Assert.Equal(@"C:\g\Godot.exe", GodotManager.Services.EnvironmentService.ParseShimTarget(
+            "@echo off\r\n\"C:\\g\\Godot.exe\" %*\r\n"));
+        Assert.Null(GodotManager.Services.EnvironmentService.ParseShimTarget("#!/bin/sh\n"));
+    }
+
+    [Fact]
     public async Task RemoveActiveAsync_DeletesShimFile()
     {
         // Arrange

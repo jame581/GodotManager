@@ -61,6 +61,42 @@ internal sealed class EnvironmentService
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The executable a shim written by this service launches: the quoted
+    /// <c>exec "…"</c> target of the Unix shim, or the quoted <c>"…" %*</c> command of
+    /// <c>godot.cmd</c>. Null when the content has neither shape (a hand-written or
+    /// foreign file). Lives beside the writers so the two formats cannot drift apart
+    /// unnoticed; <c>doctor</c> uses it to check what the shim really points at.
+    /// </summary>
+    internal static string? ParseShimTarget(string content)
+    {
+        foreach (var raw in content.Split('\n'))
+        {
+            var line = raw.Trim();
+            string rest;
+            if (line.StartsWith("exec \"", StringComparison.Ordinal))
+            {
+                rest = line["exec \"".Length..];
+            }
+            else if (line.StartsWith('"') && line.EndsWith("\" %*", StringComparison.Ordinal))
+            {
+                rest = line[1..];
+            }
+            else
+            {
+                continue;
+            }
+
+            var end = rest.IndexOf('"');
+            if (end > 0)
+            {
+                return rest[..end];
+            }
+        }
+
+        return null;
+    }
+
     public Task RemoveActiveAsync(InstallEntry? entry, CancellationToken cancellationToken = default)
     {
         if (OperatingSystem.IsWindows())

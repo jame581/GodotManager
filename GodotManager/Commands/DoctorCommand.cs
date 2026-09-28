@@ -96,32 +96,66 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         if (File.Exists(shimPath))
         {
             AnsiConsole.MarkupLineInterpolated($"[green]Shim present[/] at {shimPath}");
+
+            // A shim that exists says nothing about whether it still resolves: it
+            // hard-codes an absolute path to the binary. So read that path out of the shim
+            // itself rather than inferring it from the registry. The registry cannot answer
+            // it: after a completed root migration it rebases the active entry onto the new
+            // root, which exists, while a shim the migration failed to repair still names
+            // the old one -- the active-directory check below would call that healthy.
+            string? target = null;
+            try
+            {
+                target = EnvironmentService.ParseShimTarget(File.ReadAllText(shimPath));
+            }
+            catch (Exception ex)
+            {
+                _diagnostics?.Warn($"Could not read the shim at {shimPath}: {ex.Message}");
+            }
+
+            if (target is not null && !File.Exists(target))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[yellow]Shim points at a missing binary[/]: {target}");
+                AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim.[/]");
+            }
         }
         else
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Shim missing[/] at {shimPath}");
         }
 
-        // A shim that exists says nothing about whether it still resolves: it hard-codes
-        // an absolute path into the install directory, so an install root that moved (a
-        // path migration) or vanished leaves `godot` on PATH pointing at nothing. The
-        // registry rebases entries onto a completed migration by itself; what it cannot
-        // repair is a shim, and that only shows up as a missing directory here.
+        // The registry's own view: an active entry whose directory is gone (deleted by
+        // hand, or an old root whose migration left it at neither path). It does not catch
+        // a completed migration -- the registry rebases the entry onto the new root -- nor
+        // a blocked one, which leaves the files, and the shim, where they were; the shim
+        // target check above is what covers a moved root.
         if (active is not null && !string.IsNullOrEmpty(active.Path) && !Directory.Exists(active.Path))
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Active install directory missing[/]: {active.Path}");
             AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim, or remove the entry.[/]");
         }
 
-        // One entry per install is created on install; pre-1.4.0 installs never had one,
-        // and a user may have deleted it. An explicit --no-shortcut is not a problem.
+        // One entry per install is created on install. An explicit --no-shortcut is not a
+        // problem. Pre-1.4.0 installs (LauncherEntry == null) never had one, which is every
+        // install on an upgraded machine -- one summary line for those rather than a
+        // two-line block each; a per-install line only for an entry godman did write
+        // (LauncherEntry == true) that has since gone missing.
         var launcher = new LauncherService(_paths, _diagnostics);
-        foreach (var install in registry.Installs.Where(x => x.LauncherEntry != false && !launcher.Exists(x)))
+        var predatingEntries = registry.Installs.Count(x => x.LauncherEntry == null && !launcher.Exists(x));
+        if (predatingEntries > 0)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[yellow]{predatingEntries} install(s) predate launcher entries[/]; `godman activate <id>` adds one (and makes it active).");
+        }
+
+        foreach (var install in registry.Installs.Where(x => x.LauncherEntry == true && !launcher.Exists(x)))
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]Launcher entry missing[/] for {install.Version} ({install.Edition}, {install.Scope}) [grey]{install.Id}[/]");
             // Honest about the side effects: activate is the only command that writes a missing
-            // entry, and it also switches the active version (and needs sudo for a global one).
-            AnsiConsole.MarkupLineInterpolated($"[grey]  Run: godman activate {install.Id} -- this also makes it the active version{(install.Scope == InstallScope.Global && !OperatingSystem.IsWindows() ? " (run with sudo)" : "")}. Or reinstall it with --force.[/]");
+            // entry, and it also switches the active version (and needs root for a global one).
+            var activate = install.Scope == InstallScope.Global
+                ? ElevatedCommandLine.Render($"activate {install.Id}")
+                : $"godman activate {install.Id}";
+            AnsiConsole.MarkupLineInterpolated($"[grey]  Run: {activate} -- this also makes it the active version. Or reinstall it with --force.[/]");
         }
 
         // Check if shim directory is in PATH (Windows only)
@@ -167,10 +201,23 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                     || r.OldRoot.StartsWith(legacyPath + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                 .ToList();
 
-            if (pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot)))
+            // Content in the destination is not enough on its own either: a machine that
+            // carries two old roots migrates only the first one planned, and any registry
+            // entry the move did not reach still names this directory (the registry rebases
+            // an entry only onto a destination that actually holds it). If anything
+            // registered still lives here, it is live.
+            var referenced = registry.Installs.Any(x => !string.IsNullOrEmpty(x.Path) && PathRebase.IsUnder(x.Path, legacyPath));
+
+            if (referenced || (pending.Count > 0 && pending.All(r => !HasContent(r.NewRoot))))
             {
+                var destination = pending.Count > 0 ? $" to {pending[0].NewRoot}" : string.Empty;
+                // The machine-wide root needs privileges to move; any command that builds
+                // AppPaths runs the migration, `list` being the harmless one.
+                var remedy = OperatingSystem.IsWindows()
+                    ? "Run an elevated godman command to complete the move"
+                    : $"Run `{ElevatedCommandLine.Render("list")}` to complete the move";
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[grey]  Still in use -- these installs have not moved to {pending[0].NewRoot} yet. Run an elevated godman command to complete the move; do not delete this directory.[/]");
+                    $"[grey]  Still in use -- installs here have not moved{destination} yet. {remedy}; do not delete this directory.[/]");
             }
             else
             {
