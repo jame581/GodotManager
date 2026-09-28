@@ -222,6 +222,27 @@ public class LinuxElevationTests
     }
 
     [Fact]
+    public void CheckClean_IgnoresTheGodmanBinaryAtTheLegacyRootsName()
+    {
+        // On a migrated machine /usr/local/bin/godman is the root-owned godman binary, not an
+        // old install root. Counting it would send every unprivileged clean to sudo.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        using var fixture = new GodmanTestFixture();
+        var binary = Path.Combine(fixture.Paths.GetShimDirectory(InstallScope.Global), "godman");
+        Directory.CreateDirectory(Path.GetDirectoryName(binary)!);
+        File.WriteAllText(binary, "binary");
+        File.SetUnixFileMode(binary, (UnixFileMode)Convert.ToInt32("444", 8));
+        try
+        {
+            Assert.Null(LinuxElevation.CheckClean(fixture.Paths, fixture.Launcher, ["clean", "--yes"]));
+        }
+        finally
+        {
+            File.SetUnixFileMode(binary, (UnixFileMode)Convert.ToInt32("644", 8));
+        }
+    }
+
+    [Fact]
     public void CheckClean_WithAnUnmigratedLegacyGlobalRootItCannotDelete_Stops()
     {
         // Before the first privileged run the global installs are still in <prefix>/bin/godman
