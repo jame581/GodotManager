@@ -212,7 +212,9 @@ dotnet test -v detailed
     to `<X>/lib/godman`. For a system directory that run is under sudo, which drops
     the variable by default: use `sudo GODMAN_GLOBAL_ROOT=<X> <full path to godman> list`
     (or `sudo -E`), since a plain `sudo … list` would migrate `/usr/local` instead.
-    Every `sudo` command godman prints includes the variable.
+    Every `sudo` command godman prints includes the variable. A restricted sudoers
+    rule without `SETENV` rejects that `VAR=value` form ("not allowed to set the
+    following environment variables"); add `GODMAN_GLOBAL_ROOT` to `env_keep` instead.
   - any other value `<V>` → godman does not move `<V>/godman`; pick a prefix `<P>`, move
     it to `<P>/lib/godman` yourself and update the paths in its `installs.json` (or
     reinstall).

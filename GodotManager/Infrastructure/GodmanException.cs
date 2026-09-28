@@ -20,10 +20,15 @@ internal class GodmanException : Exception
     /// RegistryService.SaveAsync's global-write failure and ActivateCommand's
     /// UnauthorizedAccessException/SecurityException catches so the wording
     /// given to the user does not drift between the two call sites.
+    ///
+    /// On Linux it spells the elevated form out through <see cref="ElevatedCommandLine"/>:
+    /// a bare "re-run with sudo" loses GODMAN_GLOBAL_ROOT (sudo drops it) and names a
+    /// godman sudo may not find. The callers do not have the original arguments, so they
+    /// appear as a placeholder.
     /// </summary>
     public static string ElevationHint => OperatingSystem.IsWindows()
         ? "Global-scope installs require administrator privileges. Re-run elevated."
-        : "Global-scope installs require root privileges. Re-run with sudo.";
+        : $"Global-scope installs require root privileges. Re-run the same command with sudo: {ElevatedCommandLine.Render("<same arguments>")}";
 }
 
 /// <summary>
