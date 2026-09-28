@@ -50,8 +50,17 @@ BINARY=$(find "$TEMP_DIR/extract" -name "$BINARY_NAME" -type f | head -1)
 # godman <= 1.3.0 kept global installs in a directory called <shim>/godman, so on a
 # machine that has not migrated yet, "$INSTALL_DIR/$BINARY_NAME" can be a directory --
 # and `cp` would quietly drop the binary *inside* it rather than failing.
+#
+# The remedy names godman by its full path: `sudo godman` cannot work here, because the
+# directory is squatting on that very name and sudo's secure_path never includes
+# ~/.local/bin, where a working godman usually lives.
 if [ -d "$INSTALL_DIR/$BINARY_NAME" ]; then
-  error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root; run an elevated godman command to migrate it to <prefix>/lib/godman first, or pick another GODMAN_INSTALL_DIR."
+  EXISTING=$(command -v "$BINARY_NAME" 2>/dev/null || true)
+  if [ -n "$EXISTING" ] && [ -f "$EXISTING" ] && [ -x "$EXISTING" ]; then
+    error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root; migrate it to <prefix>/lib/godman first by running: sudo \"$EXISTING\" list (that binary must be godman 1.4.0 or later; if it is older, re-run this installer without GODMAN_INSTALL_DIR first) -- then re-run this installer, or pick another GODMAN_INSTALL_DIR."
+  else
+    error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root. Install godman to your user directory first (re-run this installer without GODMAN_INSTALL_DIR), migrate by running: sudo \"$HOME/.local/bin/$BINARY_NAME\" list -- then re-run this installer."
+  fi
 fi
 
 cp "$BINARY" "$INSTALL_DIR/$BINARY_NAME"
