@@ -83,7 +83,8 @@ internal static class InstallProgressPresentation
         if (separateActivation is { Succeeded: false } failed)
         {
             return ("Installed, not activated",
-                $"{completionMessage}, but activation failed: {failed.Error}"
+                // Its own paragraph: the completion message may already end in a full sentence.
+                $"{completionMessage}\n\nNot activated: {failed.Error}"
                     + (failed.Hint is null ? "" : $"\n{failed.Hint}"),
                 true);
         }

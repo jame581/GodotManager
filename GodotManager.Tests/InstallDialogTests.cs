@@ -129,6 +129,22 @@ public class InstallDialogTests
         Assert.Contains("Run the TUI from an elevated terminal.", dialog.Message);
     }
 
+    [Fact]
+    public void BuildCompletionDialog_UnverifiedAndActivationFailed_KeepsBothSentencesIntact()
+    {
+        // The unverified completion message is a full sentence ending in "."; the activation
+        // failure must not be spliced onto it as ", but ..." ("HTTP 500., but activation failed").
+        var completion = InstallProgressPresentation.BuildCompletionMessage(
+            "4.5.1", InstallEdition.Standard, unverified: true, reason: "HTTP 500");
+
+        var dialog = InstallProgressPresentation.BuildCompletionDialog(
+            completion, ElevatedOperationResult.Failed("Elevation was canceled or blocked."));
+
+        Assert.StartsWith(completion, dialog.Message);
+        Assert.DoesNotContain(".,", dialog.Message);
+        Assert.Contains("Elevation was canceled or blocked.", dialog.Message);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
