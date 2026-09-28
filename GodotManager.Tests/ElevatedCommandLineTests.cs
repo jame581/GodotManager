@@ -16,13 +16,23 @@ public class ElevatedCommandLineTests
     }
 
     [Theory]
-    [InlineData("/usr/local/bin/godman")]
     [InlineData("/usr/bin/godman")]
-    [InlineData("/usr/local/sbin/godman")]
+    [InlineData("/usr/sbin/godman")]
+    [InlineData("/sbin/godman")]
     [InlineData("/bin/godman")]
-    public void BinaryOnSecurePath_UsesTheBareName(string processPath)
+    public void BinaryOnEveryDefaultSecurePath_UsesTheBareName(string processPath)
     {
         Assert.Equal("sudo godman doctor", ElevatedCommandLine.Render("doctor", processPath, windows: false));
+    }
+
+    [Theory]
+    [InlineData("/usr/local/bin/godman")]
+    [InlineData("/usr/local/sbin/godman")]
+    public void BinaryInUsrLocal_IsNamedByItsFullPath(string processPath)
+    {
+        // RHEL-family secure_path leaves /usr/local/* off, so `sudo godman` would not
+        // resolve there; a full path works everywhere.
+        Assert.Equal($"sudo {processPath} doctor", ElevatedCommandLine.Render("doctor", processPath, windows: false));
     }
 
     [Fact]

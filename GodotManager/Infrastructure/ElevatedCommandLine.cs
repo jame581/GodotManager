@@ -10,19 +10,19 @@ namespace GodotManager.Infrastructure;
 /// yet <c>/usr/local/bin/godman</c> is a directory, so the binary cannot be there either.
 /// On exactly the machines that need the remedy, <c>sudo godman</c> is "command not
 /// found". So the remedy names the running binary by its full path unless it already sits
-/// in a directory sudo searches.
+/// in a directory every default sudo configuration searches.
 /// </summary>
 internal static class ElevatedCommandLine
 {
     /// <summary>
-    /// The directories of a stock sudo <c>secure_path</c> on Fedora, Debian and Ubuntu.
-    /// Not universal: RHEL-family systems (RHEL, Rocky, Alma) leave <c>/usr/local/bin</c>
-    /// and <c>/usr/local/sbin</c> off it, so there a godman in <c>/usr/local/bin</c> gets a
-    /// bare <c>sudo godman</c> remedy that will not resolve. The real sudoers is not read
-    /// (it is root-only); installing to <c>/usr/bin</c>, as the RPM does, works everywhere.
+    /// Directories on every mainstream default sudo <c>secure_path</c>. Deliberately not
+    /// <c>/usr/local/bin</c> or <c>/usr/local/sbin</c>: Fedora, Debian and Ubuntu include
+    /// them, but RHEL-family systems (RHEL, Rocky, Alma) do not, and the real sudoers is
+    /// root-only so it cannot be checked. A binary there gets its full path, which works
+    /// everywhere; only a binary in one of these gets the bare name.
     /// </summary>
     internal static readonly IReadOnlyList<string> SecurePathDirectories =
-        ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
+        ["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
     public static string Render(string arguments) =>
         Render(arguments, Environment.ProcessPath, OperatingSystem.IsWindows());
