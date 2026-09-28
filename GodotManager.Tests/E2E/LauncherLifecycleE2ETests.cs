@@ -1,6 +1,7 @@
 using GodotManager.Domain;
 using GodotManager.Services;
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
 using System;
 using System.IO;
 using System.Linq;
@@ -106,6 +107,34 @@ public class LauncherLifecycleE2ETests : IDisposable
         Assert.DoesNotContain(first.Path, shim);
         var registry = await _fixture.Registry.LoadAsync();
         Assert.Equal(second.Id, registry.ActiveId);
+    }
+
+    [Fact]
+    public async Task InstallWithActivate_WithASurvivingGlobalShim_WarnsOnLinux()
+    {
+        // Parity-review F1 through `install --activate`: same shared check as `activate`.
+        if (OperatingSystem.IsWindows()) return;
+        var globalShimDir = _fixture.Paths.GetShimDirectory(InstallScope.Global);
+        Directory.CreateDirectory(globalShimDir);
+        File.WriteAllText(Path.Combine(globalShimDir, "godot"), "#!/bin/sh\n");
+
+        var archive = MockArchiveFactory.CreateMockGodotArchive();
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["install", "--version", "4.5.1", "--archive", archive, "--platform", Platform, "--activate"]);
+
+            Assert.Equal(0, result.ExitCode);
+            var output = result.Output.Replace("\r", "").Replace("\n", "");
+            Assert.Contains("could not be removed without root", output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+            File.Delete(archive);
+        }
     }
 
     [Fact]

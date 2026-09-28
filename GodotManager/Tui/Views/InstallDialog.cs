@@ -242,6 +242,14 @@ internal sealed class InstallDialog : Dialog
             // --verbose-gated warning for the CLI.
             var unverified = verificationStatus == ChecksumStatus.Unverified;
 
+            // Same check `activate`, `install --activate` and the TUI's own activate run
+            // (ShimShadowing.GetWarning): a surviving machine-wide shim outranks this
+            // in-process activation. Not after the elevated split -- that child ran
+            // elevated and could remove the global shim itself, exactly as the CLI skips it.
+            var shadowWarning = request.Activate
+                ? ShimShadowing.GetWarning(_paths, scope)
+                : null;
+
             _app.Invoke(() =>
             {
                 Success = true;
@@ -250,7 +258,8 @@ internal sealed class InstallDialog : Dialog
                 _statusLabel.Text = InstallProgressPresentation.BuildCompletionStatus(unverified);
                 MessageBox.Query(
                     _app, "Success",
-                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason),
+                    InstallProgressPresentation.BuildCompletionMessage(version, edition, unverified, verificationReason)
+                        + (shadowWarning is null ? "" : $"\n\n{shadowWarning}"),
                     "OK");
                 RequestStop();
             });

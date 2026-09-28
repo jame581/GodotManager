@@ -91,40 +91,29 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
         if (OperatingSystem.IsWindows())
         {
             AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
-            WarnIfShadowedByGlobalShim(_paths, install.Scope);
         }
+
+        WarnIfShadowedByGlobalShim(_paths, install.Scope);
 
         return 0;
     }
 
     /// <summary>
-    /// Reports a leftover machine-wide shim that will outrank this activation.
-    /// Rendered here rather than in EnvironmentService because the TUI runs the same
-    /// service in-process under Terminal.Gui, where an unconditional AnsiConsole
-    /// write would paint over a screen it does not own.
+    /// Reports a machine-wide shim that will outrank this activation: on Windows one
+    /// on the machine PATH, on Linux one an unprivileged process could not delete.
+    /// The check itself is <see cref="ShimShadowing.GetWarning"/>, shared with the
+    /// TUI; only the rendering lives here, because the TUI runs the same activation
+    /// in-process under Terminal.Gui, where an AnsiConsole write would paint over a
+    /// screen it does not own.
     /// </summary>
     internal static void WarnIfShadowedByGlobalShim(AppPaths paths, InstallScope activatedScope)
     {
-        // Best-effort throughout: this runs *after* MarkActive and SaveAsync have
-        // committed, and reading the machine PATH can throw SecurityException on a
-        // locked-down host. Letting that escape would report a failure for an
-        // activation that already succeeded and was persisted.
-        try
+        // Best-effort (inside GetWarning): this runs *after* MarkActive and SaveAsync
+        // have committed, so a probing failure must not report a failed activation.
+        var warning = ShimShadowing.GetWarning(paths, activatedScope, DiagnosticContext.WarnAlways);
+        if (warning is not null)
         {
-            var globalShim = Path.Combine(paths.GetShimDirectory(InstallScope.Global), "godot.cmd");
-
-            if (ShimShadowing.WouldShadow(
-                    activatedScope,
-                    File.Exists(globalShim),
-                    paths.GetShimDirectory(InstallScope.Global),
-                    Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)))
-            {
-                AnsiConsole.MarkupLineInterpolated($"[yellow]{ShimShadowing.BuildWarning(globalShim)}[/]");
-            }
-        }
-        catch (Exception ex)
-        {
-            DiagnosticContext.WarnAlways($"Could not check for a shadowing global shim: {ex.Message}");
+            AnsiConsole.MarkupLineInterpolated($"[yellow]{warning}[/]");
         }
     }
 

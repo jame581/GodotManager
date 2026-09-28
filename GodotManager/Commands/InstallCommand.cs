@@ -68,7 +68,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             // Activation elevation is decided the same way `activate` decides it, before anything
             // is written: a user-scope install over an active global one must clear machine-wide
             // state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
-            // the first machine-wide write").
+            // the first machine-wide write"). The split is Windows-only (IsRequired is false
+            // elsewhere). On Linux the activation runs in-process, RemoveUnix cannot delete the
+            // global shim without root and only warns under --verbose, so the surviving shim
+            // is reported after the install instead -- see WarnIfShadowedByGlobalShim below.
             var activateSeparately = false;
             if (request.Activate && !settings.DryRun)
             {
@@ -124,6 +127,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
 
+            // A failed elevated activation still falls through to the checksum warning
+            // below: the install itself happened, and whether its archive was verified is
+            // no less true for the activation having failed.
+            var activationFailed = false;
             if (activateSeparately)
             {
                 AnsiConsole.MarkupLine("[yellow]Administrator access is required to switch away from the active global install. A UAC prompt will appear.[/]");
@@ -136,10 +143,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                         AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
                     }
 
-                    return -1;
+                    activationFailed = true;
                 }
             }
-            else if (settings.Activate && OperatingSystem.IsWindows())
+            else if (settings.Activate)
             {
                 ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
             }
@@ -161,7 +168,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                     $"upstream: {verificationReason}");
             }
 
-            return 0;
+            return activationFailed ? -1 : 0;
         }
         catch (GodmanException ex)
         {

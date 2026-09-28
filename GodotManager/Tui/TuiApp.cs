@@ -435,37 +435,12 @@ internal sealed class TuiApp
 
     /// <summary>
     /// Null when nothing shadows the activation, otherwise the message to append to
-    /// the confirmation dialog.
+    /// the confirmation dialog. The check is <see cref="ShimShadowing.GetWarning"/>,
+    /// the same one the CLI runs; it is best-effort, so a probing failure shows no
+    /// warning rather than turning a committed activation into an error dialog.
     /// </summary>
-    private string? BuildShimShadowWarning(InstallScope activatedScope)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return null;
-        }
-
-        // Best-effort: this runs after the activation has been committed, and reading
-        // the machine PATH can throw SecurityException on a locked-down host. An
-        // informational warning must not turn a successful activation into an error
-        // dialog.
-        try
-        {
-            var globalShimDir = _paths.GetShimDirectory(InstallScope.Global);
-            var globalShim = Path.Combine(globalShimDir, "godot.cmd");
-
-            return ShimShadowing.WouldShadow(
-                activatedScope,
-                File.Exists(globalShim),
-                globalShimDir,
-                Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
-                ? ShimShadowing.BuildWarning(globalShim)
-                : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private string? BuildShimShadowWarning(InstallScope activatedScope) =>
+        ShimShadowing.GetWarning(_paths, activatedScope);
 
     private async Task DeactivateAsync(IApplication app)
     {

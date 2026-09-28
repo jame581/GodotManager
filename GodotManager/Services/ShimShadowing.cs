@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 
 namespace GodotManager.Services;
@@ -16,6 +17,65 @@ namespace GodotManager.Services;
 /// </remarks>
 internal static class ShimShadowing
 {
+    /// <summary>
+    /// The one shadowing check every front-end runs after a successful in-process
+    /// activation (ActivateCommand, InstallCommand, TuiApp, InstallDialog). Returns
+    /// the message to show, or null when nothing outranks the activation.
+    /// </summary>
+    /// <remarks>
+    /// Returns text rather than printing because the TUI calls it while Terminal.Gui
+    /// owns the screen. Best-effort: it runs after the activation has been committed,
+    /// so any probing failure yields no warning instead of turning a successful
+    /// activation into an error; <paramref name="onProbeFailure"/> lets the CLI keep
+    /// reporting that the check itself failed.
+    /// </remarks>
+    public static string? GetWarning(
+        AppPaths paths, InstallScope activatedScope, Action<string>? onProbeFailure = null)
+    {
+        try
+        {
+            var globalShimDir = paths.GetShimDirectory(InstallScope.Global);
+
+            if (OperatingSystem.IsWindows())
+            {
+                var globalCmd = Path.Combine(globalShimDir, "godot.cmd");
+                return WouldShadow(
+                        activatedScope,
+                        File.Exists(globalCmd),
+                        globalShimDir,
+                        Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine))
+                    ? BuildWarning(globalCmd)
+                    : null;
+            }
+
+            // Linux: EnvironmentService.RemoveUnix cannot delete the global shim from an
+            // unprivileged process (EACCES), and the same is true of a dead leftover from
+            // an earlier global activation. It is not checked against PATH: /usr/local/bin
+            // precedes ~/.local/bin in the default PATH and is always in sudo's
+            // secure_path, so a surviving global shim wins almost everywhere.
+            var globalShim = Path.Combine(globalShimDir, "godot");
+            return activatedScope == InstallScope.User && File.Exists(globalShim)
+                ? BuildUnixWarning(globalShim)
+                : null;
+        }
+        catch (Exception ex)
+        {
+            onProbeFailure?.Invoke($"Could not check for a shadowing global shim: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Linux counterpart of <see cref="BuildWarning"/>: names the file, why it
+    /// survived, where it wins, and the remedy.
+    /// </summary>
+    public static string BuildUnixWarning(string globalShimFile) =>
+        $"The global shim at {globalShimFile} could not be removed without root. It takes " +
+        "precedence over this user-scope activation wherever /usr/local/bin comes before " +
+        "~/.local/bin on PATH (including under sudo), so `godot` there will keep launching " +
+        $"the previously active install. Remove it with `sudo rm {globalShimFile}`, or re-run " +
+        "the activation with sudo.";
+
     /// <summary>
     /// Pure so it is testable without touching PATH or the filesystem; the caller
     /// supplies the two facts it cannot derive.

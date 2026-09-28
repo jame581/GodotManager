@@ -1,5 +1,8 @@
 using GodotManager.Domain;
 using GodotManager.Services;
+using GodotManager.Tests.Helpers;
+using System;
+using System.IO;
 using Xunit;
 
 namespace GodotManager.Tests;
@@ -72,5 +75,68 @@ public class ShimShadowingTests
 
         Assert.Contains(@"C:\Program Files\godman\bin\godot.cmd", warning);
         Assert.Contains("elevated", warning);
+    }
+
+    // --- GetWarning, Linux branch -------------------------------------------------
+    // The shared helper all four front-ends (CLI activate/install, TUI activate/install
+    // dialog) call. On Linux an unprivileged RemoveUnix cannot delete the global shim
+    // (EACCES), which then outranks the user shim wherever /usr/local/bin comes first.
+
+    private static string CreateGlobalShim(GodmanTestFixture fixture)
+    {
+        var dir = fixture.Paths.GetShimDirectory(InstallScope.Global);
+        Directory.CreateDirectory(dir);
+        var shim = Path.Combine(dir, "godot");
+        File.WriteAllText(shim, "#!/bin/sh\n");
+        return shim;
+    }
+
+    [Fact]
+    public void GetWarning_Linux_UserActivationWithASurvivingGlobalShim_NamesItAndTheRemedy()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        var shim = CreateGlobalShim(fixture);
+
+        var warning = ShimShadowing.GetWarning(fixture.Paths, InstallScope.User);
+
+        Assert.NotNull(warning);
+        Assert.Contains(shim, warning);
+        Assert.Contains($"sudo rm {shim}", warning);
+        Assert.Contains("/usr/local/bin", warning);
+        Assert.Contains("~/.local/bin", warning);
+    }
+
+    [Fact]
+    public void GetWarning_Linux_UserActivationWithNoGlobalShim_IsNull()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Null(ShimShadowing.GetWarning(fixture.Paths, InstallScope.User));
+    }
+
+    [Fact]
+    public void GetWarning_Linux_GlobalActivation_IsNull()
+    {
+        // A global activation just wrote that very shim -- it is the intended winner.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        CreateGlobalShim(fixture);
+
+        Assert.Null(ShimShadowing.GetWarning(fixture.Paths, InstallScope.Global));
+    }
+
+    [Fact]
+    public void GetWarning_Linux_IgnoresAWindowsStyleShimName()
+    {
+        // Only `godot` resolves on Linux; a stray godot.cmd shadows nothing.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        var dir = fixture.Paths.GetShimDirectory(InstallScope.Global);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "godot.cmd"), "");
+
+        Assert.Null(ShimShadowing.GetWarning(fixture.Paths, InstallScope.User));
     }
 }
