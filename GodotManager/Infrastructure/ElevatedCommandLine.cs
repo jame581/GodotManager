@@ -90,8 +90,18 @@ internal static class ElevatedCommandLine
         return $"sudo {variable.Name}={Quote(variable.Value)} {command["sudo ".Length..]}";
     }
 
-    private static string Quote(string path) =>
-        path.IndexOfAny([' ', '\'', '"', '$', '`', '\\', '\t']) >= 0
-            ? "'" + path.Replace("'", "'\\''") + "'"
-            : path;
+    /// <summary>
+    /// Single-quotes anything outside a conservative set of characters no shell treats
+    /// specially, so a printed command survives being pasted: globs, <c>~</c>, <c>#</c>,
+    /// <c>!</c>, braces, redirections and separators included. A single quote inside is
+    /// written as <c>'\''</c>.
+    /// </summary>
+    private static string Quote(string value) =>
+        value.Length > 0 && value.All(IsShellSafe)
+            ? value
+            : "'" + value.Replace("'", "'\\''") + "'";
+
+    private static bool IsShellSafe(char c) =>
+        c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9')
+            or '_' or '.' or '/' or ':' or '=' or '@' or '%' or '+' or ',' or '-';
 }

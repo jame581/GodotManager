@@ -120,4 +120,37 @@ public class ElevatedCommandLineTests
         Environment.SetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT", null);
         Assert.DoesNotContain("GLOBAL_ROOT", ElevatedCommandLine.Render("list"));
     }
+
+    [Theory]
+    [InlineData("/opt/a(b)")]
+    [InlineData("/opt/a;b")]
+    [InlineData("/opt/a&b")]
+    [InlineData("/opt/*")]
+    [InlineData("~/godot")]
+    [InlineData("/opt/a|b")]
+    [InlineData("/opt/a#b")]
+    [InlineData("/opt/a!b")]
+    [InlineData("/opt/[ab]")]
+    [InlineData("/opt/{a,b}")]
+    [InlineData("/opt/a<b>")]
+    public void Quote_AnyShellMetacharacter_IsQuoted(string value)
+    {
+        Assert.Equal(
+            $"sudo GODMAN_GLOBAL_ROOT='{value}' /usr/local/bin/godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", value), "/usr/local/bin/godman", windows: false));
+    }
+
+    [Fact]
+    public void Quote_EscapesASingleQuote_AndLeavesSafeValuesAlone()
+    {
+        Assert.Equal(
+            "sudo GODMAN_GLOBAL_ROOT='/opt/it'\\''s' /usr/local/bin/godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", "/opt/it's"), "/usr/local/bin/godman", windows: false));
+        Assert.Equal(
+            "sudo GODMAN_GLOBAL_ROOT=/opt/godot-4.5_x+y,z@h:1%=2 /usr/local/bin/godman list",
+            ElevatedCommandLine.Render("list", ("GODMAN_GLOBAL_ROOT", "/opt/godot-4.5_x+y,z@h:1%=2"), "/usr/local/bin/godman", windows: false));
+        Assert.Equal(
+            "sudo '/home/j(1)/bin/godman' list",
+            ElevatedCommandLine.Render("list", "/home/j(1)/bin/godman", windows: false));
+    }
 }
