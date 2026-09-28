@@ -77,7 +77,7 @@ internal static class ShimShadowing
     /// </summary>
     public static string BuildUnixWarning(string globalShimFile) =>
         $"The global shim at {globalShimFile} is still present and needs root to remove. It " +
-        "takes precedence over this user-scope activation wherever /usr/local/bin comes " +
+        $"takes precedence over this user-scope activation wherever {Path.GetDirectoryName(globalShimFile)} comes " +
         "before ~/.local/bin on PATH (including under sudo), so `godot` there will keep " +
         $"running whatever that shim points at. Remove it with `sudo rm {globalShimFile}`.";
 

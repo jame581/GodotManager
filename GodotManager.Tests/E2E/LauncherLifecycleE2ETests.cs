@@ -95,8 +95,11 @@ public class LauncherLifecycleE2ETests : IDisposable
         Assert.True(_fixture.Launcher.Exists(entry));
     }
 
+    // Pins the end state only: user -> user overwrites the same shim file, so this passes
+    // without the previous-activation cleanup. The real guard is
+    // InstallerServiceIntegrationTests.InstallAsync_WithActivate_RemovesThePreviouslyActiveInstallsShim.
     [Fact]
-    public async Task InstallWithActivate_OverAnActiveInstall_CleansUpThePreviousShim()
+    public async Task InstallWithActivate_OverAnActiveInstall_EndsWithTheShimOnTheNewInstall()
     {
         if (OperatingSystem.IsWindows()) return; // Unix shim content is what we can inspect here
         var first = await InstallAsync("4.5.1", "--activate");

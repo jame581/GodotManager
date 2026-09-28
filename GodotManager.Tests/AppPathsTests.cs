@@ -10,9 +10,20 @@ namespace GodotManager.Tests;
 
 public class AppPathsTests
 {
+    /// <summary>
+    /// The tests that construct <c>new AppPaths()</c> with no overrides run the real
+    /// migrations, which include moving <c>/usr/local/bin/godman</c> to
+    /// <c>/usr/local/lib/godman</c> and rewriting <c>/usr/local/bin/godot</c>. Unprivileged
+    /// those moves fail harmlessly; as root they would migrate the developer's real machine.
+    /// Never run the suite as root -- but if it is, these skip rather than do that.
+    /// </summary>
+    private static bool RunsMachineWideMigrations() => Environment.IsPrivilegedProcess;
+
     [Fact]
     public void Linux_ScopePaths_KeepShimsInBinAndInstallsOutOfIt()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (OperatingSystem.IsWindows())
         {
             return; // Skip on Windows; paths differ.
@@ -35,6 +46,8 @@ public class AppPathsTests
     [Fact]
     public void Windows_ScopePaths_AreInAppDataAndProgramFiles()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (!OperatingSystem.IsWindows())
         {
             return; // Skip on Linux; paths differ.
@@ -53,6 +66,8 @@ public class AppPathsTests
     [Fact]
     public void Linux_GlobalRegistryFile_SitsBesideGlobalInstallRoot()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (OperatingSystem.IsWindows())
         {
             return;
@@ -69,6 +84,8 @@ public class AppPathsTests
     [Fact]
     public void Windows_GlobalRegistryFile_SitsInGlobalRootParent()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -99,6 +116,8 @@ public class AppPathsTests
     [Fact]
     public void Linux_MigratesOldInstallRoot_WhenDirectoryExists()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (OperatingSystem.IsWindows())
         {
             return;
@@ -114,7 +133,13 @@ public class AppPathsTests
             return;
         }
 
-        // Clean up any previous test state
+        // This runs against the real home directory. The new root is where a developer's
+        // real user installs live, so never delete it when it holds anything -- skip instead.
+        if (Directory.Exists(newInstallRoot) && Directory.EnumerateFileSystemEntries(newInstallRoot).Any())
+        {
+            return;
+        }
+
         if (Directory.Exists(newInstallRoot))
             Directory.Delete(newInstallRoot, true);
 
@@ -263,6 +288,8 @@ public class AppPathsTests
     [Fact]
     public void Linux_GetLegacyPaths_ReturnsExpectedPaths()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (OperatingSystem.IsWindows())
         {
             return;
@@ -282,6 +309,8 @@ public class AppPathsTests
     [Fact]
     public void Windows_GetLegacyPaths_ReturnsExpectedPaths()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -299,6 +328,8 @@ public class AppPathsTests
     [Fact]
     public void Linux_DoesNotMigrateOldInstallRoot_WhenFileExists()
     {
+        if (RunsMachineWideMigrations()) return;
+
         if (OperatingSystem.IsWindows())
         {
             return;

@@ -103,8 +103,10 @@ public class ShimShadowingTests
         Assert.NotNull(warning);
         Assert.Contains(shim, warning);
         Assert.Contains($"sudo rm {shim}", warning);
-        Assert.Contains("/usr/local/bin", warning);
-        Assert.Contains("~/.local/bin", warning);
+        // The actual global shim directory, not a hardcoded /usr/local/bin: under a
+        // GODMAN_GLOBAL_ROOT prefix (as here) that would name the wrong directory.
+        Assert.Contains($"wherever {Path.GetDirectoryName(shim)} comes before ~/.local/bin", warning);
+        Assert.DoesNotContain("/usr/local/bin", warning);
     }
 
     [Fact]

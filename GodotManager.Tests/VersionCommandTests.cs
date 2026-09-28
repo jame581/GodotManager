@@ -25,7 +25,19 @@ public class VersionCommandTests : IDisposable
             Assert.Contains("godman", result.Output);
             Assert.Contains(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, result.Output);
             Assert.Contains($"godman {GodotManager.Commands.VersionCommand.GodmanVersion}", result.Output);
-            Assert.StartsWith("1.4", GodotManager.Commands.VersionCommand.GodmanVersion);
+
+            // Not pinned to a release number, so it survives version bumps. What it guards
+            // is the source: the entry assembly under the test host is the test runner, so
+            // GetEntryAssembly() would print the runner's version and still look plausible.
+            // Compared against the godman assembly's version read independently, from the
+            // file on disk rather than through the loaded type the command itself uses.
+            var version = GodotManager.Commands.VersionCommand.GodmanVersion;
+            Assert.Matches(@"^\d+\.\d+\.\d+$", version);
+            var godmanAssemblyFile = typeof(GodotManager.Commands.VersionCommand).Assembly.Location;
+            Assert.Equal(
+                System.Reflection.AssemblyName.GetAssemblyName(godmanAssemblyFile).Version!.ToString(3),
+                version);
+            Assert.NotSame(typeof(GodotManager.Commands.VersionCommand).Assembly, System.Reflection.Assembly.GetEntryAssembly());
         }
         finally
         {

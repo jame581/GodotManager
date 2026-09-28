@@ -162,12 +162,10 @@ public class DoctorCommandTests : IDisposable
     [Fact]
     public async Task Doctor_WithActiveInstallDirectoryMissing_SaysSo()
     {
-        // The shim hard-codes an absolute path into the install directory, so an
-        // install root that moved or vanished leaves `godot` on PATH resolving to
-        // nothing. RegistryService rebases entries onto a migration that completed;
-        // a migration that could not run (the global root needs privileges to move)
-        // is what surfaces here, and doctor is the only thing that tells the user
-        // the shim needs rewriting.
+        // An active entry whose directory has vanished (deleted by hand). This is not
+        // the migration check: a blocked migration leaves the directory -- and the shim
+        // -- where they were, and a completed one gets its entry rebased onto the new
+        // root. The shim-target check covers a moved root; see GlobalRootUpgradeE2ETests.
         var registry = new InstallRegistry();
         var entry = InstallEntryFactory.Create(
             version: "4.5.1", path: Path.Combine(_fixture.TempRoot, "moved-away"));
