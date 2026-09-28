@@ -34,6 +34,13 @@ internal static class ElevatedCommandLine
     public static string Render(string arguments) =>
         Render(arguments, SudoEnvironment(), Environment.ProcessPath, OperatingSystem.IsWindows());
 
+    /// <summary>
+    /// <see cref="Render(string)"/> for a command given as separate arguments, each quoted
+    /// for the shell the way the path is, so the printed command survives being pasted.
+    /// </summary>
+    public static string RenderArguments(IEnumerable<string> arguments) =>
+        Render(string.Join(' ', arguments.Select(Quote)));
+
     private static (string Name, string Value)? SudoEnvironment() =>
         Config.AppPaths.ReadGlobalRootOverride() is { } variable && Path.IsPathRooted(variable.Value)
             ? variable
