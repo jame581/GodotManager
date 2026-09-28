@@ -14,6 +14,14 @@ internal sealed class AppPaths
     private const string LegacyLinuxFolderName = "godot-manager";
 
     /// <summary>
+    /// Internal override for where launcher entries go, used by the test fixture. Launcher
+    /// entries deliberately do NOT follow GODMAN_HOME / GODMAN_GLOBAL_ROOT: an entry is only
+    /// useful where the desktop looks for it, and those user-facing overrides would move it
+    /// somewhere no launcher reads.
+    /// </summary>
+    private const string EnvLauncherRoot = "GODMAN_LAUNCHER_ROOT";
+
+    /// <summary>
     /// Default prefix for machine-wide state on Linux. The shim lives in
     /// <c>&lt;prefix&gt;/bin</c> and installs in <c>&lt;prefix&gt;/lib/godman</c>;
     /// <c>GODMAN_GLOBAL_ROOT</c> overrides the prefix, matching how the same
@@ -26,6 +34,7 @@ internal sealed class AppPaths
     public string GlobalRegistryFile { get; }
     public string EnvScriptPath { get; }
     public string DownloadCacheDirectory { get; }
+    public string DesktopDirectory { get; }
     public string EnvVarName => "GODOT_HOME";
 
     private readonly string _userInstallRoot;
@@ -33,6 +42,10 @@ internal sealed class AppPaths
     private readonly string _userShimDirectory;
     private readonly string _globalShimDirectory;
     private readonly string _globalConfigRoot;
+    private readonly string _userLauncherDirectory;
+    private readonly string _globalLauncherDirectory;
+    private readonly string? _userLauncherIconPath;
+    private readonly string? _globalLauncherIconPath;
     private readonly IReadOnlyList<(string OldRoot, string NewRoot)> _installRootRelocations;
     private readonly IReadOnlyList<string> _legacyGlobalRegistryFiles;
     private readonly IReadOnlyList<(string Path, string Description)> _legacyPaths;
@@ -169,6 +182,9 @@ internal sealed class AppPaths
         EnvScriptPath = System.IO.Path.Combine(ConfigDirectory, "env.sh");
         DownloadCacheDirectory = System.IO.Path.Combine(ConfigDirectory, "downloads");
 
+        (_userLauncherDirectory, _globalLauncherDirectory, _userLauncherIconPath, _globalLauncherIconPath, var desktop) = ResolveLauncherLocations();
+        DesktopDirectory = desktop;
+
         EnsureDirectories();
     }
 
@@ -180,6 +196,23 @@ internal sealed class AppPaths
     public string GetShimDirectory(InstallScope scope)
     {
         return scope == InstallScope.Global ? _globalShimDirectory : _userShimDirectory;
+    }
+
+    /// <summary>
+    /// Where godman writes each install's launcher entry: an XDG <c>applications/</c>
+    /// directory on Linux, godman's own Start Menu folder on Windows. Not created here --
+    /// <see cref="Services.LauncherService"/> creates it on first write, since the global
+    /// one needs privileges most runs do not have.
+    /// </summary>
+    public string GetLauncherDirectory(InstallScope scope)
+    {
+        return scope == InstallScope.Global ? _globalLauncherDirectory : _userLauncherDirectory;
+    }
+
+    /// <summary>The icon the Linux <c>.desktop</c> entries point at; null on Windows.</summary>
+    public string? GetLauncherIconPath(InstallScope scope)
+    {
+        return scope == InstallScope.Global ? _globalLauncherIconPath : _userLauncherIconPath;
     }
 
     /// <summary>
@@ -257,6 +290,56 @@ internal sealed class AppPaths
     {
         return _legacyGlobalRegistryFiles;
     }
+
+    private static (string User, string Global, string? UserIcon, string? GlobalIcon, string Desktop) ResolveLauncherLocations()
+    {
+        var root = Environment.GetEnvironmentVariable(EnvLauncherRoot);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var userStartMenu = root is null
+                ? Environment.GetFolderPath(Environment.SpecialFolder.StartMenu)
+                : System.IO.Path.Combine(root, "user");
+            var globalStartMenu = root is null
+                ? Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
+                : System.IO.Path.Combine(root, "global");
+            var desktop = root is null
+                ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+                : System.IO.Path.Combine(root, "Desktop");
+
+            // .lnk files take their icon from the executable, so no icon path on Windows.
+            return (System.IO.Path.Combine(userStartMenu, "Programs", WindowsFolderName),
+                    System.IO.Path.Combine(globalStartMenu, "Programs", WindowsFolderName),
+                    null, null, desktop);
+        }
+
+        string userDataDir;
+        string globalDataDir;
+        if (root is not null)
+        {
+            userDataDir = System.IO.Path.Combine(root, "user");
+            globalDataDir = System.IO.Path.Combine(root, "global");
+        }
+        else
+        {
+            var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+            userDataDir = !string.IsNullOrEmpty(xdgDataHome) && System.IO.Path.IsPathRooted(xdgDataHome)
+                ? xdgDataHome
+                : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+            // On the default XDG_DATA_DIRS (/usr/local/share:/usr/share) regardless of
+            // GODMAN_GLOBAL_ROOT -- a custom install prefix is not a place GNOME looks.
+            globalDataDir = "/usr/local/share";
+        }
+
+        return (System.IO.Path.Combine(userDataDir, "applications"),
+                System.IO.Path.Combine(globalDataDir, "applications"),
+                LauncherIconPath(userDataDir),
+                LauncherIconPath(globalDataDir),
+                System.IO.Path.Combine(root ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"));
+    }
+
+    private static string LauncherIconPath(string dataDir) =>
+        System.IO.Path.Combine(dataDir, "icons", "hicolor", "scalable", "apps", "godman-godot.svg");
 
     private void EnsureDirectories()
     {

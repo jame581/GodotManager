@@ -8,7 +8,7 @@ namespace GodotManager.Tests.Helpers;
 /// <summary>
 /// Shared test fixture that creates an isolated temp directory, overrides env vars,
 /// and constructs AppPaths/RegistryService/EnvironmentService for testing.
-/// Properly saves and restores all 4 env vars on Dispose.
+/// Properly saves and restores all 5 env vars on Dispose.
 /// </summary>
 internal sealed class GodmanTestFixture : IDisposable
 {
@@ -31,7 +31,8 @@ internal sealed class GodmanTestFixture : IDisposable
             ("GODMAN_HOME", System.Environment.GetEnvironmentVariable("GODMAN_HOME")),
             ("GODMAN_GLOBAL_ROOT", System.Environment.GetEnvironmentVariable("GODMAN_GLOBAL_ROOT")),
             ("GODOT_MANAGER_HOME", System.Environment.GetEnvironmentVariable("GODOT_MANAGER_HOME")),
-            ("GODOT_MANAGER_GLOBAL_ROOT", System.Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT"))
+            ("GODOT_MANAGER_GLOBAL_ROOT", System.Environment.GetEnvironmentVariable("GODOT_MANAGER_GLOBAL_ROOT")),
+            ("GODMAN_LAUNCHER_ROOT", System.Environment.GetEnvironmentVariable("GODMAN_LAUNCHER_ROOT"))
         };
 
         // AppPaths only redirects on-disk locations. EnvironmentService.ApplyWindows
@@ -45,6 +46,10 @@ internal sealed class GodmanTestFixture : IDisposable
 
         System.Environment.SetEnvironmentVariable("GODMAN_HOME", TempRoot);
         System.Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", Path.Combine(TempRoot, "global"));
+        // Launcher entries resolve to the real desktop locations regardless of GODMAN_HOME,
+        // so without this every install/activate test would write into the developer's real
+        // app menu (Linux) or Start Menu (Windows).
+        System.Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", Path.Combine(TempRoot, "launcher"));
 
         Paths = new AppPaths();
         Registry = new RegistryService(Paths);

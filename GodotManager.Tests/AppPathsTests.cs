@@ -347,4 +347,74 @@ public class AppPathsTests
             fixture.Paths.DownloadCacheDirectory);
         Assert.True(Directory.Exists(fixture.Paths.DownloadCacheDirectory));
     }
+
+    [Fact]
+    public void LauncherPaths_UnderTheFixture_StayInTempRootEvenWithXdgDataHome()
+    {
+        var savedXdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(Path.GetTempPath(), "must-not-be-used-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            using var fixture = new GodmanTestFixture();
+
+            foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
+            {
+                Assert.StartsWith(fixture.TempRoot, fixture.Paths.GetLauncherDirectory(scope));
+                var icon = fixture.Paths.GetLauncherIconPath(scope);
+                if (icon is not null)
+                {
+                    Assert.StartsWith(fixture.TempRoot, icon);
+                }
+            }
+
+            Assert.StartsWith(fixture.TempRoot, fixture.Paths.DesktopDirectory);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", savedXdg);
+        }
+    }
+
+    [Fact]
+    public void LauncherPaths_IgnoreGodmanHomeAndGlobalRoot()
+    {
+        // GODMAN_HOME / GODMAN_GLOBAL_ROOT are user-facing overrides for where godman keeps
+        // its own files. A launcher entry is only useful where the desktop looks for it, so
+        // those overrides must not move it. Only GODMAN_LAUNCHER_ROOT does.
+        using var fixture = new GodmanTestFixture();
+        var saved = Environment.GetEnvironmentVariable("GODMAN_LAUNCHER_ROOT");
+        Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", null);
+        try
+        {
+            var paths = new AppPaths();   // GODMAN_HOME / GODMAN_GLOBAL_ROOT still point into TempRoot
+
+            Assert.DoesNotContain(fixture.TempRoot, paths.GetLauncherDirectory(InstallScope.User));
+            Assert.DoesNotContain(fixture.TempRoot, paths.GetLauncherDirectory(InstallScope.Global));
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Equal("/usr/local/share/applications", paths.GetLauncherDirectory(InstallScope.Global));
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GODMAN_LAUNCHER_ROOT", saved);
+        }
+    }
+
+    [Fact]
+    public void Linux_LauncherPaths_UnderLauncherRoot_FollowXdgLayout()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var fixture = new GodmanTestFixture();
+        var root = Path.Combine(fixture.TempRoot, "launcher");
+
+        Assert.Equal(Path.Combine(root, "user", "applications"), fixture.Paths.GetLauncherDirectory(InstallScope.User));
+        Assert.Equal(Path.Combine(root, "global", "applications"), fixture.Paths.GetLauncherDirectory(InstallScope.Global));
+        Assert.Equal(Path.Combine(root, "global", "icons", "hicolor", "scalable", "apps", "godman-godot.svg"),
+            fixture.Paths.GetLauncherIconPath(InstallScope.Global));
+    }
 }
