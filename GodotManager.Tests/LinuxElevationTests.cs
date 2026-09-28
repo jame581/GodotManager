@@ -170,4 +170,31 @@ public class LinuxElevationTests
         var other = new GodmanException("x", "try --force");
         Assert.Same(other, other.WithArguments(["remove"]));
     }
+
+    [Fact]
+    public void CheckClean_Hint_KeepsTheCommandAloneOnItsLine_AndSaysWhatSudoCleans()
+    {
+        // The addendum used to run straight on after the command ("… clean --yes That
+        // cleans …"), so copying to the end of the line pasted extra words into the shell.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        using var fixture = new GodmanTestFixture();
+        var root = fixture.Paths.GetInstallRoot(InstallScope.Global);
+        Directory.CreateDirectory(root);
+        File.SetUnixFileMode(root, (UnixFileMode)Convert.ToInt32("555", 8));
+        try
+        {
+            var denied = LinuxElevation.CheckClean(fixture.Paths, fixture.Launcher, ["clean", "--yes"]);
+
+            Assert.NotNull(denied);
+            var lines = denied!.Hint!.Split('\n');
+            Assert.Equal(2, lines.Length);
+            Assert.EndsWith(" clean --yes", lines[0]);
+            Assert.Contains("root's own user-scope godman files", lines[1]);
+            Assert.Contains("without sudo", lines[1]);
+        }
+        finally
+        {
+            File.SetUnixFileMode(root, (UnixFileMode)Convert.ToInt32("755", 8));
+        }
+    }
 }

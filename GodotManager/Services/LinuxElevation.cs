@@ -118,12 +118,13 @@ internal static class LinuxElevation
         }
 
         // sudo resets HOME, so the elevated clean removes root's user-scope files, not this
-        // user's: say so, or the user's own installs and config silently survive.
+        // user's: say so, or the user's own installs and config silently survive. On its own
+        // line, so copying the command to the end of its line copies only the command.
         return Denied(
             blocked!,
             GodmanException.ElevationHintFor(arguments)
-                + " That cleans the global files only (sudo uses root's home), so afterwards run "
-                + "`godman clean` again without sudo to remove your own user-scope files.");
+                + "\nUnder sudo, clean also removes root's own user-scope godman files, not yours; "
+                + "then run `godman clean` without sudo for yours.");
     }
 
     /// <summary>

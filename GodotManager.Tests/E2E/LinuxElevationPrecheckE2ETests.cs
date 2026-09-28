@@ -209,6 +209,31 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Deactivate_ActiveUser_WithALegitimateGlobalShim_DoesNotClaimItCouldNotBeRemoved()
+    {
+        // GetDeactivateWarning's scope guard: deactivating a *user* install never tries to
+        // delete the global shim, so one that exists (another, machine-wide activation) must
+        // not be reported as "could not be removed" with a `sudo rm` remedy.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        await SeedGlobalEntryAsync();
+        Directory.CreateDirectory(GlobalShimDir);
+        var shim = Path.Combine(GlobalShimDir, "godot");
+        File.WriteAllText(shim, "#!/bin/sh\n");
+        var user = await AddUserEntryAsync();
+        var registry = await _fixture.Registry.LoadAsync();
+        registry.MarkActive(user.Id);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var (exitCode, output) = await RunWithLockedAsync([GlobalRoot, GlobalShimDir], "deactivate");
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Deactivated", output);
+        Assert.True(File.Exists(shim));
+        Assert.DoesNotContain("could not be removed", output);
+        Assert.DoesNotContain("sudo rm", output);
+    }
+
+    [Fact]
     public async Task Install_UserScope_OverActiveGlobal_Unwritable_Installs()
     {
         // K4: reaches InstallCommand's pre-check with a global install active and the global

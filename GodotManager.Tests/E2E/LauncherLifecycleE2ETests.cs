@@ -185,21 +185,24 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task GlobalInstallWithActivate_WhenRegistrySaveFails_WritesNoLauncherEntry()
+    public async Task InstallWithActivate_WhenRegistrySaveFails_WritesNoLauncherEntry()
     {
         // Activation inside InstallAsync used to write the launcher entry before the
         // registry save, so a failed save left an app-menu entry for an install the
         // registry never recorded -- on every `install --activate` and TUI install.
+        // The *user* registry file is locked, not the global one: LinuxElevation.Check
+        // probes the global file up front, so locking that stops the install before any
+        // launcher write and would no longer pin the save-then-launcher ordering.
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
-        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.GlobalRegistryFile)!);
-        File.WriteAllText(_fixture.Paths.GlobalRegistryFile, "{\"installs\":[]}");
-        File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead);
-        var launcherDir = _fixture.Paths.GetLauncherDirectory(InstallScope.Global);
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.RegistryFile)!);
+        File.WriteAllText(_fixture.Paths.RegistryFile, "{\"installs\":[]}");
+        File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead);
+        var launcherDir = _fixture.Paths.GetLauncherDirectory(InstallScope.User);
         var archive = MockArchiveFactory.CreateMockGodotArchive();
         try
         {
             var result = await CliTestHarness.Create(_fixture).RunAsync(
-                ["install", "--version", "4.5.1", "--archive", archive, "--platform", Platform, "--scope", "Global", "--activate"]);
+                ["install", "--version", "4.5.1", "--archive", archive, "--platform", Platform, "--activate"]);
 
             Assert.NotEqual(0, result.ExitCode);
             Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
@@ -209,7 +212,7 @@ public class LauncherLifecycleE2ETests : IDisposable
         }
         finally
         {
-            File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             File.Delete(archive);
         }
     }
@@ -241,14 +244,17 @@ public class LauncherLifecycleE2ETests : IDisposable
     [Fact]
     public async Task Remove_WhenRegistrySaveFails_KeepsLauncherEntry()
     {
+        // A user-scope entry with the *user* registry file locked: the global file would be
+        // caught by LinuxElevation.Check before the launcher is touched, so it would no
+        // longer pin that the launcher entry is deleted only after the save succeeds.
         if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
-        var installPath = Path.Combine(_fixture.TempRoot, "global-install");
+        var installPath = Path.Combine(_fixture.TempRoot, "user-install");
         Directory.CreateDirectory(installPath);
-        var entry = InstallEntryFactory.Create(scope: InstallScope.Global, path: installPath);
+        var entry = InstallEntryFactory.Create(scope: InstallScope.User, path: installPath);
         entry.LauncherEntry = true;
         await _fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
         _fixture.Launcher.Create(entry);
-        File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead);
+        File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead);
 
         try
         {
@@ -259,7 +265,7 @@ public class LauncherLifecycleE2ETests : IDisposable
         }
         finally
         {
-            File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.SetUnixFileMode(_fixture.Paths.RegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
     }
 }
