@@ -113,6 +113,17 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             AnsiConsole.MarkupLine("[grey]  Run the activate command again to rewrite the shim, or remove the entry.[/]");
         }
 
+        // One entry per install is created on install; pre-1.4.0 installs never had one,
+        // and a user may have deleted it. An explicit --no-shortcut is not a problem.
+        var launcher = new LauncherService(_paths, _diagnostics);
+        foreach (var install in registry.Installs.Where(x => x.LauncherEntry != false && !launcher.Exists(x)))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[yellow]Launcher entry missing[/] for {install.Version} ({install.Edition}, {install.Scope}) [grey]{install.Id}[/]");
+            // Honest about the side effects: activate is the only command that writes a missing
+            // entry, and it also switches the active version (and needs sudo for a global one).
+            AnsiConsole.MarkupLineInterpolated($"[grey]  Run: godman activate {install.Id} -- this also makes it the active version{(install.Scope == InstallScope.Global && !OperatingSystem.IsWindows() ? " (run with sudo)" : "")}. Or reinstall it with --force.[/]");
+        }
+
         // Check if shim directory is in PATH (Windows only)
         if (OperatingSystem.IsWindows())
         {

@@ -19,6 +19,53 @@ public class DoctorCommandTests : IDisposable
         _fixture = new GodmanTestFixture();
     }
 
+    private static async Task<string> RunDoctorAsync(GodmanTestFixture fixture)
+    {
+        var app = CliTestHarness.Create(fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            var result = await app.RunAsync(["doctor"]);
+            Assert.Equal(0, result.ExitCode);
+            return result.Output;
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public async Task Doctor_ReportsInstallMissingItsLauncherEntry()
+    {
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "i");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);   // LauncherEntry null: legacy, wanted
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.Contains("Launcher entry missing", output);
+        Assert.Contains(entry.Id.ToString(), output);
+    }
+
+    [Fact]
+    public async Task Doctor_DoesNotReportAnOptedOutInstall()
+    {
+        using var fixture = new GodmanTestFixture();
+        var path = Path.Combine(fixture.TempRoot, "i");
+        Directory.CreateDirectory(path);
+        var entry = InstallEntryFactory.Create(version: "4.5.1", path: path);
+        entry.LauncherEntry = false;
+        await fixture.Registry.SaveAsync(new InstallRegistry { Installs = [entry] });
+
+        var output = await RunDoctorAsync(fixture);
+
+        Assert.DoesNotContain("Launcher entry missing", output);
+    }
+
     [Fact]
     public async Task ExecuteAsync_WithNoInstalls_ReturnsZero()
     {

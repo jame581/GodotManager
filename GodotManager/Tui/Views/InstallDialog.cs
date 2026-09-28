@@ -20,6 +20,7 @@ internal sealed class InstallDialog : Dialog
     private readonly TextField _versionField;
     private readonly OptionSelector _editionSelector;
     private readonly OptionSelector _scopeSelector;
+    private readonly CheckBox _launcherCheckBox;
     private readonly ProgressBar _progressBar;
     private readonly Label _statusLabel;
     private readonly Button _installButton;
@@ -78,9 +79,16 @@ internal sealed class InstallDialog : Dialog
             Values = [0, 1]
         };
 
+        _launcherCheckBox = new CheckBox
+        {
+            X = 14, Y = 7,
+            Text = "Add to application launcher",
+            Value = CheckState.Checked
+        };
+
         _progressBar = new ProgressBar
         {
-            X = 1, Y = 8,
+            X = 1, Y = 9,
             Width = Dim.Fill() - 2,
             Height = 1,
             Fraction = 0f,
@@ -89,7 +97,7 @@ internal sealed class InstallDialog : Dialog
 
         _statusLabel = new Label
         {
-            X = 1, Y = 9,
+            X = 1, Y = 10,
             Width = Dim.Fill() - 2,
             Text = "",
             Visible = false
@@ -128,7 +136,7 @@ internal sealed class InstallDialog : Dialog
         };
 
         Add(versionLabel, _versionField, editionLabel, _editionSelector,
-            scopeLabel, _scopeSelector, _progressBar, _statusLabel);
+            scopeLabel, _scopeSelector, _launcherCheckBox, _progressBar, _statusLabel);
 
         AddButton(_installButton);
         AddButton(_cancelButton);
@@ -173,7 +181,8 @@ internal sealed class InstallDialog : Dialog
             version, edition, platform, scope,
             uri, null, null,
             Activate: true, Force: false,
-            Checksums: new ChecksumSource(version));
+            Checksums: new ChecksumSource(version),
+            CreateLauncherEntry: _launcherCheckBox.Value == CheckState.Checked);
 
         var verificationStatus = ChecksumStatus.NotApplicable;
         string? verificationReason = null;
