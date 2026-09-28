@@ -707,6 +707,81 @@ public class AppPathsTests
             plan);
     }
 
+    // --- Empty or relative GODMAN_GLOBAL_ROOT (review 3 follow-up, H1) ---
+
+    [Fact]
+    public void ResolveOverride_TreatsAnEmptyValueAsUnset()
+    {
+        // `export GODMAN_GLOBAL_ROOT=` must mean the default prefix, not a prefix of "".
+        Assert.Null(AppPaths.ResolveOverride("", null));
+        Assert.Null(AppPaths.ResolveOverride(null, ""));
+        Assert.Equal("/legacy", AppPaths.ResolveOverride("", "/legacy"));
+        Assert.Equal("/p", AppPaths.ResolveOverride("/p", "/legacy"));
+    }
+
+    [Fact]
+    public void MigrationGates_ARelativeGlobalPrefix_NeverMigratesGlobal()
+    {
+        // A relative prefix resolves against whatever directory godman happens to run in.
+        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, "rel", null));
+        Assert.Equal((true, false), AppPaths.MigrationGates(null, null, null, "rel/prefix"));
+        // Empty is unset, so the default prefix migrates as usual.
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, "", null));
+        Assert.Equal((true, true), AppPaths.MigrationGates(null, null, "", ""));
+    }
+
+    [Fact]
+    public void ARelativeGlobalPrefix_NeitherMovesNorCreatesAnythingUnderTheWorkingDirectory()
+    {
+        // Reviewer's repro: an unprivileged `godman list` run from a directory containing
+        // bin/godman/ renamed it to ./lib/godman/. Runs in TempRoot so a regression stays
+        // there.
+        if (OperatingSystem.IsWindows()) return; // Linux layout
+        using var fixture = new GodmanTestFixture();
+        var cwd = Path.Combine(fixture.TempRoot, "cwd");
+        var stray = Path.Combine(cwd, "rel", "bin", "godman", "4.5.1");
+        Directory.CreateDirectory(stray);
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(cwd);
+            Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", "rel");
+
+            var paths = new AppPaths();
+
+            Assert.Equal(Path.Combine("rel", "lib", "godman"), paths.GetInstallRoot(InstallScope.Global)); // resolved as before
+            Assert.True(Directory.Exists(stray), "nothing under a relative prefix may be moved");
+            Assert.False(Directory.Exists(Path.Combine(cwd, "rel", "lib")), "nothing under a relative prefix may be created");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
+    }
+
+    [Fact]
+    public void ARelativeGlobalPrefix_CreatesNoGlobalDirectories()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture();
+        var cwd = Path.Combine(fixture.TempRoot, "cwd-empty");
+        Directory.CreateDirectory(cwd);
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(cwd);
+            Environment.SetEnvironmentVariable("GODMAN_GLOBAL_ROOT", "rel");
+
+            _ = new AppPaths();
+
+            Assert.Empty(Directory.EnumerateFileSystemEntries(cwd));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
+    }
+
     // --- The env.sh the global shim sources (review 3, item M3) ---
 
     [Fact]

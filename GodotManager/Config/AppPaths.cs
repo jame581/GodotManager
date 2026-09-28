@@ -53,6 +53,12 @@ internal sealed class AppPaths
     /// </summary>
     private readonly bool _skipGlobalDirectories;
 
+    /// <summary>
+    /// False for a relative GODMAN_GLOBAL_ROOT: paths still resolve (against the working
+    /// directory, as they always have), but no global directory is created under it.
+    /// </summary>
+    private readonly bool _globalPrefixRooted;
+
     private readonly string _userInstallRoot;
     private readonly string _globalInstallRoot;
     private readonly string _userShimDirectory;
@@ -85,7 +91,7 @@ internal sealed class AppPaths
 
         var overrideGlobalPrimary = Environment.GetEnvironmentVariable(EnvGlobal);
         var overrideGlobalLegacy = Environment.GetEnvironmentVariable(LegacyEnvGlobal);
-        var overrideGlobalBase = overrideGlobalPrimary ?? overrideGlobalLegacy;
+        var overrideGlobalBase = ResolveOverride(overrideGlobalPrimary, overrideGlobalLegacy);
 
         var (migrateUser, migrateGlobal) = MigrationGates(
             overrideBasePrimary, overrideBaseLegacy, overrideGlobalPrimary, overrideGlobalLegacy);
@@ -96,6 +102,7 @@ internal sealed class AppPaths
             var defaultProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             var appData = overrideBase ?? defaultAppData;
             var programFiles = overrideGlobalBase ?? defaultProgramFiles;
+            _globalPrefixRooted = System.IO.Path.IsPathRooted(programFiles);
 
             var userRoot = System.IO.Path.Combine(appData, WindowsFolderName);
             var globalRoot = System.IO.Path.Combine(programFiles, WindowsFolderName);
@@ -169,6 +176,7 @@ internal sealed class AppPaths
             var defaultHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var home = overrideBase ?? defaultHome;
             var globalPrefix = overrideGlobalBase ?? DefaultLinuxGlobalPrefix;
+            _globalPrefixRooted = System.IO.Path.IsPathRooted(globalPrefix);
 
             var userConfigRoot = System.IO.Path.Combine(home, ".config", LinuxFolderName);
             var userInstallRoot = System.IO.Path.Combine(home, ".local", "share", LinuxFolderName, "installs");
@@ -184,7 +192,7 @@ internal sealed class AppPaths
                 && UsesPre140GlobalRootMeaning(overrideGlobalBase, System.IO.Path.Combine(globalInstallRoot, "installs.json")))
             {
                 LegacyGlobalRootOverrideWarning = BuildLegacyGlobalRootOverrideWarning(
-                    overrideGlobalPrimary is not null ? EnvGlobal : LegacyEnvGlobal, overrideGlobalBase);
+                    string.IsNullOrEmpty(overrideGlobalPrimary) ? LegacyEnvGlobal : EnvGlobal, overrideGlobalBase);
                 _skipGlobalDirectories = true;
             }
 
@@ -346,14 +354,27 @@ internal sealed class AppPaths
     /// exactly what a user who re-pointed a 1.3.0 value like <c>/opt/godot/bin</c> at
     /// <c>/opt/godot</c> needs -- and an override naming the default prefix
     /// (<c>/usr/local</c>, what the release notes tell users to set) must not behave any
-    /// differently from no override. The Windows constructor still restricts its global
+    /// differently from no override. The one exception is a relative prefix: it resolves
+    /// against whatever directory godman happens to run in, so it never migrates (and the
+    /// constructor creates no global directory under it). An empty value counts as unset
+    /// (<see cref="ResolveOverride"/>). The Windows constructor still restricts its global
     /// move to the default %ProgramFiles% on its own.
     /// </summary>
     internal static (bool MigrateUser, bool MigrateGlobal) MigrationGates(
         string? homeOverride, string? legacyHomeOverride, string? globalOverride, string? legacyGlobalOverride)
     {
-        return (homeOverride == null && legacyHomeOverride == null, true);
+        var global = ResolveOverride(globalOverride, legacyGlobalOverride);
+        return (homeOverride == null && legacyHomeOverride == null,
+                global is null || System.IO.Path.IsPathRooted(global));
     }
+
+    /// <summary>
+    /// The override in effect: the primary variable, else the legacy alias. An empty value
+    /// counts as unset -- <c>export GODMAN_GLOBAL_ROOT=</c> means "no override", not a
+    /// prefix of "" that resolves against the working directory.
+    /// </summary>
+    internal static string? ResolveOverride(string? primary, string? legacy) =>
+        string.IsNullOrEmpty(primary) ? (string.IsNullOrEmpty(legacy) ? null : legacy) : primary;
 
     private static IReadOnlyList<(string Source, string Destination, InstallScope Scope)> PlanLinuxMigrationsByScope(string home, string globalPrefix)
     {
@@ -564,7 +585,7 @@ internal sealed class AppPaths
         System.IO.Directory.CreateDirectory(_userShimDirectory);
         System.IO.Directory.CreateDirectory(_userInstallRoot);
 
-        if (_skipGlobalDirectories)
+        if (_skipGlobalDirectories || !_globalPrefixRooted)
         {
             return;
         }
