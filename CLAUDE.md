@@ -52,7 +52,8 @@ One variable has to redirect both directories or `GodmanTestFixture` loses isola
 
 Launcher paths deliberately ignore `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` — an entry is only
 useful where the desktop looks — and are redirected only by the internal
-`GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` sets.
+`GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` sets. So `clean` under a sandbox
+`GODMAN_HOME` deletes the real app-menu entries; its confirmation prompt says so.
 
 Global installs used to live at `/usr/local/bin/godman`, inside the shim directory.
 That name is the one the godman binary itself needs for `sudo godman` to resolve —

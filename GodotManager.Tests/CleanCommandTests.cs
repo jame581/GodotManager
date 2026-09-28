@@ -22,6 +22,33 @@ public class CleanCommandTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     [Fact]
+    public async Task Clean_Prompt_SaysLauncherEntriesLeaveTheRealApplicationMenu()
+    {
+        // Launcher paths ignore GODMAN_HOME / GODMAN_GLOBAL_ROOT by design, so a clean run
+        // against a sandbox GODMAN_HOME still deletes the entries in the real menu.
+        var app = CliTestHarness.Create(_fixture);
+        var originalConsole = AnsiConsole.Console;
+        AnsiConsole.Console = app.Console;
+        try
+        {
+            app.Console.Interactive();
+            app.Console.Input.PushTextWithEnter("n");
+
+            var result = await app.RunAsync(["clean"]);
+
+            Assert.Equal(0, result.ExitCode);
+            var output = result.Output.Replace("\r", "").Replace("\n", "");
+            Assert.Contains("launcher entries in your real application menu", output);
+            Assert.Contains("GODMAN_HOME", output);
+            Assert.Contains("Aborted", output);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
     public async Task Clean_RemovesUserPaths()
     {
         if (OperatingSystem.IsWindows())

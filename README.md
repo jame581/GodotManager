@@ -131,7 +131,7 @@ godman install --version 4.5.1 --edition Standard --platform linux --activate --
 - `remove <id> [--delete] [--dry-run]` — unregister (optionally delete files); `--dry-run` previews without changes.
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
-- `clean [--yes]` — remove installs, shims, launcher entries, config.
+- `clean [--yes]` — remove installs, shims, launcher entries, config. Launcher entries do not follow `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT`, so `clean` under a sandbox `GODMAN_HOME` still deletes godman's entries from your real application menu.
 - `version` — show the godman, .NET runtime, and OS versions.
 - `--version` — show the current godman version.
 

@@ -33,7 +33,11 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var confirm = settings.Yes || AnsiConsole.Confirm("This will remove godman installs, shims, launcher entries, and config. Continue?", false);
+        // Launcher entries do not follow GODMAN_HOME / GODMAN_GLOBAL_ROOT (see AppPaths), so
+        // even a sandboxed run removes the real ones -- say so before anything is deleted.
+        var confirm = settings.Yes || AnsiConsole.Confirm(
+            "This will remove godman installs, shims, config, and the launcher entries in your real application menu " +
+            "(those do not follow GODMAN_HOME or GODMAN_GLOBAL_ROOT). Continue?", false);
         if (!confirm)
         {
             AnsiConsole.MarkupLine("[yellow]Aborted.[/]");
