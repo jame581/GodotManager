@@ -64,26 +64,36 @@ if [ -d "$INSTALL_DIR/$BINARY_NAME" ]; then
   USER_HOME="$HOME"
   REINSTALL="re-run this installer without GODMAN_INSTALL_DIR"
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    SUDO_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || true)
-    if [ -n "$SUDO_HOME" ]; then
-      USER_HOME="$SUDO_HOME"
+    USER_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6 || true)
+    # No getent (or no passwd entry): let the shell expand ~user. SUDO_USER goes through
+    # eval, so only a plain POSIX user name is accepted.
+    if [ -z "$USER_HOME" ] && printf '%s' "$SUDO_USER" | grep -Eq '^[a-z_][a-z0-9_-]*[$]?$'; then
+      USER_HOME=$(eval echo "~$SUDO_USER" 2>/dev/null || true)
+      case "$USER_HOME" in "~"*) USER_HOME="" ;; esac   # unknown user: left unexpanded
     fi
     REINSTALL="re-run this installer as $SUDO_USER, without sudo and without GODMAN_INSTALL_DIR"
   fi
-  USER_BINARY="$USER_HOME/.local/bin/$BINARY_NAME"
+  # Empty when SUDO_USER's home could not be resolved: then no concrete path is named,
+  # rather than root's.
+  USER_BINARY=""
+  if [ -n "$USER_HOME" ]; then
+    USER_BINARY="$USER_HOME/.local/bin/$BINARY_NAME"
+  fi
 
   EXISTING=$(command -v "$BINARY_NAME" 2>/dev/null || true)
   if ! { [ -n "$EXISTING" ] && [ -f "$EXISTING" ] && [ -x "$EXISTING" ]; }; then
     EXISTING=""
-    if [ -f "$USER_BINARY" ] && [ -x "$USER_BINARY" ]; then
+    if [ -n "$USER_BINARY" ] && [ -f "$USER_BINARY" ] && [ -x "$USER_BINARY" ]; then
       EXISTING="$USER_BINARY"
     fi
   fi
 
   if [ -n "$EXISTING" ]; then
     error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root; migrate it to <prefix>/lib/godman first by running: sudo \"$EXISTING\" list (that binary must be godman 1.4.0 or later; if it is older, $REINSTALL first) -- then re-run this installer, or pick another GODMAN_INSTALL_DIR."
-  else
+  elif [ -n "$USER_BINARY" ]; then
     error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root. Install godman to your user directory first ($REINSTALL), migrate by running: sudo \"$USER_BINARY\" list -- then re-run this installer."
+  else
+    error "$INSTALL_DIR/$BINARY_NAME is a directory, not a file. This is an old global install root. Install godman to your user directory first ($REINSTALL), migrate by running: sudo <full path to that godman> list -- then re-run this installer."
   fi
 fi
 
