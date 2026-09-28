@@ -1100,6 +1100,41 @@ public class InstallerServiceIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ElevatedPayload_CarriesTheLauncherOptOut_IntoTheChildsRegistryEntry()
+    {
+        // `install --scope global --no-shortcut` on Windows: the opt-out has to cross the
+        // same process boundary as the checksum above, or the elevated child silently
+        // creates the Start Menu entry the user declined and records LauncherEntry = true.
+        var mockArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var target = Path.Combine(_fixture.TempRoot, "elevated-no-shortcut");
+
+        var parentRequest = new InstallRequest(
+            "4.5.1",
+            InstallEdition.Standard,
+            OperatingSystem.IsWindows() ? InstallPlatform.Windows : InstallPlatform.Linux,
+            InstallScope.Global,
+            null, mockArchive, target, false, false, false,
+            CreateLauncherEntry: false);
+
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(InstallerService.BuildElevatedPayload(parentRequest))));
+
+        var payload = JsonSerializer.Deserialize<ElevatedInstallPayload>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(encoded)));
+        Assert.NotNull(payload);
+
+        var installer = new InstallerService(_fixture.Paths, _fixture.Registry, _fixture.Environment);
+        var result = await installer.InstallAsync(ElevatedInstallCommand.BuildRequest(payload));
+
+        Assert.False(result.LauncherEntry);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.False(Assert.Single(registry.Installs).LauncherEntry);
+        Assert.False(_fixture.Launcher.Exists(result));
+
+        File.Delete(mockArchive);
+    }
+
+    [Fact]
     public async Task InstallAsync_WhenACarriedChecksumDoesNotMatchTheArchive_RefusesToInstall()
     {
         // The elevated child extracts an archive out of a directory the unelevated
