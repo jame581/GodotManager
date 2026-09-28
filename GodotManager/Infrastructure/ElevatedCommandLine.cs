@@ -14,7 +14,13 @@ namespace GodotManager.Infrastructure;
 /// </summary>
 internal static class ElevatedCommandLine
 {
-    /// <summary>The directories of a stock sudo <c>secure_path</c> (Fedora, Debian, Ubuntu).</summary>
+    /// <summary>
+    /// The directories of a stock sudo <c>secure_path</c> on Fedora, Debian and Ubuntu.
+    /// Not universal: RHEL-family systems (RHEL, Rocky, Alma) leave <c>/usr/local/bin</c>
+    /// and <c>/usr/local/sbin</c> off it, so there a godman in <c>/usr/local/bin</c> gets a
+    /// bare <c>sudo godman</c> remedy that will not resolve. The real sudoers is not read
+    /// (it is root-only); installing to <c>/usr/bin</c>, as the RPM does, works everywhere.
+    /// </summary>
     internal static readonly IReadOnlyList<string> SecurePathDirectories =
         ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
