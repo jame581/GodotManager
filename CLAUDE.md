@@ -50,6 +50,10 @@ platform defaults. Tests rely on this — never hardcode paths.
 to `<prefix>\godman\bin` and `<prefix>\godman\installs` (defaults `%ProgramFiles%`).
 One variable has to redirect both directories or `GodmanTestFixture` loses isolation.
 
+Launcher paths deliberately ignore `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` — an entry is only
+useful where the desktop looks — and are redirected only by the internal
+`GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` sets.
+
 Global installs used to live at `/usr/local/bin/godman`, inside the shim directory.
 That name is the one the godman binary itself needs for `sudo godman` to resolve —
 sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
@@ -84,6 +88,10 @@ the fixture's services. See `GodotManager.Tests/Helpers/`.
 
 ## Conventions
 
+- Launcher entries (`.desktop` / Start Menu `.lnk`) are owned by `LauncherService`,
+  reached through `EnvironmentService.Launcher` so CLI, elevated mirrors and TUI share
+  one path. Install creates and remove deletes them only after the registry save
+  succeeds.
 - Best-effort operations (shim cleanup, PATH writes, cache I/O) swallow failures by
   default and only emit `warn:` via `DiagnosticContext` when `--verbose`/`-V` is set
   (intercepted by `VerboseInterceptor`). Preserve that pattern; don't promote

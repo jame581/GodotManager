@@ -320,3 +320,50 @@ default sudo configuration, and the obvious fix was blocked by godman's own dire
 
 Windows paths are unchanged; it picks up the entry rebasing and registry fallback for
 its own older `GodotManager` → `godman` migration for free.
+
+### Launcher entries per install + 1.3.0 follow-ups ✅ COMPLETE
+
+Every install now gets its own application-launcher entry, and the open 1.3.0 review
+follow-ups were closed in the same release.
+
+- **`AppPaths`** resolves per-scope launcher directories and, on Linux, an icon path
+  under `icons/hicolor/scalable/apps/godman-godot.svg`; both ignore
+  `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT` and are redirected only by the internal
+  `GODMAN_LAUNCHER_ROOT`, which `GodmanTestFixture` now also saves/restores.
+- **`LauncherService`** owns the `.desktop` file (Linux) and Start Menu `.lnk`
+  (Windows) for an install, plus the optional Windows desktop shortcut; every write
+  is best-effort like shim cleanup, never an exception.
+- **Global registry write guard now compares content, not just the Id set** (1.3.0
+  follow-up 2.1): `LoadAsync` snapshots the global entries after rebasing, and
+  `SaveAsync` writes iff the desired set differs from that snapshot by Id set or by
+  serialized content — a rebase alone never triggers a write, but a genuine in-place
+  field change does.
+- **`install` / `activate` / `remove` / `clean` wired to `LauncherService`**: install
+  creates an entry (`--no-shortcut` opts out, recorded on `InstallEntry.LauncherEntry`
+  and honoured by `activate` and `doctor`); activate backfills the entry for
+  pre-1.4.0 installs; remove and clean delete it, remove only after the registry save
+  succeeds so a failed global write never orphans the entry; deactivate leaves it in
+  place. `install --activate` also cleans up the previously active install, and on
+  Windows a user-scope install over an active global one activates through the
+  elevated path (the same predicate `activate` already used).
+- **Elevated-install cancellation follow-ups** (1.3.0 follow-ups 2.2–2.4): the
+  post-kill wait is now bounded (10 s) and returns whether the process is confirmed
+  gone, so the caller only keeps the cache archive when it might not be; a cancel
+  landing after a success is reported as success instead of leaking the cache; the
+  `Kill()` comment now states what the catches actually cover instead of citing
+  .NET Framework behavior this net10.0-only project doesn't have.
+- **`doctor`** reports installs missing their launcher entry (not ones that opted
+  out via `--no-shortcut`); the TUI install dialog gained an "Add to application
+  launcher" checkbox, default on.
+- **`godman version`** (1.3.0 follow-up 2.5): prints godman, .NET runtime, and OS
+  versions; `--version` is unchanged.
+- **Dropped follow-ups**, both stale on inspection: "`remove` has no
+  `remove-elevated` mirror on Windows" — `remove-elevated` already existed; "TUI
+  coverage is manual-only" — not code-fixable, stays covered by the manual
+  verification checklist.
+- **Known limitation (Windows)**: two installs of the same version and edition in one
+  scope at different `--path`s share one Start Menu name; the second overwrites the
+  first's shortcut, since the `.lnk` filename carries no per-install id the way the
+  Linux `.desktop` filename does.
+
+Spec: `GodotManager/docs/superpowers/specs/2026-09-28-launcher-entries-and-1.3-followups-design.md`
