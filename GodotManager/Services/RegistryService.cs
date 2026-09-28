@@ -174,9 +174,10 @@ internal sealed class RegistryService
     {
         // Keyed by Id with first-wins, on both sides: a global file carrying a duplicate Id
         // (which MergeInstalls also passes through) must compare equal to itself. A
-        // ToDictionary here would throw on it and fail every save, and a count comparison
-        // including duplicates would demand a global write -- and elevation -- from an
-        // unrelated user-scope save.
+        // ToDictionary here would throw on it and fail every save. Both counts below are
+        // of these de-duplicated maps; comparing one of them against a raw list count
+        // would see a mismatch whenever the file carries a duplicate and demand a global
+        // write -- and elevation -- from an unrelated user-scope save.
         var currentById = Serialized(current);
         var desiredById = Serialized(desired);
 
@@ -306,9 +307,10 @@ internal sealed class RegistryService
     /// </summary>
     /// <param name="quiet">
     /// Suppresses the per-entry verbose warning. <see cref="SaveAsync"/> passes
-    /// <c>true</c> because it calls this on the same on-disk snapshot <see cref="LoadAsync"/>
-    /// already rebased and warned about earlier in the same command; repeating the warning
-    /// here would just duplicate it under <c>--verbose</c>.
+    /// <c>true</c> because it calls this on its own fresh read of the global file -- the
+    /// file <see cref="LoadAsync"/> normally already rebased and warned about earlier in
+    /// the same command; repeating the warning here would just duplicate it under
+    /// <c>--verbose</c>.
     /// </param>
     private void RebaseRelocatedInstallPaths(InstallRegistry registry, bool quiet = false)
     {

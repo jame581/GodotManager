@@ -131,7 +131,7 @@ godman install --version 4.5.1 --edition Standard --platform linux --activate --
 - `remove <id> [--delete] [--dry-run]` — unregister (optionally delete files); `--dry-run` previews without changes.
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
-- `clean [--yes]` — remove installs, shims, config.
+- `clean [--yes]` — remove installs, shims, launcher entries, config.
 - `version` — show the godman, .NET runtime, and OS versions.
 - `--version` — show the current godman version.
 
@@ -210,7 +210,7 @@ dotnet test -v detailed
 - **Interrupted downloads resume**: partial downloads are kept under the download cache and resumed on the next `install`. Run `godman doctor` to see how much space they use, or `godman clean` to discard them.
 - **`--force` merges, it does not replace**: installing over an existing directory overwrites the files godman extracts and leaves anything else in that directory untouched. This matters when `--path` points at a directory you also use for other things.
 - **Application-launcher entries**: `install` creates one per install (skip with `--no-shortcut`), named for its version, edition, scope, and a short id so two installs never collide — except see the Windows limitation below. `activate` backfills the entry for installs made before 1.4.0. `remove` and `clean` delete it; `deactivate` leaves it in place, since the install itself is still there. `doctor` reports any install that's missing its entry (installs opted out with `--no-shortcut` are not reported).
-- **Known limitation (Windows)**: two installs of the same version and edition in the same scope at different `--path`s share one Start Menu name — the file has no per-install id like the Linux `.desktop` entry does, so the second install's shortcut overwrites the first's.
+- **Known limitation (Windows)**: two installs of the same version and edition in the same scope at different `--path`s share one Start Menu name — the file has no per-install id like the Linux `.desktop` entry does, so the second install's shortcut overwrites the first's. Removing either of the two then deletes that shared shortcut too; re-run `godman activate <id>` on the surviving install to restore it.
 - The Godot logo used for Linux launcher entries is by Andrea Calabró, licensed CC BY 4.0.
 
 ## Author

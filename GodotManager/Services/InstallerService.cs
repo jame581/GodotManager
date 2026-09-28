@@ -508,9 +508,6 @@ internal sealed class InstallerService
     }
 
     /// <summary>
-    /// Projects a request onto the wire format the elevated child is launched with.
-    /// </summary>
-    /// <summary>
     /// True when activating a freshly installed <paramref name="requestScope"/> install
     /// would write machine-wide state -- i.e. a user-scope install switching away from an
     /// active global one. Such callers install with Activate = false and then activate
@@ -522,6 +519,9 @@ internal sealed class InstallerService
         requestScope == InstallScope.User
         && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
 
+    /// <summary>
+    /// Projects a request onto the wire format the elevated child is launched with.
+    /// </summary>
     internal static ElevatedInstallPayload BuildElevatedPayload(InstallRequest request) =>
         new(
             request.Version,

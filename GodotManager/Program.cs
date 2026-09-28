@@ -5,7 +5,6 @@ using GodotManager.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.Reflection;
 using System.Threading;
 
 var diagnostics = new DiagnosticContext();
@@ -63,7 +62,7 @@ app.Configure(config =>
     config.AddCommand<DoctorCommand>("doctor").WithDescription("Check registry and environment setup");
     config.AddCommand<VersionCommand>("version").WithDescription("Show godman, runtime and OS versions");
     config.AddCommand<TuiCommand>("tui").WithDescription("Launch interactive TUI");
-    config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, and config");
+    config.AddCommand<CleanCommand>("clean").WithDescription("Remove godman installs, shims, launcher entries, and config");
 
 });
 

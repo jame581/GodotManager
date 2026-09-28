@@ -90,8 +90,9 @@ the fixture's services. See `GodotManager.Tests/Helpers/`.
 
 - Launcher entries (`.desktop` / Start Menu `.lnk`) are owned by `LauncherService`,
   reached through `EnvironmentService.Launcher` so CLI, elevated mirrors and TUI share
-  one path. Install creates and remove deletes them only after the registry save
-  succeeds.
+  one path. Remove deletes them only after the registry save succeeds. Install creates
+  them after the save too, but activation (including `install --activate`) may already
+  have written one before it.
 - Best-effort operations (shim cleanup, PATH writes, cache I/O) swallow failures by
   default and only emit `warn:` via `DiagnosticContext` when `--verbose`/`-V` is set
   (intercepted by `VerboseInterceptor`). Preserve that pattern; don't promote
