@@ -219,6 +219,7 @@ internal sealed class InstallerService
         var replaced = registry.Installs
             .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var activeIdBeforeReplace = registry.ActiveId;
 
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
@@ -263,6 +264,15 @@ internal sealed class InstallerService
         foreach (var old in replaced)
         {
             _environment.Launcher.Delete(old);
+
+            // The desktop shortcut belongs to the activation, and replacing the active entry
+            // without --activate never deactivates it: no later remove or deactivate would
+            // see the replacement as active, so the shortcut would outlive `remove --delete`.
+            // (With --activate, RemoveActiveAsync above already deleted it.)
+            if (old.Id == activeIdBeforeReplace)
+            {
+                _environment.Launcher.DeleteDesktopShortcut(old);
+            }
         }
 
         if (request.CreateLauncherEntry)

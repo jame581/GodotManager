@@ -156,6 +156,27 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Install_Force_OverTheActiveInstall_DoesNotStrandItsDesktopShortcut()
+    {
+        // A --force reinstall without --activate drops the active entry without deactivating
+        // it, so no later remove or deactivate ever sees the replacement as active. The
+        // replaced entry's desktop shortcut therefore has to go with it, or it outlives
+        // `remove --delete` pointing at a deleted directory.
+        if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var active = await InstallAsync("4.5.1", "--path", target, "--activate");
+        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+        File.WriteAllText(shortcut, "shortcut");
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+        var result = await CliTestHarness.Create(_fixture).RunAsync(["remove", replacement.Id.ToString(), "--delete"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(File.Exists(shortcut), "the replaced active install's desktop shortcut was left behind");
+    }
+
+    [Fact]
     public async Task Install_Force_WhenRegistrySaveFails_KeepsTheReplacedEntrysLauncher()
     {
         // Parity-review F5: the replaced entry's launcher was deleted before the save, so a
