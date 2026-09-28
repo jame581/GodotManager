@@ -33,6 +33,11 @@ Two rules learned the hard way, both from bugs that shipped past a green suite:
   *deactivated* is global, not just the one being activated.
   `install` and `clean` have no service predicate — they decide inline
   (`InstallCommand`, `CleanCommand.HasGlobalCleanupTargets`).
+  Linux has no elevated hand-off, so every one of these commands (CLI and TUI) instead
+  stops before its first write via `Services/LinuxElevation.cs` — pure `MustStop` fed by
+  `Check`/`CheckClean` — and prints the exact `sudo` command. Its probe tests whether the
+  global root and shim directory are actually *writable*, not the uid: the suite (and a
+  user-owned `GODMAN_GLOBAL_ROOT`) does global work unprivileged, which a uid check refuses.
 - **Both front-ends must go through the same predicate.** Every TUI handler in
   `Tui/TuiApp.cs` has a CLI counterpart in `Commands/`; four separate bugs came from a
   TUI handler reimplementing one and dropping its elevation or error handling. The
