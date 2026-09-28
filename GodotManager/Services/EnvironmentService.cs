@@ -51,6 +51,13 @@ internal sealed class EnvironmentService
             ApplyUnix(entry);
         }
 
+        // Rewritten on every activation, not just created when missing: that is what gives
+        // pre-1.4.0 installs their entry, and it self-heals one whose target moved.
+        if (entry.LauncherEntry != false)
+        {
+            _launcher.Create(entry);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -96,7 +103,6 @@ internal sealed class EnvironmentService
         var content = $"@echo off{Environment.NewLine}\"{exe}\" %*{Environment.NewLine}";
         File.WriteAllText(shimPath, content);
 
-        _launcher.Create(entry);
         if (createDesktopShortcut)
         {
             _launcher.CreateDesktopShortcut(entry);
@@ -131,10 +137,11 @@ internal sealed class EnvironmentService
             }
         }
 
-        // Delete launcher entry and desktop shortcut
+        // Only the desktop shortcut belongs to the activation. The Start Menu entry
+        // belongs to the install and is deleted by remove/clean, not by deactivation.
         if (entry != null)
         {
-            _launcher.Delete(entry);
+            _launcher.DeleteDesktopShortcut(entry);
         }
 
         // Broadcast change notification

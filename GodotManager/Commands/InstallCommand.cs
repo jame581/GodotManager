@@ -1,3 +1,4 @@
+using GodotManager.Config;
 using GodotManager.Domain;
 using GodotManager.Infrastructure;
 using GodotManager.Services;
@@ -11,11 +12,15 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 {
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
+    private readonly RegistryService _registry;
+    private readonly AppPaths _paths;
 
-    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder)
+    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, RegistryService registry, AppPaths paths)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
+        _registry = registry;
+        _paths = paths;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -57,7 +62,24 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 settings.Activate,
                 settings.Force,
                 settings.DryRun,
-                checksums);
+                checksums,
+                CreateLauncherEntry: !settings.NoShortcut);
+
+            // Activation elevation is decided the same way `activate` decides it, before anything
+            // is written: a user-scope install over an active global one must clear machine-wide
+            // state, which an unelevated process cannot do (CLAUDE.md, "Decide elevation before
+            // the first machine-wide write").
+            var activateSeparately = false;
+            if (request.Activate && !settings.DryRun)
+            {
+                var currentActive = (await _registry.LoadAsync()).GetActive();
+                if (ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
+                    && InstallerService.NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope))
+                {
+                    activateSeparately = true;
+                    request = request with { Activate = false };
+                }
+            }
 
             if (settings.DryRun)
             {
@@ -101,6 +123,26 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                         });
                 });
             AnsiConsole.MarkupLineInterpolated($"[green]Installed[/] {result.Version} ({result.Edition}, {result.Platform}) to [cyan]{result.Path}[/]");
+
+            if (activateSeparately)
+            {
+                AnsiConsole.MarkupLine("[yellow]Administrator access is required to switch away from the active global install. A UAC prompt will appear.[/]");
+                var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
+                if (!elevated.Succeeded)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {elevated.Error}");
+                    if (elevated.Hint is { } hint)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
+                    }
+
+                    return -1;
+                }
+            }
+            else if (settings.Activate && OperatingSystem.IsWindows())
+            {
+                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
+            }
 
             // Only when verification was actually attempted and did not succeed.
             // NotApplicable covers both "no published sums to check against" (--url
@@ -161,15 +203,21 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine("\n[grey]Actions that would be performed:[/]");
-        AnsiConsole.MarkupLine("[grey]1.[/] Download/copy archive");
-        AnsiConsole.MarkupLine("[grey]2.[/] Extract to install directory");
-        AnsiConsole.MarkupLine("[grey]3.[/] Register in installs.json");
+        var step = 1;
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Download/copy archive");
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Extract to install directory");
+        AnsiConsole.MarkupLine($"[grey]{step++}.[/] Register in installs.json");
+
+        if (request.CreateLauncherEntry)
+        {
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Add application launcher entry");
+        }
 
         if (request.Activate)
         {
-            AnsiConsole.MarkupLine("[grey]4.[/] Set as active install");
-            AnsiConsole.MarkupLine("[grey]5.[/] Update GODOT_HOME environment variable");
-            AnsiConsole.MarkupLine("[grey]6.[/] Write shim script");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Set as active install");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Update GODOT_HOME environment variable");
+            AnsiConsole.MarkupLine($"[grey]{step++}.[/] Write shim script");
         }
 
         await Task.CompletedTask;
@@ -207,6 +255,10 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
         [CommandOption("--activate")]
         public bool Activate { get; set; }
+
+        [CommandOption("--no-shortcut")]
+        [Description("Do not add an application-launcher entry (Start Menu on Windows, app menu on Linux).")]
+        public bool NoShortcut { get; set; }
 
         [CommandOption("--force")]
         public bool Force { get; set; }

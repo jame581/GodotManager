@@ -31,7 +31,8 @@ internal sealed record InstallRequest(
     bool Force,
     bool DryRun = false,
     ChecksumSource? Checksums = null,
-    KnownChecksum? Known = null);
+    KnownChecksum? Known = null,
+    bool CreateLauncherEntry = true);
 
 internal sealed record InstallPlan(
     InstallRequest Request,
@@ -58,7 +59,8 @@ internal sealed record ElevatedInstallPayload(
     bool Force,
     string? Checksum = null,
     string? ChecksumAlgorithm = null,
-    bool ChecksumVerified = false);
+    bool ChecksumVerified = false,
+    bool CreateLauncherEntry = true);
 
 internal sealed class InstallerService
 {
@@ -201,19 +203,62 @@ internal sealed class InstallerService
             Checksum = checksum,
             ChecksumAlgorithm = plan.ChecksumAlgorithm,
             ChecksumVerified = plan.ChecksumVerified,
+            LauncherEntry = request.CreateLauncherEntry,
             AddedAt = DateTimeOffset.UtcNow
         };
+
+        // Captured before RemoveAll: when --force reinstalls the active install in place,
+        // the previous active entry is the one being replaced, and its cleanup still has to
+        // run against the scope it was activated in.
+        var previousActive = request.Activate ? registry.GetActive() : null;
+
+        // A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
+        // carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
+        // in the app menu. Deleted here, before anything new is written: on Windows both
+        // share one .lnk name, and deleting after the create would delete the new one.
+        var replaced = registry.Installs
+            .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        foreach (var old in replaced)
+        {
+            _environment.Launcher.Delete(old);
+        }
 
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
 
         if (request.Activate)
         {
+            // Same cleanup `activate` does. Without it, switching the active install through
+            // `install --activate` (and the TUI install dialog, which always activates) left
+            // the previous activation's shim, PATH entry and desktop shortcut behind. Callers
+            // that would need elevation for this split the activation off beforehand -- see
+            // NeedsSeparateElevatedActivation.
+            if (previousActive is not null)
+            {
+                try
+                {
+                    await _environment.RemoveActiveAsync(previousActive, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _diagnostics?.Warn($"Failed to clean up previous activation ({previousActive.Version}): {ex.Message}");
+                }
+            }
+
             registry.MarkActive(entry.Id);
             await _environment.ApplyActiveAsync(entry, cancellationToken);
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+
+        // After the save, symmetric with remove: an install whose registry write failed must
+        // not leave a launcher entry pointing at an unregistered install. (Activation above
+        // may already have written it; this rewrite is idempotent.)
+        if (request.CreateLauncherEntry)
+        {
+            _environment.Launcher.Create(entry);
+        }
 
         // Non-null only for downloads, so a user-supplied --archive is never touched.
         if (plan.CacheFilePath is not null)
@@ -438,6 +483,18 @@ internal sealed class InstallerService
     /// <summary>
     /// Projects a request onto the wire format the elevated child is launched with.
     /// </summary>
+    /// <summary>
+    /// True when activating a freshly installed <paramref name="requestScope"/> install
+    /// would write machine-wide state -- i.e. a user-scope install switching away from an
+    /// active global one. Such callers install with Activate = false and then activate
+    /// through <see cref="ElevatedActivator"/>, exactly as <c>activate</c> does. A
+    /// global-scope install needs no split: on Windows it already runs wholly in the
+    /// elevated child.
+    /// </summary>
+    internal static bool NeedsSeparateElevatedActivation(InstallScope requestScope, InstallScope? previousActiveScope) =>
+        requestScope == InstallScope.User
+        && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
+
     internal static ElevatedInstallPayload BuildElevatedPayload(InstallRequest request) =>
         new(
             request.Version,
@@ -450,7 +507,8 @@ internal sealed class InstallerService
             request.Force,
             request.Known?.Value,
             request.Known?.Algorithm,
-            request.Known?.Verified ?? false);
+            request.Known?.Verified ?? false,
+            request.CreateLauncherEntry);
 
     private async Task RunElevatedInstallAsync(InstallRequest request, CancellationToken cancellationToken)
     {
@@ -576,6 +634,7 @@ internal sealed class InstallerService
             Platform = request.Platform,
             Scope = request.Scope,
             Path = targetDir,
+            LauncherEntry = request.CreateLauncherEntry,
             AddedAt = DateTimeOffset.UtcNow
         };
 

@@ -1220,6 +1220,35 @@ public class InstallerServiceIntegrationTests : IDisposable
         File.Delete(mockArchive);
     }
 
+    [Fact]
+    public async Task InstallAsync_WithActivate_RemovesThePreviouslyActiveInstallsShim()
+    {
+        if (OperatingSystem.IsWindows()) return; // Windows global activate needs elevation
+        using var fixture = new GodmanTestFixture();
+        var installer = new InstallerService(fixture.Paths, fixture.Registry, fixture.Environment);
+
+        var userArchive = MockArchiveFactory.CreateMockGodotArchive();
+        var globalArchive = MockArchiveFactory.CreateMockGodotArchive();
+        try
+        {
+            await installer.InstallAsync(new InstallRequest("4.5.1", InstallEdition.Standard, InstallPlatform.Linux,
+                InstallScope.User, null, userArchive, null, Activate: true, Force: false));
+            var userShim = Path.Combine(fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+            Assert.True(File.Exists(userShim), "arrange: user shim written");
+
+            await installer.InstallAsync(new InstallRequest("4.6.0", InstallEdition.Standard, InstallPlatform.Linux,
+                InstallScope.Global, null, globalArchive, null, Activate: true, Force: false));
+
+            Assert.False(File.Exists(userShim), "the previous activation's shim must be cleaned up");
+            Assert.True(File.Exists(Path.Combine(fixture.Paths.GetShimDirectory(InstallScope.Global), "godot")));
+        }
+        finally
+        {
+            File.Delete(userArchive);
+            File.Delete(globalArchive);
+        }
+    }
+
     private static string ComputeSha512(string filePath)
     {
         using var sha512 = SHA512.Create();

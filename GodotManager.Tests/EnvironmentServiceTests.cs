@@ -220,11 +220,12 @@ public class EnvironmentServiceTests : IDisposable
         await _fixture.Environment.ApplyActiveAsync(entry, dryRun: false, createDesktopShortcut: true);
 
         // Assert
-        var desktopFolder = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+        // The desktop resolves under the fixture's GODMAN_LAUNCHER_ROOT, so this never
+        // touches the real user's desktop and the assertion can be live.
+        var desktopFolder = _fixture.Paths.DesktopDirectory;
         var shortcutName = $"Godot {entry.Version} ({entry.Edition}).lnk";
         var desktopShortcut = Path.Combine(desktopFolder, shortcutName);
 
-        // Note: Actual shortcut creation might fail in test environment, so this is best-effort
-        // Assert.True(File.Exists(desktopShortcut), "Desktop shortcut should be created");
+        Assert.True(File.Exists(desktopShortcut), "Desktop shortcut should be created");
     }
 }

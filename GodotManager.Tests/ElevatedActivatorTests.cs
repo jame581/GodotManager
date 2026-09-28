@@ -54,4 +54,16 @@ public class ElevatedActivatorTests
     {
         Assert.True(ElevatedActivator.TouchesMachineState(InstallScope.Global, null));
     }
+
+    [Theory]
+    [InlineData(InstallScope.User, InstallScope.Global, true)]
+    [InlineData(InstallScope.User, InstallScope.User, false)]
+    [InlineData(InstallScope.User, null, false)]
+    [InlineData(InstallScope.Global, InstallScope.Global, false)]
+    [InlineData(InstallScope.Global, null, false)]
+    public void NeedsSeparateElevatedActivation_OnlyForUserInstallOverActiveGlobal(
+        InstallScope request, InstallScope? previous, bool expected)
+    {
+        Assert.Equal(expected, InstallerService.NeedsSeparateElevatedActivation(request, previous));
+    }
 }

@@ -84,7 +84,8 @@ internal sealed class ElevatedInstallCommand : AsyncCommand<ElevatedInstallComma
             DryRun: false,
             Known: payload.Checksum is null
                 ? null
-                : new KnownChecksum(payload.Checksum, payload.ChecksumAlgorithm ?? "sha512", payload.ChecksumVerified));
+                : new KnownChecksum(payload.Checksum, payload.ChecksumAlgorithm ?? "sha512", payload.ChecksumVerified),
+            CreateLauncherEntry: payload.CreateLauncherEntry);
 
     private static int Fail(string message)
     {

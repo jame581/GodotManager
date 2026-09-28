@@ -312,7 +312,7 @@ internal sealed class TuiApp
 
     private void OnBrowseVersionSelected(object? sender, GodotRelease release)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _app!);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, _app!);
         dialog.PresetVersion(release.Version);
         _app!.Run(dialog);
         var installed = dialog.Success;
@@ -631,7 +631,7 @@ internal sealed class TuiApp
 
     private void ShowInstallDialog(IApplication app)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, app);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, app);
         app.Run(dialog);
         var installed = dialog.Success;
         dialog.Dispose();

@@ -14,6 +14,7 @@ internal sealed class InstallDialog : Dialog
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly AppPaths _paths;
+    private readonly RegistryService _registry;
     private readonly IApplication _app;
 
     private readonly TextField _versionField;
@@ -37,11 +38,13 @@ internal sealed class InstallDialog : Dialog
         InstallerService installer,
         GodotDownloadUrlBuilder urlBuilder,
         AppPaths paths,
+        RegistryService registry,
         IApplication app)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
         _paths = paths;
+        _registry = registry;
         _app = app;
 
         Title = "Install Godot";
@@ -178,6 +181,19 @@ internal sealed class InstallDialog : Dialog
 
         try
         {
+            // Same predicate InstallCommand uses (CLAUDE.md: both front-ends go through
+            // one elevation decision). The dialog always activates, so a user-scope
+            // install over an active global one installs unactivated here and hands the
+            // activation to the elevated child, exactly as `activate` does. Inside the
+            // try so a registry read failure lands in the dialog's own error handling.
+            var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
+            var activateSeparately = ElevatedActivator.IsRequired(scope, currentActive?.Scope)
+                && InstallerService.NeedsSeparateElevatedActivation(scope, currentActive?.Scope);
+            if (activateSeparately)
+            {
+                request = request with { Activate = false };
+            }
+
             InstallEntry result = await _installer.InstallWithElevationAsync(
                 request,
                 progress =>
@@ -194,6 +210,18 @@ internal sealed class InstallDialog : Dialog
                     verificationStatus = status;
                     verificationReason = reason;
                 });
+
+            if (activateSeparately)
+            {
+                var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
+                if (!elevated.Succeeded)
+                {
+                    _app.Invoke(() => MessageBox.ErrorQuery(
+                        _app, "Error",
+                        $"Installed, but activation failed: {elevated.Error}" + (elevated.Hint is null ? "" : $"\n{elevated.Hint}"),
+                        "OK"));
+                }
+            }
 
             // NotApplicable covers both "no published sums to check against" and
             // "this release publishes none upstream" -- neither is an error, so
