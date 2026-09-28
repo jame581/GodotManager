@@ -246,18 +246,20 @@ internal sealed class InstallerService
             }
 
             registry.MarkActive(entry.Id);
-            await _environment.ApplyActiveAsync(entry, cancellationToken);
+            // Without the launcher entry: that is created below, only once the save lands.
+            await _environment.ApplyActiveAsync(
+                entry, dryRun: false, createDesktopShortcut: false, ensureLauncherEntry: false, cancellationToken);
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
 
         // After the save, symmetric with remove: a failed registry write must neither leave
         // a launcher entry pointing at an unregistered install nor have deleted the entry of
-        // the install it was meant to replace. The deletes run first: on Windows the old and
-        // new entries share one .lnk name, which activation above may already have written
-        // for the new entry -- Delete(old) removes it and Create(entry) rewrites it, while
-        // with --no-shortcut the old one is correctly left removed. (The Create rewrite is
-        // idempotent.)
+        // the install it was meant to replace. Activation above deliberately skips the
+        // launcher write, so this is the only place an install creates one. The deletes run
+        // first: on Windows the old and new entries share one .lnk name, so Delete(old)
+        // must not run after Create(entry); with --no-shortcut the old one is correctly
+        // left removed.
         foreach (var old in replaced)
         {
             _environment.Launcher.Delete(old);

@@ -37,6 +37,17 @@ internal sealed class EnvironmentService
 
     public Task ApplyActiveAsync(InstallEntry entry, bool dryRun, bool createDesktopShortcut, CancellationToken cancellationToken = default)
     {
+        return ApplyActiveAsync(entry, dryRun, createDesktopShortcut, ensureLauncherEntry: true, cancellationToken);
+    }
+
+    /// <param name="ensureLauncherEntry">
+    /// False only for <see cref="InstallerService.InstallAsync"/>, which activates a new
+    /// install before its registry save and creates the launcher entry itself after that
+    /// save succeeds -- writing it here would leave an app-menu entry for an install the
+    /// registry never recorded when the save fails. <c>activate</c> always passes true.
+    /// </param>
+    internal Task ApplyActiveAsync(InstallEntry entry, bool dryRun, bool createDesktopShortcut, bool ensureLauncherEntry, CancellationToken cancellationToken = default)
+    {
         if (dryRun)
         {
             return Task.CompletedTask;
@@ -53,7 +64,7 @@ internal sealed class EnvironmentService
 
         // Rewritten on every activation, not just created when missing: that is what gives
         // pre-1.4.0 installs their entry, and it self-heals one whose target moved.
-        if (entry.LauncherEntry != false)
+        if (ensureLauncherEntry && entry.LauncherEntry != false)
         {
             _launcher.Create(entry);
         }

@@ -182,6 +182,36 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task GlobalInstallWithActivate_WhenRegistrySaveFails_WritesNoLauncherEntry()
+    {
+        // Activation inside InstallAsync used to write the launcher entry before the
+        // registry save, so a failed save left an app-menu entry for an install the
+        // registry never recorded -- on every `install --activate` and TUI install.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Paths.GlobalRegistryFile)!);
+        File.WriteAllText(_fixture.Paths.GlobalRegistryFile, "{\"installs\":[]}");
+        File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead);
+        var launcherDir = _fixture.Paths.GetLauncherDirectory(InstallScope.Global);
+        var archive = MockArchiveFactory.CreateMockGodotArchive();
+        try
+        {
+            var result = await CliTestHarness.Create(_fixture).RunAsync(
+                ["install", "--version", "4.5.1", "--archive", archive, "--platform", Platform, "--scope", "Global", "--activate"]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Empty((await _fixture.Registry.LoadAsync()).Installs);
+            Assert.True(
+                !Directory.Exists(launcherDir) || Directory.GetFiles(launcherDir, "godman-godot-*.desktop").Length == 0,
+                "no launcher entry may exist for an install whose registry save failed");
+        }
+        finally
+        {
+            File.SetUnixFileMode(_fixture.Paths.GlobalRegistryFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Delete(archive);
+        }
+    }
+
+    [Fact]
     public async Task Remove_NonActiveInstall_DeletesItsLauncherEntry()
     {
         if (OperatingSystem.IsWindows()) return;
