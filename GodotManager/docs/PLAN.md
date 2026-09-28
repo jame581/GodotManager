@@ -330,6 +330,9 @@ default sudo configuration, and the obvious fix was blocked by godman's own dire
 Windows paths are unchanged; it picks up the entry rebasing and registry fallback for
 its own older `GodotManager` → `godman` migration for free.
 
+User-facing release notes: `GodotManager/docs/release-notes/1.4.0.md` — paste into the
+GitHub release after `release.yml` creates it.
+
 ### Launcher entries per install + 1.3.0 follow-ups ✅ COMPLETE
 
 Every install now gets its own application-launcher entry, and the open 1.3.0 review

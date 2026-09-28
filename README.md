@@ -154,7 +154,8 @@ Global installs deliberately sit outside the shim directory. They used to live i
 `/usr/local/bin/godman/`, which took the one filename the godman binary itself needs
 if `sudo godman` is ever to resolve. godman migrates that directory to
 `/usr/local/lib/godman/` the first time it runs with enough privilege to move it (so in
-practice, your next `sudo godman ...`), and rebases the recorded install paths to match.
+practice, your next `sudo ~/.local/bin/godman ...`), rebases the recorded install paths
+to match, and rewrites the `godot` shim and `env.sh` that pointed into the old directory.
 Until then nothing is lost: godman still reads the machine-wide registry from its old
 location, so `list`, `doctor` and the TUI keep showing your global installs. Run
 `godman doctor` to check whether anything was left behind.

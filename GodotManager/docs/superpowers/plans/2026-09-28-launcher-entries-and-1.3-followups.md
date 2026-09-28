@@ -2042,3 +2042,4 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - TUI: install with checkbox off and on; TUI remove.
 - Windows, both scopes: install → Start Menu entry; activate with `--create-desktop-shortcut`; switch active → previous desktop shortcut gone, Start Menu entries kept; remove → both gone; clean → `Programs\godman` gone.
 - `godman version`.
+- Real Fedora upgrade path (1.3.0 → 1.4.0 global root move): start from a 1.3.0 layout with an active global install (`/usr/local/bin/godman/` a directory, `/usr/local/bin/godot` exec'ing into it); run `sudo ~/.local/bin/godman list`; confirm `/usr/local/lib/godman` exists and holds the installs, `/usr/local/bin/godot` now targets `/usr/local/lib/godman/…` and runs, and `godman doctor` output is sensible (no "Shim points at a missing binary", legacy-directory advice correct). Then install the binary to `/usr/local/bin` and confirm `sudo godman` resolves.
