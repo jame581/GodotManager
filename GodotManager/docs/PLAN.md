@@ -334,8 +334,9 @@ follow-ups were closed in the same release.
   (Windows) for an install, plus the optional Windows desktop shortcut; every write
   is best-effort like shim cleanup, never an exception.
 - **Global registry write guard now compares content, not just the Id set** (1.3.0
-  follow-up 2.1): `LoadAsync` snapshots the global entries after rebasing, and
-  `SaveAsync` writes iff the desired set differs from that snapshot by Id set or by
+  follow-up 2.1): `SaveAsync` re-reads the global file itself, rebases that copy the
+  same way `LoadAsync` rebases the caller's, and writes the global file only when the
+  desired global entries differ from the rebased on-disk copy by Id set or by
   serialized content — a rebase alone never triggers a write, but a genuine in-place
   field change does.
 - **`install` / `activate` / `remove` / `clean` wired to `LauncherService`**: install
