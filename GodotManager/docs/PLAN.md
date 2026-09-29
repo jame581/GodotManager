@@ -4,7 +4,7 @@
 - .NET 10 console app to manage Godot installs (Standard and .NET) on Windows and Linux.
 - Maintain installs registry, download/unpack builds, set active install via env var and shim.
 - Supports both User and Global installation scopes on Windows and Linux.
-- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅; Phase 4: TUI Rework ✅; Phase 5: Linux packaging (partial) ✅; Phase 6: WinGet publishing ✅.
+- Phase 1: core CLI ✅; Phase 2: TUI built with Spectre.Console.CLI ✅; Phase 4: TUI Rework ✅; Phase 5: Linux packaging (partial) ✅; Phase 6: WinGet publishing ✅; Phase 7: install-flow robustness (1.3.0) ✅; Phase 7b: elevation parity ✅; Phase 8: global root out of the shim directory (1.4.0) ✅; 1.4.1: follow-ups from the 1.4.0 review ✅.
 
 ## Phase 1 — Core CLI ✅ COMPLETE
 - Commands:
@@ -464,3 +464,11 @@ creation) are covered by pure-function tests on Linux and otherwise only by the
 `windows-latest` CI leg. A parity review of the branch found the `ActiveId` flaw above,
 a vacuous Linux test (the legacy-root clause is only separable on Windows), and untested
 guards; all were fixed.
+
+**Released** as v1.4.1 on 2026-09-29: the tag sits on `e79862a` (the merge of PR #9). The
+release run passed on its first attempt, WinGet included (1.4.0's needed five, all of them
+`publish-winget` failing while komac created a branch in the `winget-pkgs` fork). The
+`windows-latest` CI leg passed on the merged head, which covers the Windows-only paths
+listed above. A cloud session cannot push the tag (the push is refused with a 403), so it
+was pushed from a local checkout, and the release body was then updated by hand from
+`release-notes/1.4.1.md`, since `release.yml` only auto-generates one.

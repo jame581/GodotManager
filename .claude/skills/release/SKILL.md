@@ -18,7 +18,16 @@ pushing the tag.
   `v` from the tag name. Forgetting the csproj bump ships binaries whose `--version`
   disagrees with the release — nothing in CI catches it.
 - **A hyphenated tag skips WinGet** (`v1.4.1-beta1`). Use that for pre-releases.
-- **Tag `main`, after the PR merges.** Every past tag (`v1.1.0`…`v1.3.0`) sits on main.
+- **Tag `main`, after the PR merges.** Every past tag (`v1.1.0` onward) sits on main.
+- **A cloud session cannot push the tag or edit the release.** The tag push is refused with
+  a 403 (branch pushes work) and there is no tool to edit a release body. Give the user the
+  `git tag` / `git push origin` commands to run from a local checkout, then watch the run.
+  Cloud sessions have no `gh`; use the GitHub tools for runs, jobs and releases.
+- **`release.yml` only auto-generates the release body.** Paste
+  `GodotManager/docs/release-notes/X.Y.Z.md` into the release afterwards.
+- **`publish-winget` is the job that can fail.** 1.4.0's run needed five attempts, all of them
+  this job (komac: "Ref cannot be created: failed to create branch" in the `winget-pkgs`
+  fork). The GitHub release does not depend on it; re-run only that job.
 
 ## Steps
 
