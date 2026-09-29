@@ -246,6 +246,16 @@ internal sealed class InstallerService
         var keepDesktopShortcut = replacedActive is not null && _environment.Launcher.DesktopShortcutExists(replacedActive);
 
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
+
+        // The Start Menu name has to be chosen before the save, since it is recorded on the
+        // entry: a second install of one version and edition takes a suffixed name instead
+        // of overwriting the first's shortcut. Windows only -- the Linux .desktop name
+        // already carries the id.
+        if (OperatingSystem.IsWindows() && request.CreateLauncherEntry)
+        {
+            entry.LauncherFileName = LauncherService.ChooseStartMenuFileName(entry, registry.Installs);
+        }
+
         registry.Installs.Add(entry);
 
         if (replacedActive is not null && !request.Activate)

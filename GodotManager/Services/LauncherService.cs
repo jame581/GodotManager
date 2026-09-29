@@ -231,7 +231,37 @@ internal sealed class LauncherService
     internal static string GetEntryPath(InstallEntry entry, AppPaths paths) =>
         Path.Combine(
             paths.GetLauncherDirectory(entry.Scope),
-            OperatingSystem.IsWindows() ? DisplayName(entry) + ".lnk" : BuildDesktopFileName(entry));
+            OperatingSystem.IsWindows() ? StartMenuFileName(entry) : BuildDesktopFileName(entry));
+
+    /// <summary>
+    /// The Start Menu file name: the one recorded for this entry, or the plain one built from
+    /// its version and edition (see <see cref="InstallEntry.LauncherFileName"/>).
+    /// </summary>
+    internal static string StartMenuFileName(InstallEntry entry) =>
+        entry.LauncherFileName ?? PlainStartMenuFileName(entry);
+
+    private static string PlainStartMenuFileName(InstallEntry entry) => DisplayName(entry) + ".lnk";
+
+    /// <summary>
+    /// The name to record for <paramref name="entry"/>'s Start Menu shortcut: null (the plain
+    /// name) unless another install in the same scope, one that has a shortcut, already holds
+    /// it, in which case the entry's short id disambiguates. Pure and platform-independent so
+    /// it can be tested anywhere; the caller stores the result on Windows only. Decided once,
+    /// at install time, and recorded: the name cannot be recomputed from the siblings later,
+    /// because removing the first install would then rename the second's shortcut out from
+    /// under it.
+    /// </summary>
+    internal static string? ChooseStartMenuFileName(InstallEntry entry, IEnumerable<InstallEntry> installs)
+    {
+        var plain = PlainStartMenuFileName(entry);
+        var taken = installs.Any(other =>
+            other.Id != entry.Id
+            && other.Scope == entry.Scope
+            && other.LauncherEntry == true
+            && string.Equals(StartMenuFileName(other), plain, StringComparison.OrdinalIgnoreCase));
+
+        return taken ? $"{DisplayName(entry)} ({entry.Id.ToString("N")[..8]}).lnk" : null;
+    }
 
     private static string GetDesktopShortcutPath(InstallEntry entry, AppPaths paths) =>
         Path.Combine(paths.DesktopDirectory, DisplayName(entry) + ".lnk");

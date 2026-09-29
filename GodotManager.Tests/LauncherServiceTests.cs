@@ -124,4 +124,79 @@ public class LauncherServiceTests : IDisposable
 
         Assert.Null(ex);
     }
+    // --- Windows Start Menu names: a second install of one version and edition (1.4.1) ---
+
+    private static InstallEntry Windowed(
+        string version = "4.5.1", InstallScope scope = InstallScope.User, bool? launcher = true, string? fileName = null)
+    {
+        var entry = InstallEntryFactory.Create(version: version, scope: scope);
+        entry.LauncherEntry = launcher;
+        entry.LauncherFileName = fileName;
+        return entry;
+    }
+
+    [Fact]
+    public void ChooseStartMenuFileName_WithNoSibling_KeepsThePlainName()
+    {
+        var entry = Windowed();
+
+        Assert.Null(LauncherService.ChooseStartMenuFileName(entry, [entry]));
+        Assert.Equal("Godot 4.5.1 (Standard).lnk", LauncherService.StartMenuFileName(entry));
+    }
+
+    [Fact]
+    public void ChooseStartMenuFileName_WhenASiblingHoldsThePlainName_TakesASuffixedOne()
+    {
+        // Two installs of one version and edition at different --paths used to share one file:
+        // the second overwrote the first's shortcut, and removing either deleted both.
+        var first = Windowed();
+        var second = Windowed();
+
+        var name = LauncherService.ChooseStartMenuFileName(second, [first, second]);
+
+        Assert.Equal($"Godot 4.5.1 (Standard) ({second.Id.ToString("N")[..8]}).lnk", name);
+        second.LauncherFileName = name;
+        Assert.NotEqual(
+            LauncherService.StartMenuFileName(first), LauncherService.StartMenuFileName(second));
+    }
+
+    [Theory]
+    [InlineData("4.4.0", InstallScope.User, true)]    // another version: a different name
+    [InlineData("4.5.1", InstallScope.Global, true)]  // another scope: a different directory
+    [InlineData("4.5.1", InstallScope.User, false)]   // --no-shortcut: it holds no file
+    [InlineData("4.5.1", InstallScope.User, null)]    // pre-1.4.0: no file until activate
+    public void ChooseStartMenuFileName_IgnoresSiblingsThatDoNotHoldThePlainName(string version, InstallScope scope, bool? launcher)
+    {
+        var sibling = Windowed(version, scope, launcher);
+        var entry = Windowed();
+
+        Assert.Null(LauncherService.ChooseStartMenuFileName(entry, [sibling, entry]));
+    }
+
+    [Fact]
+    public void ChooseStartMenuFileName_IgnoresASiblingThatAlreadyRecordedASuffixedName()
+    {
+        var suffixed = Windowed(fileName: "Godot 4.5.1 (Standard) (deadbeef).lnk");
+        var entry = Windowed();
+
+        Assert.Null(LauncherService.ChooseStartMenuFileName(entry, [suffixed, entry]));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task LauncherFileName_SurvivesARegistryRoundTrip_AndIsAbsentFromOlderFiles()
+    {
+        var entry = Windowed(fileName: "Godot 4.5.1 (Standard) (deadbeef).lnk");
+        var registry = new InstallRegistry();
+        registry.Installs.Add(entry);
+        await _fixture.Registry.SaveAsync(registry);
+
+        var loaded = (await _fixture.Registry.LoadAsync()).Installs.Single();
+        Assert.Equal(entry.LauncherFileName, loaded.LauncherFileName);
+
+        // A registry written before 1.4.1 has no such property: it reads as the plain name.
+        var older = System.Text.Json.JsonSerializer.Deserialize<InstallEntry>(
+            "{\"Version\":\"4.5.1\",\"Edition\":0,\"Scope\":0}")!;
+        Assert.Null(older.LauncherFileName);
+        Assert.Equal("Godot 4.5.1 (Standard).lnk", LauncherService.StartMenuFileName(older));
+    }
 }
