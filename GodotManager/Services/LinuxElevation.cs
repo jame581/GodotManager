@@ -80,6 +80,32 @@ internal static class LinuxElevation
     }
 
     /// <summary>
+    /// <see cref="Check"/> for a <c>remove</c>, which needs one more thing said when the entry
+    /// is the active one. <c>ActiveId</c> lives in the per-user registry and sudo resets HOME,
+    /// so the elevated remove loads <i>root's</i> registry, sees nothing active and skips the
+    /// deactivation: the install goes but <c>godot</c> keeps exec'ing a deleted binary and the
+    /// user's <c>installs.json</c> still names the removed Id. <c>deactivate</c> needs no sudo
+    /// on Linux (<see cref="MustStop"/>), so the hint tells the user to run it first. Shared by
+    /// the CLI and the TUI handler, like <see cref="Check"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only a hinted denial is extended: the pre-1.4.0 <c>GODMAN_GLOBAL_ROOT</c> refusal
+    /// carries no sudo command because the variable is what needs fixing.
+    /// </remarks>
+    public static GodmanException? CheckRemove(
+        AppPaths paths, InstallScope targetScope, bool isActive, IReadOnlyList<string>? arguments)
+    {
+        var denied = Check(paths, targetScope, arguments);
+        return denied is { Hint: { } hint } && isActive
+            ? new GodmanException(denied.Message, DeactivateFirstNote + "\n" + hint, denied)
+            : denied;
+    }
+
+    internal const string DeactivateFirstNote =
+        "This is the active install, and sudo resets HOME, so an elevated remove would not " +
+        "deactivate it for you. Run `godman deactivate` first (it needs no sudo), then remove it:";
+
+    /// <summary>
     /// <c>clean</c>'s version of <see cref="Check"/>: it has no scope of its own, so it touches
     /// machine state when there is something global of godman's to delete. On Linux that is
     /// judged by godman's own files, not by directories existing: the global shim directory

@@ -267,4 +267,24 @@ public class LinuxElevationTests
             File.SetUnixFileMode(shimDir, (UnixFileMode)Convert.ToInt32("755", 8));
         }
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CheckRemove_UserScopeEntry_NeverStops(bool isActive)
+    {
+        // The deactivate-first note belongs to a *denied* global remove only.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Null(LinuxElevation.CheckRemove(fixture.Paths, InstallScope.User, isActive, ["remove", "x"]));
+    }
+
+    [Fact]
+    public void CheckRemove_WritableGlobalLocations_DoNotStopAnActiveRemove()
+    {
+        // Writable (the fixture's temp GODMAN_GLOBAL_ROOT, or root itself): a remove that can
+        // deactivate in-process must not be told to do it by hand.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Null(LinuxElevation.CheckRemove(fixture.Paths, InstallScope.Global, isActive: true, ["remove", "x"]));
+    }
 }

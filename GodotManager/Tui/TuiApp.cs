@@ -541,7 +541,7 @@ internal sealed class TuiApp
         try
         {
             // Linux: before the files are deleted, exactly as RemoveCommand does.
-            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
+            if (LinuxElevation.CheckRemove(_paths, entry.Scope, entry.IsActive, LinuxElevation.TuiArguments) is { } denied)
             {
                 throw denied;
             }
