@@ -156,21 +156,82 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task Install_Force_OverTheActiveInstall_CarriesTheActivationToTheReplacement()
+    public async Task Install_Force_OverTheActiveInstall_KeepsItsIdAndItsActivation()
     {
-        // The replacement gets a fresh Id but sits in the directory the shim and GODOT_HOME
-        // still name. ActiveId used to keep the removed Id, so GetActive() was null while
-        // the shim kept working -- and `remove` never deactivated it.
+        // ActiveId lives in the per-user registry. On Linux a global reinstall runs under
+        // sudo, whose root registry never holds the user's ActiveId, so the replacement has to
+        // keep the Id for that pointer to stay valid; it used to get a fresh one and leave
+        // GetActive() null while the shim kept working.
         var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
         var original = await InstallAsync("4.5.1", "--path", target, "--activate");
 
         var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
 
-        Assert.NotEqual(original.Id, replacement.Id);
+        Assert.Equal(original.Id, replacement.Id);
         var registry = await _fixture.Registry.LoadAsync();
-        Assert.Equal(replacement.Id, registry.ActiveId);
+        Assert.Equal(original.Id, registry.ActiveId);
         Assert.Equal(replacement.Id, registry.GetActive()?.Id);
         Assert.True(registry.GetActive()?.IsActive);
+    }
+
+    [Fact]
+    public async Task Install_Force_OverAnInactiveInstall_KeepsItsIdWithoutActivatingIt()
+    {
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target);
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.Equal(original.Id, replacement.Id);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.Null(registry.ActiveId);
+        Assert.Single(registry.Installs);
+    }
+
+    [Fact]
+    public async Task Install_Force_OverTheActiveInstall_ReappliesTheActivation()
+    {
+        // The shim names an executable, not the directory. A different version merged over the
+        // old one leaves both binaries, so an untouched shim would keep running the old one
+        // while the registry says the new one is active.
+        if (OperatingSystem.IsWindows()) return; // the shim is godot.cmd there; the logic is shared
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        await InstallAsync("4.5.1", "--path", target, "--activate");
+        var shim = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        File.Delete(shim);
+
+        await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.True(File.Exists(shim), "the reinstall left the active install's shim unrewritten");
+    }
+
+    [Fact]
+    public async Task Install_Force_OverAnInactiveInstall_DoesNotWriteAShim()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        await InstallAsync("4.5.1", "--path", target);
+
+        await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.False(File.Exists(Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot")));
+    }
+
+    [Fact]
+    public async Task Install_Force_UserScopeOverTheSamePathOfTheActiveGlobalEntry_DoesNotInheritItsActivation()
+    {
+        // The Id and the activation follow an entry of the *same scope* only: a global entry's
+        // shim must not be attributed to a user-scope replacement, whose deactivation would
+        // clean the wrong scope's shim.
+        if (OperatingSystem.IsWindows()) return; // a global install would raise UAC from an unelevated host
+        var target = Path.Combine(_fixture.TempRoot, "shared-path");
+        var global = await InstallAsync("4.5.1", "--path", target, "--scope", "Global", "--activate");
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.NotEqual(global.Id, replacement.Id);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.NotEqual(replacement.Id, registry.ActiveId);
     }
 
     [Fact]
@@ -187,20 +248,26 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task Install_Force_OverTheActiveInstall_KeepsItsDesktopShortcut()
+    public async Task Install_Force_OverTheActiveInstall_KeepsAndRewritesItsDesktopShortcut()
     {
         // The desktop shortcut is opt-in and belongs to the activation, which the
-        // replacement inherits, so a reinstall in place must not take it away.
+        // replacement inherits, so a reinstall in place must not take it away -- with or
+        // without --activate (the TUI dialog always activates).
         if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
-        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
-        var active = await InstallAsync("4.5.1", "--path", target, "--activate");
-        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
-        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
-        File.WriteAllText(shortcut, "shortcut");
+        foreach (var flags in new[] { Array.Empty<string>(), new[] { "--activate" } })
+        {
+            var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force-" + flags.Length);
+            var active = await InstallAsync("4.5.1", "--path", target, "--activate");
+            Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+            var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+            var placeholder = System.Text.Encoding.UTF8.GetBytes("shortcut");
+            File.WriteAllBytes(shortcut, placeholder);
 
-        await InstallAsync("4.5.1", "--path", target, "--force");
+            await InstallAsync("4.5.1", ["--path", target, "--force", .. flags]);
 
-        Assert.True(File.Exists(shortcut), "the reinstall took the active install's desktop shortcut away");
+            Assert.True(File.Exists(shortcut), $"a reinstall ({string.Join(' ', flags)}) took the active install's desktop shortcut away");
+            Assert.NotEqual(placeholder, File.ReadAllBytes(shortcut)); // rewritten, not merely left in place
+        }
     }
 
     [Fact]

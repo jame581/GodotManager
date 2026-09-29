@@ -332,20 +332,6 @@ internal sealed class AppPaths
     }
 
     /// <summary>
-    /// The directory moves that bring a default-layout Linux machine from an older path
-    /// scheme onto the current one, in the order they must run.
-    ///
-    /// Pure -- it plans, it never touches disk -- because the ordering carries the whole
-    /// decision: <see cref="TryMigrateDirectory"/> is a no-op once the destination exists,
-    /// so when a machine has both <c>&lt;shim&gt;/godman</c> and
-    /// <c>&lt;shim&gt;/godot-manager</c> sitting there, whichever is listed first wins and
-    /// the other is left behind for <c>doctor</c> to report. Listing godman first preserves
-    /// the precedence the pre-1.4.0 migration had when it folded godot-manager into
-    /// <c>&lt;shim&gt;/godman</c>. Getting that backwards would silently resurrect an
-    /// abandoned install root over the live one, which is exactly the kind of thing that
-    /// needs a unit test rather than a privileged machine to catch.
-    /// </summary>
-    /// <summary>
     /// The Windows migrations, in the order they run: the user root, then the machine-wide one.
     /// Pure, for the same reason <see cref="PlanLinuxMigrations(string, string)"/> is: the
     /// constructor runs this plan and doctor reads it, so a rule that lived only in the
@@ -372,6 +358,20 @@ internal sealed class AppPaths
         return plan;
     }
 
+    /// <summary>
+    /// The directory moves that bring a default-layout Linux machine from an older path
+    /// scheme onto the current one, in the order they must run.
+    ///
+    /// Pure -- it plans, it never touches disk -- because the ordering carries the whole
+    /// decision: <see cref="TryMigrateDirectory"/> is a no-op once the destination exists,
+    /// so when a machine has both <c>&lt;shim&gt;/godman</c> and
+    /// <c>&lt;shim&gt;/godot-manager</c> sitting there, whichever is listed first wins and
+    /// the other is left behind for <c>doctor</c> to report. Listing godman first preserves
+    /// the precedence the pre-1.4.0 migration had when it folded godot-manager into
+    /// <c>&lt;shim&gt;/godman</c>. Getting that backwards would silently resurrect an
+    /// abandoned install root over the live one, which is exactly the kind of thing that
+    /// needs a unit test rather than a privileged machine to catch.
+    /// </summary>
     internal static IReadOnlyList<(string Source, string Destination)> PlanLinuxMigrations(string home, string globalPrefix)
     {
         return PlanLinuxMigrationsByScope(home, globalPrefix)
@@ -407,8 +407,8 @@ internal sealed class AppPaths
     /// differently from no override. The one exception is a relative prefix: it resolves
     /// against whatever directory godman happens to run in, so it never migrates (and the
     /// constructor creates no global directory under it). An empty value counts as unset
-    /// (<see cref="ResolveOverride"/>). The Windows constructor still restricts its global
-    /// move to the default %ProgramFiles% on its own.
+    /// (<see cref="ResolveOverride"/>). Windows plans through the same gates
+    /// (<see cref="PlanWindowsMigrations"/>).
     /// </summary>
     internal static (bool MigrateUser, bool MigrateGlobal) MigrationGates(
         string? homeOverride, string? legacyHomeOverride, string? globalOverride, string? legacyGlobalOverride)

@@ -1006,4 +1006,22 @@ public class AppPathsTests
         Assert.True(File.Exists(Path.Combine(prefix, "godman", "installs", "4.5.1", "Godot.exe")));
         Assert.False(Directory.Exists(Path.Combine(prefix, "GodotManager")));
     }
+    [Fact]
+    public void Windows_TheConstructorMovesALegacyGlobalRootInsideANonDefaultPrefix()
+    {
+        // End to end through the constructor rather than the planner alone: doctor's list and
+        // the moves the constructor runs come from one plan, so a prefix chosen through
+        // GODMAN_GLOBAL_ROOT has its <prefix>\GodotManager moved on the first run.
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(seed: prefix =>
+        {
+            var install = Path.Combine(prefix, "GodotManager", "installs", "4.5.1");
+            Directory.CreateDirectory(install);
+            File.WriteAllText(Path.Combine(install, "Godot.exe"), "fake");
+        });
+
+        var prefix = Path.Combine(fixture.TempRoot, "global");
+        Assert.True(File.Exists(Path.Combine(prefix, "godman", "installs", "4.5.1", "Godot.exe")));
+        Assert.False(Directory.Exists(Path.Combine(prefix, "GodotManager")));
+    }
 }

@@ -293,6 +293,11 @@ public class CleanCommandTests : IDisposable
         RemoveEveryGlobalTargetTheFixtureCreated();
         Directory.CreateDirectory(Path.Combine(LegacyGlobalRoot(), "4.5.1"));
 
+        // On Linux the legacy root sits inside the shim directory, so creating it also makes
+        // the shim clause true and the predicate alone cannot tell the clauses apart there;
+        // only Windows (<prefix>\GodotManager, beside the shim directory) can. The input
+        // the new clause reads is checked directly so the Linux run still pins it.
+        Assert.Single(_fixture.Paths.GetLegacyGlobalInstallRoots());
         Assert.True(CleanCommand.HasGlobalCleanupTargets(_fixture.Paths));
     }
 

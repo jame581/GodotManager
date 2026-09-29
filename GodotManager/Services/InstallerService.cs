@@ -212,28 +212,47 @@ internal sealed class InstallerService
         // run against the scope it was activated in.
         var previousActive = request.Activate ? registry.GetActive() : null;
 
-        // A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
-        // carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
-        // in the app menu. Captured here, before RemoveAll drops them; their launcher files
-        // are deleted only after the save below succeeds.
+        // Captured here, before RemoveAll drops them; their launcher files are deleted only
+        // after the save below succeeds.
         var replaced = registry.Installs
             .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
             .ToList();
         var activeIdBeforeReplace = registry.ActiveId;
 
+        // A --force reinstall in place keeps the entry's Id. ActiveId lives in the per-user
+        // registry, and on Linux a global install runs under sudo, which resets HOME: the
+        // process doing the reinstall loads root's registry, never sees the user's ActiveId,
+        // and could not move it. A fresh Id would leave the user's pointer dangling --
+        // GetActive() null, `deactivate` refusing, the shim still running -- on the main
+        // Linux global flow. Same scope only: an entry of another scope is not this
+        // install's. It also keeps the Linux .desktop name (which carries the Id) stable, so
+        // no duplicate "Godot X" survives in the app menu.
+        var replacedSameScope = replaced.FirstOrDefault(x => x.Scope == entry.Scope);
+        if (replacedSameScope is not null)
+        {
+            entry.Id = replacedSameScope.Id;
+        }
+
+        // Only when *this* registry says the replaced entry was the active one -- what the
+        // Id above cannot do for a process that cannot see it -- the activation is
+        // re-applied to the reinstalled directory: the shim names an executable, not the
+        // directory, so a different version merged over the old one would otherwise leave
+        // the shim running the old binary under a registry that says the new one is active.
+        var replacedActive = replaced.FirstOrDefault(x => x.Id == activeIdBeforeReplace && x.Scope == entry.Scope);
+
+        // Whether the opt-in Windows desktop shortcut exists, read before anything below can
+        // delete it (RemoveActiveAsync does). It belongs to the activation, which the
+        // reinstall in place inherits, so a reinstall must not take it away.
+        var keepDesktopShortcut = replacedActive is not null && _environment.Launcher.DesktopShortcutExists(replacedActive);
+
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
 
-        // Replacing the active entry in place gives the replacement a fresh Id. The shim and
-        // GODOT_HOME still name this same directory, so the activation moves to the
-        // replacement; without it ActiveId dangles and GetActive() is null while the shim
-        // keeps working. Same scope only: a global entry's shim must not be attributed to a
-        // user-scope replacement, whose deactivation would clean the wrong scope's shim.
-        // With --activate the block below marks it anyway.
-        var replacedActive = replaced.FirstOrDefault(x => x.Id == activeIdBeforeReplace && x.Scope == entry.Scope);
         if (replacedActive is not null && !request.Activate)
         {
             registry.MarkActive(entry.Id);
+            await _environment.ApplyActiveAsync(
+                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
         }
 
         if (request.Activate)
@@ -261,7 +280,7 @@ internal sealed class InstallerService
             registry.MarkActive(entry.Id);
             // Without the launcher entry: that is created below, only once the save lands.
             await _environment.ApplyActiveAsync(
-                entry, dryRun: false, createDesktopShortcut: false, ensureLauncherEntry: false, cancellationToken);
+                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
@@ -277,20 +296,14 @@ internal sealed class InstallerService
         {
             _environment.Launcher.Delete(old);
 
-            // The desktop shortcut belongs to the activation. When it was carried over to
-            // the replacement (above), the shortcut moves with it; otherwise the replaced
-            // entry was active in another scope and the shortcut has no owner left, so it
-            // goes. (With --activate, RemoveActiveAsync above already deleted it.)
-            if (old.Id == activeIdBeforeReplace)
+            // The desktop shortcut belongs to the activation. When the replacement inherited
+            // it, the activation above already wrote it under the replacement's name; the old
+            // file goes only if that name differs. Otherwise the replaced entry was active in
+            // another scope and the shortcut has no owner left, so it goes.
+            if (old.Id == activeIdBeforeReplace
+                && (!ReferenceEquals(old, replacedActive) || !_environment.Launcher.SharesDesktopShortcut(old, entry)))
             {
-                if (ReferenceEquals(old, replacedActive) && !request.Activate)
-                {
-                    _environment.Launcher.MoveDesktopShortcut(old, entry);
-                }
-                else
-                {
-                    _environment.Launcher.DeleteDesktopShortcut(old);
-                }
+                _environment.Launcher.DeleteDesktopShortcut(old);
             }
         }
 
