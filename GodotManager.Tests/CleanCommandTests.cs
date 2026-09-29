@@ -310,7 +310,12 @@ public class CleanCommandTests : IDisposable
         var root = LegacyGlobalRoot();
         Directory.CreateDirectory(root);
 
-        Assert.Equal([root], _fixture.Paths.GetLegacyGlobalInstallRoots(Path.Combine(_fixture.TempRoot, "elsewhere", "godman")));
+        var elsewhere = Path.Combine(_fixture.TempRoot, "elsewhere", "godman");
+        Assert.Equal([root], _fixture.Paths.GetLegacyGlobalInstallRoots(elsewhere));
         Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(Path.Combine(root, "godman")));
+
+        // `dotnet godman.dll` from there: the process is the dotnet host, the app's base
+        // directory is what sits under the root.
+        Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(elsewhere, root + Path.DirectorySeparatorChar));
     }
 }

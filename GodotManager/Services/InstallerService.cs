@@ -258,11 +258,10 @@ internal sealed class InstallerService
 
         registry.Installs.Add(entry);
 
-        if (replacedActive is not null && !request.Activate)
+        var reapplyActivation = replacedActive is not null && !request.Activate;
+        if (reapplyActivation)
         {
             registry.MarkActive(entry.Id);
-            await _environment.ApplyActiveAsync(
-                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
         }
 
         if (request.Activate)
@@ -294,6 +293,15 @@ internal sealed class InstallerService
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+
+        // After the save, unlike the --activate branch above: the files were merged already, so
+        // a failed write leaves the shim naming a directory that still exists and a registry
+        // that still describes it, rather than a shim ahead of the registry.
+        if (reapplyActivation)
+        {
+            await _environment.ApplyActiveAsync(
+                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
+        }
 
         // After the save, symmetric with remove: a failed registry write must neither leave
         // a launcher entry pointing at an unregistered install nor have deleted the entry of

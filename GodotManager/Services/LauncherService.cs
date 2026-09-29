@@ -257,7 +257,7 @@ internal sealed class LauncherService
         var taken = installs.Any(other =>
             other.Id != entry.Id
             && other.Scope == entry.Scope
-            && other.LauncherEntry == true
+            && other.LauncherEntry != false
             && string.Equals(StartMenuFileName(other), plain, StringComparison.OrdinalIgnoreCase));
 
         return taken ? $"{DisplayName(entry)} ({entry.Id.ToString("N")[..8]}).lnk" : null;

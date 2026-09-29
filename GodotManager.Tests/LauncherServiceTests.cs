@@ -163,14 +163,25 @@ public class LauncherServiceTests : IDisposable
     [Theory]
     [InlineData("4.4.0", InstallScope.User, true)]    // another version: a different name
     [InlineData("4.5.1", InstallScope.Global, true)]  // another scope: a different directory
-    [InlineData("4.5.1", InstallScope.User, false)]   // --no-shortcut: it holds no file
-    [InlineData("4.5.1", InstallScope.User, null)]    // pre-1.4.0: no file until activate
+    [InlineData("4.5.1", InstallScope.User, false)]   // --no-shortcut: it holds no file and never will
     public void ChooseStartMenuFileName_IgnoresSiblingsThatDoNotHoldThePlainName(string version, InstallScope scope, bool? launcher)
     {
         var sibling = Windowed(version, scope, launcher);
         var entry = Windowed();
 
         Assert.Null(LauncherService.ChooseStartMenuFileName(entry, [sibling, entry]));
+    }
+
+    [Fact]
+    public void ChooseStartMenuFileName_TreatsAPre140SiblingAsHoldingThePlainName()
+    {
+        // A pre-1.4.0 install has no shortcut file yet, but `activate` backfills it at the
+        // plain name. If the new install also took the plain name, that backfill would
+        // overwrite it, and removing either would then delete the other's.
+        var pre140 = Windowed(launcher: null);
+        var entry = Windowed();
+
+        Assert.NotNull(LauncherService.ChooseStartMenuFileName(entry, [pre140, entry]));
     }
 
     [Fact]

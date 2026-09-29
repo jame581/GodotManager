@@ -103,7 +103,8 @@ internal static class LinuxElevation
 
     internal const string DeactivateFirstNote =
         "This is the active install, and sudo resets HOME, so an elevated remove would not " +
-        "deactivate it for you. Run `godman deactivate` first (it needs no sudo), then remove it:";
+        "deactivate it for you. Run `godman deactivate` first (it needs no sudo, and tells you " +
+        "if a global shim needs a `sudo rm`), then remove it:";
 
     /// <summary>
     /// <c>clean</c>'s version of <see cref="Check"/>: it has no scope of its own, so it touches

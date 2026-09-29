@@ -519,18 +519,24 @@ internal sealed class AppPaths
     /// Directories only: once migrated, <c>&lt;prefix&gt;/bin/godman</c> is the name the godman
     /// binary itself takes, and that file must never be matched. For the same reason a root
     /// holding the running executable is left out (godman unzipped into a folder that carries
-    /// the old product name): deleting it would take the tool with the installs.
+    /// the old product name, or run as <c>dotnet godman.dll</c> from there): deleting it would take
+    /// the tool with the installs.
     /// </summary>
     public IReadOnlyList<string> GetLegacyGlobalInstallRoots() =>
-        GetLegacyGlobalInstallRoots(Environment.ProcessPath);
+        GetLegacyGlobalInstallRoots(Environment.ProcessPath, AppContext.BaseDirectory);
 
-    internal IReadOnlyList<string> GetLegacyGlobalInstallRoots(string? running)
+    /// <param name="running">
+    /// Where godman itself runs from. ProcessPath alone is not enough: launched as
+    /// <c>dotnet godman.dll</c> it is the dotnet host, so the application's base directory
+    /// is checked too.
+    /// </param>
+    internal IReadOnlyList<string> GetLegacyGlobalInstallRoots(params string?[] running)
     {
         return _legacyGlobalRegistryFiles
             .Select(System.IO.Path.GetDirectoryName)
             .OfType<string>()
             .Where(Directory.Exists)
-            .Where(root => running is null || !PathRebase.IsUnder(running, root))
+            .Where(root => !running.Any(path => !string.IsNullOrEmpty(path) && PathRebase.IsUnder(path, root)))
             .ToList();
     }
 

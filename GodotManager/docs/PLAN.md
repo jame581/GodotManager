@@ -439,7 +439,10 @@ regression from 1.3.0. User-facing notes: `GodotManager/docs/release-notes/1.4.1
      keeps the user's pointer valid whoever runs the install. When the process's own
      registry says the entry was active, the activation is re-applied (a different version
      merged over the old one otherwise leaves the shim on the old binary) and the Windows
-     desktop shortcut is kept.
+     desktop shortcut is kept. The re-apply runs after the registry save and only when the
+     process's own registry marks the entry active, so a *different version* merged over the
+     active global install's directory under sudo leaves the shim on the old binary
+     (documented limitation; same-version reinstalls are unaffected).
 - **Windows Start Menu collision** — the shortcut name is chosen once at install time and
   recorded on `InstallEntry.LauncherFileName` (null = plain name, so existing entries and
   older registries are unchanged). Recorded, not recomputed from siblings: removing the
