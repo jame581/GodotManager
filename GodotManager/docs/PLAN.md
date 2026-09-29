@@ -424,7 +424,11 @@ regression from 1.3.0. User-facing notes: `GodotManager/docs/release-notes/1.4.1
 - [#7](https://github.com/jame581/GodotManager/issues/7) —
   1. `clean` on Windows removes an unmigrated legacy global root
      (`GetLegacyGlobalInstallRoots` no longer returns `[]` there, skips a root holding the
-     running executable) and `HasGlobalCleanupTargets` counts it, so UAC is decided first.
+     running executable or the app's base directory) and `HasGlobalCleanupTargets` counts it,
+     so UAC is decided first. `CleanupLegacyRoot` treats the Windows root like the current
+     layout (`installs\\`, `bin\\`, registry; the folder only if empty) because
+     `<prefix>\\GodotManager` is a product-name folder, not a godman-only one; Linux's
+     `<prefix>/bin/godman` still goes whole.
   2. `AppPaths.PlanWindowsMigrations` drives both the Windows constructor and
      `_migrationMoves`. The global move now runs under any absolute `GODMAN_GLOBAL_ROOT`
      (as on Linux) instead of only at the default `%ProgramFiles%`, so doctor's advice
@@ -443,6 +447,9 @@ regression from 1.3.0. User-facing notes: `GodotManager/docs/release-notes/1.4.1
      process's own registry marks the entry active, so a *different version* merged over the
      active global install's directory under sudo leaves the shim on the old binary
      (documented limitation; same-version reinstalls are unaffected).
+- **Launcher deletes:** `LauncherService.Delete`/`Exists` ignore an entry with
+  `LauncherEntry == false`. On Windows such an entry resolves to the plain shortcut name,
+  which a sibling may hold, so removing the opted-out one used to delete the sibling's.
 - **Windows Start Menu collision** — the shortcut name is chosen once at install time and
   recorded on `InstallEntry.LauncherFileName` (null = plain name, so existing entries and
   older registries are unchanged). Recorded, not recomputed from siblings: removing the

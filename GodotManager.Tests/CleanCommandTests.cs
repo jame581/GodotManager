@@ -318,4 +318,47 @@ public class CleanCommandTests : IDisposable
         // directory is what sits under the root.
         Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(elsewhere, root + Path.DirectorySeparatorChar));
     }
+    [Fact]
+    public void CleanupLegacyRoot_WindowsLayout_RemovesGodmansPartsAndSparesWhatElseLivesInTheRoot()
+    {
+        // <prefix>\GodotManager is the product-name folder, not a godman-only one: it is
+        // cleaned like the current layout (installs\, bin\, the registry), never wholesale.
+        var root = Path.Combine(_fixture.TempRoot, "legacy-win-root");
+        Directory.CreateDirectory(Path.Combine(root, "installs", "4.5.1"));
+        Directory.CreateDirectory(Path.Combine(root, "bin"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+        var other = Path.Combine(root, "someone-elses.txt");
+        File.WriteAllText(other, "keep");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: true);
+
+        Assert.False(Directory.Exists(Path.Combine(root, "installs")));
+        Assert.False(Directory.Exists(Path.Combine(root, "bin")));
+        Assert.False(File.Exists(Path.Combine(root, "installs.json")));
+        Assert.True(File.Exists(other), "clean deleted a file godman never wrote");
+    }
+
+    [Fact]
+    public void CleanupLegacyRoot_WindowsLayout_RemovesTheRootItselfOnceNothingElseIsInIt()
+    {
+        var root = Path.Combine(_fixture.TempRoot, "legacy-win-root");
+        Directory.CreateDirectory(Path.Combine(root, "installs", "4.5.1"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: true);
+
+        Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void CleanupLegacyRoot_LinuxLayout_RemovesTheWholeGodmanOnlyDirectory()
+    {
+        var root = Path.Combine(_fixture.TempRoot, "legacy-linux-root");
+        Directory.CreateDirectory(Path.Combine(root, "4.5.1-standard-linux-global"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: false);
+
+        Assert.False(Directory.Exists(root));
+    }
 }

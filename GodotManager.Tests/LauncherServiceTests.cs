@@ -210,4 +210,33 @@ public class LauncherServiceTests : IDisposable
         Assert.Null(older.LauncherFileName);
         Assert.Equal("Godot 4.5.1 (Standard).lnk", LauncherService.StartMenuFileName(older));
     }
+    [Fact]
+    public void Delete_AnEntryThatOptedOutOfALauncher_LeavesTheFileAtItsResolvedPathAlone()
+    {
+        // On Windows an entry with no recorded name resolves to the plain shortcut name, which
+        // another install of the same version and edition may hold. Removing the --no-shortcut
+        // one must not delete that shortcut, and doctor must not read it as the entry's own.
+        var optedOut = Windowed(launcher: false);
+        var path = LauncherService.GetEntryPath(optedOut, _fixture.Paths);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "somebody else's launcher");
+
+        _fixture.Launcher.Delete(optedOut);
+
+        Assert.True(File.Exists(path));
+        Assert.False(_fixture.Launcher.Exists(optedOut));
+    }
+
+    [Fact]
+    public void Delete_AnEntryWithALauncher_StillDeletesItsFile()
+    {
+        var entry = Windowed(launcher: true);
+        var path = LauncherService.GetEntryPath(entry, _fixture.Paths);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "launcher");
+
+        _fixture.Launcher.Delete(entry);
+
+        Assert.False(File.Exists(path));
+    }
 }

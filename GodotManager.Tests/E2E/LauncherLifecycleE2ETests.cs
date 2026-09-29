@@ -66,7 +66,10 @@ public class LauncherLifecycleE2ETests : IDisposable
         var result = await CliTestHarness.Create(_fixture).RunAsync(["activate", entry.Id.ToString()]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.True(_fixture.Launcher.Exists(entry));
+        // The entry as the registry holds it now (LauncherEntry null), not the object captured
+        // at install time, which still says it opted out.
+        var backfilled = (await _fixture.Registry.LoadAsync()).Installs.Single(x => x.Id == entry.Id);
+        Assert.True(_fixture.Launcher.Exists(backfilled));
     }
 
     [Fact]
@@ -203,6 +206,29 @@ public class LauncherLifecycleE2ETests : IDisposable
         await InstallAsync("4.5.1", "--path", target, "--force");
 
         Assert.True(File.Exists(shim), "the reinstall left the active install's shim unrewritten");
+    }
+
+    [Fact]
+    public async Task Install_Force_OverTheActiveInstall_WhenTheShimCannotBeRewritten_StillCompletesTheInstall()
+    {
+        // The registry write already succeeded when the activation is re-applied, so a shim
+        // that cannot be rewritten is a warning, not a failed install that skips the launcher work.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target, "--activate");
+        var shim = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        File.SetUnixFileMode(shim, UnixFileMode.UserRead);
+        try
+        {
+            var replacement = await InstallAsync("4.5.1", "--path", target, "--force"); // asserts exit code 0
+
+            Assert.Equal(original.Id, replacement.Id);
+            Assert.True(_fixture.Launcher.Exists(replacement)); // the launcher work after the re-apply still ran
+        }
+        finally
+        {
+            File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
     }
 
     [Fact]

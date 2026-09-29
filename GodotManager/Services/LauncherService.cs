@@ -83,6 +83,14 @@ internal sealed class LauncherService
     /// </summary>
     public void Delete(InstallEntry entry)
     {
+        // An install made with --no-shortcut owns no file, but on Windows an entry with no
+        // recorded name resolves to the plain one -- which another install of the same
+        // version and edition may hold. Removing the opted-out one must not delete that.
+        if (entry.LauncherEntry == false)
+        {
+            return;
+        }
+
         TryDelete(GetEntryPath(entry, _paths));
     }
 
@@ -105,7 +113,7 @@ internal sealed class LauncherService
         }
     }
 
-    public bool Exists(InstallEntry entry) => File.Exists(GetEntryPath(entry, _paths));
+    public bool Exists(InstallEntry entry) => entry.LauncherEntry != false && File.Exists(GetEntryPath(entry, _paths));
 
     /// <summary>
     /// Removes every launcher file godman owns in <paramref name="scope"/>. On Linux the

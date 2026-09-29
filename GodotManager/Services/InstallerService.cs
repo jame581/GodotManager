@@ -299,8 +299,17 @@ internal sealed class InstallerService
         // that still describes it, rather than a shim ahead of the registry.
         if (reapplyActivation)
         {
-            await _environment.ApplyActiveAsync(
-                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
+            // Best-effort: the install is committed, so a shim or PATH write that fails here
+            // must not report the whole install as failed and skip the launcher work below.
+            try
+            {
+                await _environment.ApplyActiveAsync(
+                    entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _diagnostics?.Warn($"Reinstalled {entry.Version}, but could not refresh its activation: {ex.Message}");
+            }
         }
 
         // After the save, symmetric with remove: a failed registry write must neither leave

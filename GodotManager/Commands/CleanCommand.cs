@@ -136,10 +136,44 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         // prints nothing on a migrated machine.
         foreach (var legacyRoot in paths.GetLegacyGlobalInstallRoots())
         {
-            CleanupDirectory(legacyRoot, "unmigrated global installs");
+            CleanupLegacyRoot(legacyRoot, windowsLayout: OperatingSystem.IsWindows());
         }
 
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
+    }
+
+    /// <summary>
+    /// Removes one unmigrated legacy global root. On Linux it is <c>&lt;prefix&gt;/bin/godman</c>,
+    /// a directory only godman ever used, so it goes whole. On Windows it is
+    /// <c>&lt;prefix&gt;\GodotManager</c>, the product-name folder: it is cleaned exactly the way
+    /// the current layout is (<c>installs\</c>, <c>bin\</c> and the registry file, never the whole
+    /// root), and the root itself only if that leaves it empty, so anything else that lives
+    /// there survives.
+    /// </summary>
+    internal static void CleanupLegacyRoot(string legacyRoot, bool windowsLayout)
+    {
+        if (!windowsLayout)
+        {
+            CleanupDirectory(legacyRoot, "unmigrated global installs");
+            return;
+        }
+
+        CleanupDirectory(Path.Combine(legacyRoot, "installs"), "unmigrated global installs");
+        CleanupDirectory(Path.Combine(legacyRoot, "bin"), "unmigrated global shims");
+        CleanupFile(Path.Combine(legacyRoot, "installs.json"), "unmigrated global registry");
+
+        try
+        {
+            if (Directory.Exists(legacyRoot) && !Directory.EnumerateFileSystemEntries(legacyRoot).Any())
+            {
+                Directory.Delete(legacyRoot);
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] unmigrated global root: {legacyRoot}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] unmigrated global root at {legacyRoot}: {ex.Message}");
+        }
     }
 
     internal static bool HasGlobalCleanupTargets(AppPaths paths)
