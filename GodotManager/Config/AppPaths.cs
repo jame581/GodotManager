@@ -131,19 +131,15 @@ internal sealed class AppPaths
             var userRoot = System.IO.Path.Combine(appData, WindowsFolderName);
             var globalRoot = System.IO.Path.Combine(programFiles, WindowsFolderName);
 
-            // Each scope migrates only when its own root is at the default: a user who
-            // exports GODMAN_HOME and runs `sudo -E godman ... --scope Global` still has a
-            // default global root that needs moving.
-            var windowsPlan = new List<(string Source, string Destination)>();
-            if (migrateUser && appData == defaultAppData)
-            {
-                windowsPlan.Add((System.IO.Path.Combine(defaultAppData, LegacyWindowsFolderName), userRoot));
-            }
-
-            if (migrateGlobal && programFiles == defaultProgramFiles)
-            {
-                windowsPlan.Add((System.IO.Path.Combine(defaultProgramFiles, LegacyWindowsFolderName), globalRoot));
-            }
+            // What the constructor runs, and -- below -- what doctor reads: one plan, so the
+            // advice cannot promise a move no run makes. The user scope migrates only while
+            // its root is the default (no GODMAN_HOME), like Linux. The global scope moves
+            // <prefix>\GodotManager inside whatever absolute prefix is in effect, also like
+            // Linux: the legacy root sits beside the new one, so a prefix chosen through
+            // GODOT_MANAGER_GLOBAL_ROOT in 1.3 has one to move, and only a run that plans it
+            // ever will. A relative prefix moves nothing (MigrationGates).
+            var windowsPlan = PlanWindowsMigrations(
+                appData, programFiles, migrateUser && appData == defaultAppData, migrateGlobal);
 
             // The shims live inside the roots on Windows, so after a move they sit at the
             // new location still naming the old one.
@@ -160,14 +156,11 @@ internal sealed class AppPaths
             _userShimDirectory = System.IO.Path.Combine(userRoot, "bin");
             _userInstallRoot = System.IO.Path.Combine(userRoot, "installs");
 
-            // Every move the constructor can make, ungated and override-aware, so doctor can
-            // look at the same directory TryMigrateDirectory checks (the whole root on
-            // Windows, not the installs\ inside it the relocation map names).
-            _migrationMoves = new[]
-            {
-                (System.IO.Path.Combine(appData, LegacyWindowsFolderName), userRoot),
-                (System.IO.Path.Combine(programFiles, LegacyWindowsFolderName), globalRoot)
-            };
+            // Exactly the moves the constructor runs -- doctor looks at the same directory
+            // TryMigrateDirectory checks (the whole root on Windows, not the installs\ inside
+            // it the relocation map names). EnsureDirectories also reads this to keep from
+            // creating a destination whose move is still pending.
+            _migrationMoves = windowsPlan;
 
             _installRootRelocations = new[]
             {
@@ -352,6 +345,33 @@ internal sealed class AppPaths
     /// abandoned install root over the live one, which is exactly the kind of thing that
     /// needs a unit test rather than a privileged machine to catch.
     /// </summary>
+    /// <summary>
+    /// The Windows migrations, in the order they run: the user root, then the machine-wide one.
+    /// Pure, for the same reason <see cref="PlanLinuxMigrations(string, string)"/> is: the
+    /// constructor runs this plan and doctor reads it, so a rule that lived only in the
+    /// constructor let doctor promise moves that never ran. <paramref name="appData"/> and
+    /// <paramref name="programFiles"/> are the effective bases (defaults or overrides); each
+    /// legacy <c>GodotManager</c> root sits beside its <c>godman</c> destination.
+    /// </summary>
+    internal static IReadOnlyList<(string Source, string Destination)> PlanWindowsMigrations(
+        string appData, string programFiles, bool migrateUser, bool migrateGlobal)
+    {
+        var plan = new List<(string Source, string Destination)>();
+        if (migrateUser)
+        {
+            plan.Add((System.IO.Path.Combine(appData, LegacyWindowsFolderName),
+                System.IO.Path.Combine(appData, WindowsFolderName)));
+        }
+
+        if (migrateGlobal)
+        {
+            plan.Add((System.IO.Path.Combine(programFiles, LegacyWindowsFolderName),
+                System.IO.Path.Combine(programFiles, WindowsFolderName)));
+        }
+
+        return plan;
+    }
+
     internal static IReadOnlyList<(string Source, string Destination)> PlanLinuxMigrations(string home, string globalPrefix)
     {
         return PlanLinuxMigrationsByScope(home, globalPrefix)
@@ -490,24 +510,27 @@ internal sealed class AppPaths
     }
 
     /// <summary>
-    /// The pre-migration global install roots that still exist on this machine (Linux only):
-    /// <c>&lt;prefix&gt;/bin/godman</c> and <c>&lt;prefix&gt;/bin/godot-manager</c>. Until the
-    /// first privileged run moves them, <see cref="GetLegacyGlobalRegistryFiles"/> makes
-    /// <c>list</c> show their installs, so <c>clean</c> has to treat them as global targets.
+    /// The pre-migration global install roots that still exist on this machine. On Linux
+    /// <c>&lt;prefix&gt;/bin/godman</c> and <c>&lt;prefix&gt;/bin/godot-manager</c>; on Windows
+    /// <c>&lt;prefix&gt;\GodotManager</c>. Until the first privileged run moves them,
+    /// <see cref="GetLegacyGlobalRegistryFiles"/> makes <c>list</c> show their installs, so
+    /// <c>clean</c> has to treat them as global targets -- and decide on elevation for them
+    /// before deleting anything, since nothing else creates them or asks for UAC.
     /// Directories only: once migrated, <c>&lt;prefix&gt;/bin/godman</c> is the name the godman
-    /// binary itself takes, and that file must never be matched.
+    /// binary itself takes, and that file must never be matched. For the same reason a root
+    /// holding the running executable is left out (godman unzipped into a folder that carries
+    /// the old product name): deleting it would take the tool with the installs.
     /// </summary>
-    public IReadOnlyList<string> GetLegacyGlobalInstallRoots()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return [];
-        }
+    public IReadOnlyList<string> GetLegacyGlobalInstallRoots() =>
+        GetLegacyGlobalInstallRoots(Environment.ProcessPath);
 
+    internal IReadOnlyList<string> GetLegacyGlobalInstallRoots(string? running)
+    {
         return _legacyGlobalRegistryFiles
             .Select(System.IO.Path.GetDirectoryName)
             .OfType<string>()
             .Where(Directory.Exists)
+            .Where(root => running is null || !PathRebase.IsUnder(running, root))
             .ToList();
     }
 

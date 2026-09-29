@@ -254,4 +254,58 @@ public class CleanCommandTests : IDisposable
         var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
         Assert.Equal(0, result.ExitCode);
     }
+    // --- An unmigrated legacy global root is a global cleanup target (issue #7, item 1) ---
+
+    private string LegacyGlobalRoot() =>
+        Path.GetDirectoryName(_fixture.Paths.GetLegacyGlobalRegistryFiles()[0])!;
+
+    private void RemoveEveryGlobalTargetTheFixtureCreated()
+    {
+        // The fixture creates the global root, shim directory and launcher directory, each
+        // of which is a target on its own; the point here is the legacy root alone.
+        foreach (var dir in new[]
+        {
+            _fixture.Paths.GetInstallRoot(InstallScope.Global),
+            _fixture.Paths.GetShimDirectory(InstallScope.Global),
+            _fixture.Paths.GetLauncherDirectory(InstallScope.Global)
+        })
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+
+        if (File.Exists(_fixture.Paths.GlobalRegistryFile)) File.Delete(_fixture.Paths.GlobalRegistryFile);
+    }
+
+    [Fact]
+    public void HasGlobalCleanupTargets_NothingGlobal_IsFalse()
+    {
+        RemoveEveryGlobalTargetTheFixtureCreated();
+
+        Assert.False(CleanCommand.HasGlobalCleanupTargets(_fixture.Paths));
+    }
+
+    [Fact]
+    public void HasGlobalCleanupTargets_OnlyAnUnmigratedLegacyRoot_IsTrue()
+    {
+        // On Windows this is what triggers UAC: AppPaths never creates the new root while a
+        // move into it is pending, so without this the clean ran unelevated, deleted
+        // nothing under Program Files and left the installs behind.
+        RemoveEveryGlobalTargetTheFixtureCreated();
+        Directory.CreateDirectory(Path.Combine(LegacyGlobalRoot(), "4.5.1"));
+
+        Assert.True(CleanCommand.HasGlobalCleanupTargets(_fixture.Paths));
+    }
+
+    [Fact]
+    public void GetLegacyGlobalInstallRoots_SkipsARootHoldingTheRunningExecutable()
+    {
+        // godman unzipped into a folder that still carries the old product name: cleaning
+        // that root would delete the tool along with the installs.
+        RemoveEveryGlobalTargetTheFixtureCreated();
+        var root = LegacyGlobalRoot();
+        Directory.CreateDirectory(root);
+
+        Assert.Equal([root], _fixture.Paths.GetLegacyGlobalInstallRoots(Path.Combine(_fixture.TempRoot, "elsewhere", "godman")));
+        Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(Path.Combine(root, "godman")));
+    }
 }

@@ -131,12 +131,16 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 
-    private static bool HasGlobalCleanupTargets(AppPaths paths)
+    internal static bool HasGlobalCleanupTargets(AppPaths paths)
     {
+        // An unmigrated legacy root counts: CleanupAll deletes it, and on Windows it is
+        // the only thing on the machine that says a UAC prompt is needed -- AppPaths never
+        // creates the new root while a move into it is pending, so nothing else exists.
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
             || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
             || File.Exists(paths.GlobalRegistryFile)
-            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global));
+            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global))
+            || paths.GetLegacyGlobalInstallRoots().Count > 0;
     }
 
     private static int RunElevatedCleanup()
