@@ -1,6 +1,11 @@
+using GodotManager.Commands;
+using GodotManager.Config;
 using GodotManager.Domain;
+using GodotManager.Infrastructure;
 using GodotManager.Services;
 using GodotManager.Tests.Helpers;
+using Spectre.Console;
+using Spectre.Console.Testing;
 using System;
 using System.IO;
 using Xunit;
@@ -164,5 +169,55 @@ public class ShimShadowingTests
         File.WriteAllText(Path.Combine(dir, "godot.cmd"), "");
 
         Assert.Null(ShimShadowing.GetWarning(fixture.Paths, InstallScope.User));
+    }
+    // --- A failed probe is best-effort noise: --verbose only (issue #5) ---
+
+    private static string RunWarn(bool verbose, Func<AppPaths, InstallScope, Action<string>?, string?> probe)
+    {
+        using var fixture = new GodmanTestFixture();
+        var console = new TestConsole();
+        var original = AnsiConsole.Console;
+        AnsiConsole.Console = console;
+        try
+        {
+            ActivateCommand.WarnIfShadowedByGlobalShim(
+                fixture.Paths, InstallScope.User, new DiagnosticContext { Verbose = verbose }, probe);
+            return console.Output;
+        }
+        finally
+        {
+            AnsiConsole.Console = original;
+        }
+    }
+
+    private static string? FailingProbe(AppPaths paths, InstallScope scope, Action<string>? onFailure)
+    {
+        onFailure?.Invoke("Could not check for a shadowing global shim: boom");
+        return null;
+    }
+
+    [Fact]
+    public void WarnIfShadowedByGlobalShim_ProbeFailure_IsSilentWithoutVerbose()
+    {
+        Assert.Equal(string.Empty, RunWarn(verbose: false, FailingProbe));
+    }
+
+    [Fact]
+    public void WarnIfShadowedByGlobalShim_ProbeFailure_WarnsUnderVerbose()
+    {
+        var output = RunWarn(verbose: true, FailingProbe);
+
+        Assert.Contains("warn:", output);
+        Assert.Contains("Could not check for a shadowing global shim", output);
+    }
+
+    [Fact]
+    public void WarnIfShadowedByGlobalShim_FoundShadow_IsPrintedWithoutVerbose()
+    {
+        // Only the *failure to check* is verbose-gated; a shim that does outrank the
+        // activation is the whole point of the command and always shows.
+        var output = RunWarn(verbose: false, (_, _, _) => "a global shim outranks this activation");
+
+        Assert.Contains("a global shim outranks this activation", output);
     }
 }

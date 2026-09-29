@@ -14,13 +14,15 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly RegistryService _registry;
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext _diagnostics;
 
-    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, RegistryService registry, AppPaths paths)
+    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, RegistryService registry, AppPaths paths, DiagnosticContext diagnostics)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
         _registry = registry;
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -155,7 +157,7 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             }
             else if (settings.Activate)
             {
-                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
+                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope, _diagnostics);
             }
 
             // Only when verification was actually attempted and did not succeed.

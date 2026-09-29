@@ -17,12 +17,14 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
     private readonly RegistryService _registry;
     private readonly EnvironmentService _environment;
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext _diagnostics;
 
-    public ActivateCommand(RegistryService registry, EnvironmentService environment, AppPaths paths)
+    public ActivateCommand(RegistryService registry, EnvironmentService environment, AppPaths paths, DiagnosticContext diagnostics)
     {
         _registry = registry;
         _environment = environment;
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -102,7 +104,7 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
             AnsiConsole.MarkupLine("[grey]Note: Environment variable is set. Restart your terminal/shell to load GODOT_HOME.[/]");
         }
 
-        WarnIfShadowedByGlobalShim(_paths, install.Scope);
+        WarnIfShadowedByGlobalShim(_paths, install.Scope, _diagnostics);
 
         return 0;
     }
@@ -115,11 +117,18 @@ internal sealed class ActivateCommand : AsyncCommand<ActivateCommand.Settings>
     /// in-process under Terminal.Gui, where an AnsiConsole write would paint over a
     /// screen it does not own.
     /// </summary>
-    internal static void WarnIfShadowedByGlobalShim(AppPaths paths, InstallScope activatedScope)
+    internal static void WarnIfShadowedByGlobalShim(
+        AppPaths paths,
+        InstallScope activatedScope,
+        DiagnosticContext diagnostics,
+        Func<AppPaths, InstallScope, Action<string>?, string?>? probe = null)
     {
         // Best-effort (inside GetWarning): this runs *after* MarkActive and SaveAsync
         // have committed, so a probing failure must not report a failed activation.
-        var warning = ShimShadowing.GetWarning(paths, activatedScope, DiagnosticContext.WarnAlways);
+        // It is also only diagnostic noise for a check that could not run, so it follows
+        // the best-effort convention and shows under --verbose only; the shadowing warning
+        // itself, when the probe does find one, is always printed. `probe` is a test seam.
+        var warning = (probe ?? ShimShadowing.GetWarning)(paths, activatedScope, diagnostics.Warn);
         if (warning is not null)
         {
             AnsiConsole.MarkupLineInterpolated($"[yellow]{warning}[/]");
