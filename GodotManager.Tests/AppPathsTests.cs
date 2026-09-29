@@ -863,6 +863,23 @@ public class AppPathsTests
         Assert.NotNull(fixture.Paths.GetMigrationDestination(Path.Combine(fixture.TempRoot, "global", "bin", "godman")));
     }
 
+    [Fact]
+    public void Windows_WithGodmanHomeSet_PlansNoUserMoveForDoctor()
+    {
+        // Issue #7 item 2: the Windows list was ungated while the constructor gated it, so
+        // doctor offered moves no run made. Same rule as Linux now: user roots move only
+        // without GODMAN_HOME, the global root under any rooted prefix.
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(); // sets GODMAN_HOME and a rooted GODMAN_GLOBAL_ROOT
+        var userInstalls = fixture.Paths.GetInstallRoot(InstallScope.User);
+
+        var user = fixture.Paths.GetInstallRootRelocations().Where(r => r.NewRoot == userInstalls).ToList();
+        Assert.NotEmpty(user);
+        Assert.All(user, r => Assert.Null(fixture.Paths.GetMigrationDestination(r.OldRoot)));
+        Assert.NotNull(fixture.Paths.GetMigrationDestination(
+            Path.Combine(fixture.TempRoot, "global", "GodotManager", "installs")));
+    }
+
     // --- The env.sh the global shim sources (review 3, item M3) ---
 
     [Fact]
@@ -919,12 +936,12 @@ public class AppPathsTests
     {
         // Doctor asks this where the migration's existence check looks. On Linux that is
         // the relocation's new root; on Windows the whole godman root above installs\.
-        // Either way the relocation's new root must sit at or under it. (Linux user moves are
-        // not planned under the fixture's GODMAN_HOME: see
-        // Linux_WithGodmanHomeSet_PlansNoUserMoveForDoctor.)
+        // Either way the relocation's new root must sit at or under it. (User moves are
+        // not planned under the fixture's GODMAN_HOME on either platform: see
+        // Linux_WithGodmanHomeSet_PlansNoUserMoveForDoctor and its Windows twin.)
         using var fixture = new GodmanTestFixture();
         var planned = fixture.Paths.GetInstallRootRelocations()
-            .Where(r => OperatingSystem.IsWindows() || r.NewRoot != fixture.Paths.GetInstallRoot(InstallScope.User))
+            .Where(r => r.NewRoot != fixture.Paths.GetInstallRoot(InstallScope.User))
             .ToList();
         Assert.NotEmpty(planned);
 
@@ -938,5 +955,73 @@ public class AppPathsTests
                 Assert.Equal(r.NewRoot, destination);
             }
         });
+    }
+    // --- Windows migration plan (issue #7, item 2) ---
+
+    [Fact]
+    public void PlanWindowsMigrations_PutsEachLegacyRootBesideItsDestination_UserFirst()
+    {
+        var plan = AppPaths.PlanWindowsMigrations("appdata", "programfiles", migrateUser: true, migrateGlobal: true);
+
+        Assert.Equal(
+            new[]
+            {
+                (Path.Combine("appdata", "GodotManager"), Path.Combine("appdata", "godman")),
+                (Path.Combine("programfiles", "GodotManager"), Path.Combine("programfiles", "godman"))
+            },
+            plan);
+    }
+
+    [Theory]
+    [InlineData(true, false, 1)]
+    [InlineData(false, true, 1)]
+    [InlineData(false, false, 0)]
+    public void PlanWindowsMigrations_HonoursEachScopesGate(bool migrateUser, bool migrateGlobal, int expected)
+    {
+        var plan = AppPaths.PlanWindowsMigrations("appdata", "programfiles", migrateUser, migrateGlobal);
+
+        Assert.Equal(expected, plan.Count);
+        Assert.Equal(migrateUser, plan.Any(m => m.Source.StartsWith("appdata", StringComparison.Ordinal)));
+        Assert.Equal(migrateGlobal, plan.Any(m => m.Source.StartsWith("programfiles", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void PlanWindowsMigrations_UnderANonDefaultPrefix_ActuallyMovesTheLegacyRoot()
+    {
+        // The Windows constructor used to plan the global move only at the default
+        // %ProgramFiles%, while doctor's list ignored that and offered it for any prefix. The
+        // plan is one function now, so a legacy root beside a chosen prefix is moved -- the
+        // same way Linux moves <prefix>/bin/godman inside its prefix.
+        using var fixture = new GodmanTestFixture();
+        var prefix = Path.Combine(fixture.TempRoot, "Tools");
+        var legacyInstall = Path.Combine(prefix, "GodotManager", "installs", "4.5.1");
+        Directory.CreateDirectory(legacyInstall);
+        File.WriteAllText(Path.Combine(legacyInstall, "Godot.exe"), "fake");
+
+        var moved = AppPaths.MigrateAndRepair(
+            AppPaths.PlanWindowsMigrations(Path.Combine(fixture.TempRoot, "appdata"), prefix, migrateUser: false, migrateGlobal: true),
+            []);
+
+        Assert.Single(moved);
+        Assert.True(File.Exists(Path.Combine(prefix, "godman", "installs", "4.5.1", "Godot.exe")));
+        Assert.False(Directory.Exists(Path.Combine(prefix, "GodotManager")));
+    }
+    [Fact]
+    public void Windows_TheConstructorMovesALegacyGlobalRootInsideANonDefaultPrefix()
+    {
+        // End to end through the constructor rather than the planner alone: doctor's list and
+        // the moves the constructor runs come from one plan, so a prefix chosen through
+        // GODMAN_GLOBAL_ROOT has its <prefix>\GodotManager moved on the first run.
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(seed: prefix =>
+        {
+            var install = Path.Combine(prefix, "GodotManager", "installs", "4.5.1");
+            Directory.CreateDirectory(install);
+            File.WriteAllText(Path.Combine(install, "Godot.exe"), "fake");
+        });
+
+        var prefix = Path.Combine(fixture.TempRoot, "global");
+        Assert.True(File.Exists(Path.Combine(prefix, "godman", "installs", "4.5.1", "Godot.exe")));
+        Assert.False(Directory.Exists(Path.Combine(prefix, "GodotManager")));
     }
 }

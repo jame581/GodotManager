@@ -145,7 +145,7 @@ public class CleanCommandTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(globalRegistryPath)!);
         File.WriteAllText(globalRegistryPath, "{}");
 
-        CleanCommand.CleanupAll(_fixture.Paths);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher);
 
         Assert.False(File.Exists(globalRegistryPath));
     }
@@ -157,7 +157,7 @@ public class CleanCommandTests : IDisposable
             Path.Combine(_fixture.Paths.DownloadCacheDirectory, "abc123.archive"),
             "cached archive");
 
-        CleanCommand.CleanupAll(_fixture.Paths);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher);
 
         Assert.False(Directory.Exists(_fixture.Paths.DownloadCacheDirectory));
     }
@@ -175,7 +175,7 @@ public class CleanCommandTests : IDisposable
         var foreign = Path.Combine(_fixture.Paths.GetLauncherDirectory(InstallScope.User), "org.gnome.Foo.desktop");
         File.WriteAllText(foreign, "[Desktop Entry]\n");
 
-        CleanCommand.CleanupAll(_fixture.Paths, [user, global]);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher, [user, global]);
 
         Assert.False(_fixture.Launcher.Exists(user));
         Assert.False(_fixture.Launcher.Exists(global));
@@ -204,7 +204,7 @@ public class CleanCommandTests : IDisposable
         File.SetUnixFileMode(globalLauncherDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
-            CleanCommand.CleanupAll(_fixture.Paths, [global]);
+            CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher, [global]);
 
             Assert.True(File.Exists(desktopFile));
             Assert.Contains($"Failed to remove launcher entry: {desktopFile}", console.Output);
@@ -253,5 +253,112 @@ public class CleanCommandTests : IDisposable
         File.WriteAllText(_fixture.Paths.RegistryFile, "{ not json");
         var result = await CliTestHarness.Create(_fixture).RunAsync(["clean", "--yes"]);
         Assert.Equal(0, result.ExitCode);
+    }
+    // --- An unmigrated legacy global root is a global cleanup target (issue #7, item 1) ---
+
+    private string LegacyGlobalRoot() =>
+        Path.GetDirectoryName(_fixture.Paths.GetLegacyGlobalRegistryFiles()[0])!;
+
+    private void RemoveEveryGlobalTargetTheFixtureCreated()
+    {
+        // The fixture creates the global root, shim directory and launcher directory, each
+        // of which is a target on its own; the point here is the legacy root alone.
+        foreach (var dir in new[]
+        {
+            _fixture.Paths.GetInstallRoot(InstallScope.Global),
+            _fixture.Paths.GetShimDirectory(InstallScope.Global),
+            _fixture.Paths.GetLauncherDirectory(InstallScope.Global)
+        })
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+
+        if (File.Exists(_fixture.Paths.GlobalRegistryFile)) File.Delete(_fixture.Paths.GlobalRegistryFile);
+    }
+
+    [Fact]
+    public void HasGlobalCleanupTargets_NothingGlobal_IsFalse()
+    {
+        RemoveEveryGlobalTargetTheFixtureCreated();
+
+        Assert.False(CleanCommand.HasGlobalCleanupTargets(_fixture.Paths));
+    }
+
+    [Fact]
+    public void HasGlobalCleanupTargets_OnlyAnUnmigratedLegacyRoot_IsTrue()
+    {
+        // On Windows this is what triggers UAC: AppPaths never creates the new root while a
+        // move into it is pending, so without this the clean ran unelevated, deleted
+        // nothing under Program Files and left the installs behind.
+        RemoveEveryGlobalTargetTheFixtureCreated();
+        Directory.CreateDirectory(Path.Combine(LegacyGlobalRoot(), "4.5.1"));
+
+        // On Linux the legacy root sits inside the shim directory, so creating it also makes
+        // the shim clause true and the predicate alone cannot tell the clauses apart there;
+        // only Windows (<prefix>\GodotManager, beside the shim directory) can. The input
+        // the new clause reads is checked directly so the Linux run still pins it.
+        Assert.Single(_fixture.Paths.GetLegacyGlobalInstallRoots());
+        Assert.True(CleanCommand.HasGlobalCleanupTargets(_fixture.Paths));
+    }
+
+    [Fact]
+    public void GetLegacyGlobalInstallRoots_SkipsARootHoldingTheRunningExecutable()
+    {
+        // godman unzipped into a folder that still carries the old product name: cleaning
+        // that root would delete the tool along with the installs.
+        RemoveEveryGlobalTargetTheFixtureCreated();
+        var root = LegacyGlobalRoot();
+        Directory.CreateDirectory(root);
+
+        var elsewhere = Path.Combine(_fixture.TempRoot, "elsewhere", "godman");
+        Assert.Equal([root], _fixture.Paths.GetLegacyGlobalInstallRoots(elsewhere));
+        Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(Path.Combine(root, "godman")));
+
+        // `dotnet godman.dll` from there: the process is the dotnet host, the app's base
+        // directory is what sits under the root.
+        Assert.Empty(_fixture.Paths.GetLegacyGlobalInstallRoots(elsewhere, root + Path.DirectorySeparatorChar));
+    }
+    [Fact]
+    public void CleanupLegacyRoot_WindowsLayout_RemovesGodmansPartsAndSparesWhatElseLivesInTheRoot()
+    {
+        // <prefix>\GodotManager is the product-name folder, not a godman-only one: it is
+        // cleaned like the current layout (installs\, bin\, the registry), never wholesale.
+        var root = Path.Combine(_fixture.TempRoot, "legacy-win-root");
+        Directory.CreateDirectory(Path.Combine(root, "installs", "4.5.1"));
+        Directory.CreateDirectory(Path.Combine(root, "bin"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+        var other = Path.Combine(root, "someone-elses.txt");
+        File.WriteAllText(other, "keep");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: true);
+
+        Assert.False(Directory.Exists(Path.Combine(root, "installs")));
+        Assert.False(Directory.Exists(Path.Combine(root, "bin")));
+        Assert.False(File.Exists(Path.Combine(root, "installs.json")));
+        Assert.True(File.Exists(other), "clean deleted a file godman never wrote");
+    }
+
+    [Fact]
+    public void CleanupLegacyRoot_WindowsLayout_RemovesTheRootItselfOnceNothingElseIsInIt()
+    {
+        var root = Path.Combine(_fixture.TempRoot, "legacy-win-root");
+        Directory.CreateDirectory(Path.Combine(root, "installs", "4.5.1"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: true);
+
+        Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void CleanupLegacyRoot_LinuxLayout_RemovesTheWholeGodmanOnlyDirectory()
+    {
+        var root = Path.Combine(_fixture.TempRoot, "legacy-linux-root");
+        Directory.CreateDirectory(Path.Combine(root, "4.5.1-standard-linux-global"));
+        File.WriteAllText(Path.Combine(root, "installs.json"), "{}");
+
+        CleanCommand.CleanupLegacyRoot(root, windowsLayout: false);
+
+        Assert.False(Directory.Exists(root));
     }
 }

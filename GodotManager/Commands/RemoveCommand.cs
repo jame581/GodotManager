@@ -40,7 +40,7 @@ internal sealed class RemoveCommand : AsyncCommand<RemoveCommand.Settings>
 
             // Linux cannot hand off to an elevated child, so it stops here -- before the
             // files are deleted -- instead of deleting them and then failing to unregister.
-            if (LinuxElevation.Check(_paths, install.Scope, context.Arguments) is { } denied)
+            if (LinuxElevation.CheckRemove(_paths, install.Scope, registry.ActiveId == install.Id, context.Arguments) is { } denied)
             {
                 throw denied;
             }

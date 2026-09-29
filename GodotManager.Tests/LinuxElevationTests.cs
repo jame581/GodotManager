@@ -145,6 +145,26 @@ public class LinuxElevationTests
     }
 
     [Fact]
+    public void CheckRemove_WithAPre140GlobalRootOverride_KeepsTheRefusalAsItIs_EvenForTheActiveEntry()
+    {
+        // That refusal carries no sudo command -- the value is what needs fixing -- so the
+        // deactivate-first note, which leads into one, would introduce a command that is not there.
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new GodmanTestFixture(globalRoot: Path.Combine("opt", "bin"), seed: value =>
+        {
+            Directory.CreateDirectory(Path.Combine(value, "godman", "4.5.1-standard-linux-global"));
+            File.WriteAllText(Path.Combine(value, "godman", "installs.json"), "{\"Installs\":[]}");
+        });
+        Assert.NotNull(fixture.Paths.LegacyGlobalRootOverrideWarning); // precondition
+
+        var denied = LinuxElevation.CheckRemove(fixture.Paths, InstallScope.Global, isActive: true, ["remove", "x"]);
+
+        Assert.NotNull(denied);
+        Assert.Contains(fixture.Paths.LegacyGlobalRootOverrideWarning!, denied!.Message);
+        Assert.Null(denied.Hint);
+    }
+
+    [Fact]
     public void ElevationHintFor_QuotesEachArgument_AndFallsBackWithoutArguments()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -266,5 +286,25 @@ public class LinuxElevationTests
         {
             File.SetUnixFileMode(shimDir, (UnixFileMode)Convert.ToInt32("755", 8));
         }
+    }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CheckRemove_UserScopeEntry_NeverStops(bool isActive)
+    {
+        // The deactivate-first note belongs to a *denied* global remove only.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Null(LinuxElevation.CheckRemove(fixture.Paths, InstallScope.User, isActive, ["remove", "x"]));
+    }
+
+    [Fact]
+    public void CheckRemove_WritableGlobalLocations_DoNotStopAnActiveRemove()
+    {
+        // Writable (the fixture's temp GODMAN_GLOBAL_ROOT, or root itself): a remove that can
+        // deactivate in-process must not be told to do it by hand.
+        using var fixture = new GodmanTestFixture();
+
+        Assert.Null(LinuxElevation.CheckRemove(fixture.Paths, InstallScope.Global, isActive: true, ["remove", "x"]));
     }
 }

@@ -115,6 +115,21 @@ sudo's `secure_path` never includes `~/.local/bin` — so the root moved out to
 - `ElevatedCommandLine.Render` adds a rooted `GODMAN_GLOBAL_ROOT` as `sudo NAME=value`
   to every printed elevated command, because sudo's env_reset drops it.
 
+- **Run the suite as a non-root user before trusting it.** The elevation E2E tests are
+  guarded by `Environment.IsPrivilegedProcess` (root reads through `chmod 000`, so a
+  permission-based test cannot fail as designed) and simply `return` under root. In a
+  root-only container they all pass without running; create a user and run `dotnet test` as it.
+- **`install --force` over an entry in place keeps its `Id`.** `ActiveId` lives in the
+  per-user registry and a global install runs under sudo (HOME reset), so the process doing
+  the install never sees it and cannot move it; a fresh `Id` leaves the user's pointer
+  dangling. Only an entry of the *same scope* is inherited.
+- **One plan for what the constructor runs and what doctor reads.** Windows uses
+  `AppPaths.PlanWindowsMigrations`, Linux `PlanLinuxMigrations`; `_migrationMoves` is that
+  plan, never a separate list.
+- **A Windows Start Menu name is chosen once and recorded** (`InstallEntry.LauncherFileName`),
+  not recomputed from sibling installs: recomputing would rename the second install's
+  shortcut when the first is removed. Null means the plain name.
+
 Use `GodmanTestFixture` (saves/restores env vars, creates a temp `TempRoot`, builds
 wired-up `AppPaths`/`RegistryService`/`EnvironmentService`) for any test that hits
 the filesystem. For end-to-end CLI tests use `CliTestHarness.Create(fixture, httpClient)`

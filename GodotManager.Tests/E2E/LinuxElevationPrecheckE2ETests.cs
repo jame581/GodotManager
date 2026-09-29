@@ -125,6 +125,41 @@ public class LinuxElevationPrecheckE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Remove_ActiveGlobalEntry_Unwritable_TellsTheUserToDeactivateFirst()
+    {
+        // ActiveId lives in the per-user registry and sudo resets HOME, so the elevated remove
+        // would load root's registry, find nothing active and never deactivate: the install
+        // goes while `godot` keeps exec'ing a deleted binary. `deactivate` needs no sudo on
+        // Linux, so the refusal has to send the user there first.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        var entry = await SeedGlobalEntryAsync(active: true);
+        var id = entry.Id.ToString("N");
+
+        var (exitCode, output) = await RunLockedAsync("remove", id, "--delete");
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Contains("Run `godman deactivate` first", output);
+        Assert.Contains("needs no sudo", output);
+        Assert.Contains($"remove {id} --delete", output); // the sudo command is still there
+
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.Equal(entry.Id, registry.ActiveId);        // nothing was changed
+        Assert.True(File.Exists(Path.Combine(entry.Path, "Godot_v4.5.1-stable_linux.x86_64")));
+    }
+
+    [Fact]
+    public async Task Remove_InactiveGlobalEntry_Unwritable_DoesNotMentionDeactivate()
+    {
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return;
+        var entry = await SeedGlobalEntryAsync();
+
+        var (exitCode, output) = await RunLockedAsync("remove", entry.Id.ToString("N"), "--delete");
+
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("deactivate", output);
+    }
+
+    [Fact]
     public async Task Remove_Delete_WritableRootButReadOnlyRegistryFile_KeepsTheFilesAndTheEntry()
     {
         // The dangerous half of Jan's report: the install's files *are* deletable (the root

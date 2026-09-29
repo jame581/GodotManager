@@ -66,7 +66,10 @@ public class LauncherLifecycleE2ETests : IDisposable
         var result = await CliTestHarness.Create(_fixture).RunAsync(["activate", entry.Id.ToString()]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.True(_fixture.Launcher.Exists(entry));
+        // The entry as the registry holds it now (LauncherEntry null), not the object captured
+        // at install time, which still says it opted out.
+        var backfilled = (await _fixture.Registry.LoadAsync()).Installs.Single(x => x.Id == entry.Id);
+        Assert.True(_fixture.Launcher.Exists(backfilled));
     }
 
     [Fact]
@@ -156,12 +159,161 @@ public class LauncherLifecycleE2ETests : IDisposable
     }
 
     [Fact]
+    public async Task Install_Force_OverTheActiveInstall_KeepsItsIdAndItsActivation()
+    {
+        // ActiveId lives in the per-user registry. On Linux a global reinstall runs under
+        // sudo, whose root registry never holds the user's ActiveId, so the replacement has to
+        // keep the Id for that pointer to stay valid; it used to get a fresh one and leave
+        // GetActive() null while the shim kept working.
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target, "--activate");
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.Equal(original.Id, replacement.Id);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.Equal(original.Id, registry.ActiveId);
+        Assert.Equal(replacement.Id, registry.GetActive()?.Id);
+        Assert.True(registry.GetActive()?.IsActive);
+    }
+
+    [Fact]
+    public async Task Install_Force_OverAnInactiveInstall_KeepsItsIdWithoutActivatingIt()
+    {
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target);
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.Equal(original.Id, replacement.Id);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.Null(registry.ActiveId);
+        Assert.Single(registry.Installs);
+    }
+
+    [Fact]
+    public async Task Install_Force_OverTheActiveInstall_ReappliesTheActivation()
+    {
+        // The shim names an executable, not the directory. A different version merged over the
+        // old one leaves both binaries, so an untouched shim would keep running the old one
+        // while the registry says the new one is active.
+        if (OperatingSystem.IsWindows()) return; // the shim is godot.cmd there; the logic is shared
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        await InstallAsync("4.5.1", "--path", target, "--activate");
+        var shim = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        File.Delete(shim);
+
+        await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.True(File.Exists(shim), "the reinstall left the active install's shim unrewritten");
+    }
+
+    [Fact]
+    public async Task Install_Force_OverTheActiveInstall_WhenTheShimCannotBeRewritten_StillCompletesTheInstall()
+    {
+        // The registry write already succeeded when the activation is re-applied, so a shim
+        // that cannot be rewritten is a warning, not a failed install that skips the launcher work.
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var original = await InstallAsync("4.5.1", "--path", target, "--activate");
+        var shim = Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot");
+        File.SetUnixFileMode(shim, UnixFileMode.UserRead);
+        try
+        {
+            var replacement = await InstallAsync("4.5.1", "--path", target, "--force"); // asserts exit code 0
+
+            Assert.Equal(original.Id, replacement.Id);
+            Assert.True(_fixture.Launcher.Exists(replacement)); // the launcher work after the re-apply still ran
+        }
+        finally
+        {
+            File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public async Task Install_Force_OverAnInactiveInstall_DoesNotWriteAShim()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        await InstallAsync("4.5.1", "--path", target);
+
+        await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.False(File.Exists(Path.Combine(_fixture.Paths.GetShimDirectory(InstallScope.User), "godot")));
+    }
+
+    [Fact]
+    public async Task Install_Force_UserScopeOverTheSamePathOfTheActiveGlobalEntry_DoesNotInheritItsActivation()
+    {
+        // The Id and the activation follow an entry of the *same scope* only: a global entry's
+        // shim must not be attributed to a user-scope replacement, whose deactivation would
+        // clean the wrong scope's shim.
+        if (OperatingSystem.IsWindows()) return; // a global install would raise UAC from an unelevated host
+        var target = Path.Combine(_fixture.TempRoot, "shared-path");
+        var global = await InstallAsync("4.5.1", "--path", target, "--scope", "Global", "--activate");
+
+        var replacement = await InstallAsync("4.5.1", "--path", target, "--force");
+
+        Assert.NotEqual(global.Id, replacement.Id);
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.NotEqual(replacement.Id, registry.ActiveId);
+    }
+
+    [Fact]
+    public async Task Install_Force_OverAnInactiveInstall_LeavesTheActiveOneAlone()
+    {
+        var other = await InstallAsync("4.4.0", "--activate");
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        await InstallAsync("4.5.1", "--path", target);
+
+        await InstallAsync("4.5.1", "--path", target, "--force");
+
+        var registry = await _fixture.Registry.LoadAsync();
+        Assert.Equal(other.Id, registry.ActiveId);
+    }
+
+    // The desktop shortcut is opt-in and belongs to the activation, which the replacement
+    // inherits, so a reinstall in place must not take it away -- with or without --activate
+    // (the TUI dialog always activates). One fixture per case: the InstallAsync helper reads the
+    // entry back by version, so a second 4.5.1 install in the same registry would be ambiguous.
+    private async Task AssertReinstallKeepsAndRewritesTheDesktopShortcut(params string[] flags)
+    {
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var active = await InstallAsync("4.5.1", "--path", target, "--activate");
+        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+        var placeholder = System.Text.Encoding.UTF8.GetBytes("shortcut");
+        File.WriteAllBytes(shortcut, placeholder);
+
+        await InstallAsync("4.5.1", ["--path", target, "--force", .. flags]);
+
+        Assert.True(File.Exists(shortcut), "the reinstall took the active install's desktop shortcut away");
+        Assert.NotEqual(placeholder, File.ReadAllBytes(shortcut)); // rewritten, not merely left in place
+    }
+
+    [Fact]
+    public async Task Install_Force_OverTheActiveInstall_KeepsAndRewritesItsDesktopShortcut()
+    {
+        if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
+
+        await AssertReinstallKeepsAndRewritesTheDesktopShortcut();
+    }
+
+    [Fact]
+    public async Task Install_ForceActivate_OverTheActiveInstall_KeepsAndRewritesItsDesktopShortcut()
+    {
+        if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
+
+        await AssertReinstallKeepsAndRewritesTheDesktopShortcut("--activate");
+    }
+
+    [Fact]
     public async Task Install_Force_OverTheActiveInstall_DoesNotStrandItsDesktopShortcut()
     {
-        // A --force reinstall without --activate drops the active entry without deactivating
-        // it, so no later remove or deactivate ever sees the replacement as active. The
-        // replaced entry's desktop shortcut therefore has to go with it, or it outlives
-        // `remove --delete` pointing at a deleted directory.
+        // The replacement inherits the activation, so `remove` sees it as active and
+        // deactivates it -- which is what deletes the desktop shortcut. Without the
+        // carry-over the shortcut outlived `remove --delete` pointing at a deleted directory.
         if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
         var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
         var active = await InstallAsync("4.5.1", "--path", target, "--activate");

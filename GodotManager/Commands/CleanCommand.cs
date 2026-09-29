@@ -15,12 +15,14 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 {
     private readonly AppPaths _paths;
     private readonly RegistryService _registry;
+    private readonly EnvironmentService _environment;
     private readonly DiagnosticContext? _diagnostics;
 
-    public CleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
+    public CleanCommand(AppPaths paths, RegistryService registry, EnvironmentService environment, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
         _registry = registry;
+        _environment = environment;
         _diagnostics = diagnostics;
     }
 
@@ -37,7 +39,7 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         // are global targets this user cannot remove, rather than cleaning half and printing
         // a "Failed to remove" line per global item. Before the prompt, so the user is not
         // asked to confirm an operation that is about to be refused.
-        if (LinuxElevation.CheckClean(_paths, new LauncherService(_paths, _diagnostics), context.Arguments) is { } denied)
+        if (LinuxElevation.CheckClean(_paths, _environment.Launcher, context.Arguments) is { } denied)
         {
             return GodmanExceptionRenderer.Render("Clean failed:", denied);
         }
@@ -54,19 +56,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
 
         // Read before anything is deleted: the registry is the only record of which desktop
-        // shortcuts on Windows are ours. Best-effort -- clean is the recovery tool, and it
-        // must still run on a machine whose installs.json is corrupt. The list only matters
-        // for Windows desktop shortcuts; everything else clean removes is found by location.
-        IReadOnlyList<InstallEntry> installs;
-        try
-        {
-            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
-            installs = [];
-        }
+        // shortcuts on Windows are ours.
+        var installs = LoadInstallsBestEffort(_registry, _diagnostics, cancellationToken);
 
         if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated() && HasGlobalCleanupTargets(_paths))
         {
@@ -74,13 +65,33 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             return RunElevatedCleanup();
         }
 
-        CleanupAll(_paths, installs, _diagnostics);
+        CleanupAll(_paths, _environment.Launcher, installs, _diagnostics);
         return 0;
     }
 
-    internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
+    /// <summary>
+    /// The registry's installs, or none when it cannot be read. Best-effort -- clean is the
+    /// recovery tool, and it must still run on a machine whose installs.json is corrupt. The
+    /// list only matters for Windows desktop shortcuts; everything else clean removes is
+    /// found by location. Shared with the elevated mirror so the two cannot drift.
+    /// </summary>
+    internal static IReadOnlyList<InstallEntry> LoadInstallsBestEffort(
+        RegistryService registry, DiagnosticContext? diagnostics, CancellationToken cancellationToken)
     {
-        var launcher = new LauncherService(paths, diagnostics);
+        try
+        {
+            return registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+        }
+        catch (Exception ex)
+        {
+            diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+            return [];
+        }
+    }
+
+    internal static void CleanupAll(
+        AppPaths paths, LauncherService launcher, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
+    {
         foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
         {
             foreach (var removed in launcher.DeleteAll(scope, installs ?? []))
@@ -125,18 +136,56 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         // prints nothing on a migrated machine.
         foreach (var legacyRoot in paths.GetLegacyGlobalInstallRoots())
         {
-            CleanupDirectory(legacyRoot, "unmigrated global installs");
+            CleanupLegacyRoot(legacyRoot, windowsLayout: OperatingSystem.IsWindows());
         }
 
         CleanupShimDirectory(paths.GetShimDirectory(InstallScope.Global), "global shims");
     }
 
-    private static bool HasGlobalCleanupTargets(AppPaths paths)
+    /// <summary>
+    /// Removes one unmigrated legacy global root. On Linux it is <c>&lt;prefix&gt;/bin/godman</c>,
+    /// a directory only godman ever used, so it goes whole. On Windows it is
+    /// <c>&lt;prefix&gt;\GodotManager</c>, the product-name folder: it is cleaned exactly the way
+    /// the current layout is (<c>installs\</c>, <c>bin\</c> and the registry file, never the whole
+    /// root), and the root itself only if that leaves it empty, so anything else that lives
+    /// there survives.
+    /// </summary>
+    internal static void CleanupLegacyRoot(string legacyRoot, bool windowsLayout)
     {
+        if (!windowsLayout)
+        {
+            CleanupDirectory(legacyRoot, "unmigrated global installs");
+            return;
+        }
+
+        CleanupDirectory(Path.Combine(legacyRoot, "installs"), "unmigrated global installs");
+        CleanupDirectory(Path.Combine(legacyRoot, "bin"), "unmigrated global shims");
+        CleanupFile(Path.Combine(legacyRoot, "installs.json"), "unmigrated global registry");
+
+        try
+        {
+            if (Directory.Exists(legacyRoot) && !Directory.EnumerateFileSystemEntries(legacyRoot).Any())
+            {
+                Directory.Delete(legacyRoot);
+                AnsiConsole.MarkupLineInterpolated($"[green]Removed[/] unmigrated global root: {legacyRoot}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove[/] unmigrated global root at {legacyRoot}: {ex.Message}");
+        }
+    }
+
+    internal static bool HasGlobalCleanupTargets(AppPaths paths)
+    {
+        // An unmigrated legacy root counts: CleanupAll deletes it, and on Windows it is
+        // the only thing on the machine that says a UAC prompt is needed -- AppPaths never
+        // creates the new root while a move into it is pending, so nothing else exists.
         return Directory.Exists(paths.GetInstallRoot(InstallScope.Global))
             || Directory.Exists(paths.GetShimDirectory(InstallScope.Global))
             || File.Exists(paths.GlobalRegistryFile)
-            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global));
+            || Directory.Exists(paths.GetLauncherDirectory(InstallScope.Global))
+            || paths.GetLegacyGlobalInstallRoots().Count > 0;
     }
 
     private static int RunElevatedCleanup()

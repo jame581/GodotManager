@@ -312,7 +312,7 @@ internal sealed class TuiApp
 
     private void OnBrowseVersionSelected(object? sender, GodotRelease release)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, _app!);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _app!);
         dialog.PresetVersion(release.Version);
         _app!.Run(dialog);
         var installed = dialog.Success;
@@ -541,7 +541,7 @@ internal sealed class TuiApp
         try
         {
             // Linux: before the files are deleted, exactly as RemoveCommand does.
-            if (LinuxElevation.Check(_paths, entry.Scope, LinuxElevation.TuiArguments) is { } denied)
+            if (LinuxElevation.CheckRemove(_paths, entry.Scope, entry.IsActive, LinuxElevation.TuiArguments) is { } denied)
             {
                 throw denied;
             }
@@ -633,7 +633,7 @@ internal sealed class TuiApp
 
     private void ShowInstallDialog(IApplication app)
     {
-        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, _registry, app);
+        var dialog = new InstallDialog(_installer, _urlBuilder, _paths, app);
         app.Run(dialog);
         var installed = dialog.Success;
         dialog.Dispose();

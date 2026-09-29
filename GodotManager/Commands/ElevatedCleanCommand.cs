@@ -15,12 +15,14 @@ internal sealed class ElevatedCleanCommand : Command<ElevatedCleanCommand.Settin
 {
     private readonly AppPaths _paths;
     private readonly RegistryService _registry;
+    private readonly EnvironmentService _environment;
     private readonly DiagnosticContext? _diagnostics;
 
-    public ElevatedCleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
+    public ElevatedCleanCommand(AppPaths paths, RegistryService registry, EnvironmentService environment, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
         _registry = registry;
+        _environment = environment;
         _diagnostics = diagnostics;
     }
 
@@ -47,18 +49,8 @@ internal sealed class ElevatedCleanCommand : Command<ElevatedCleanCommand.Settin
             return Fail($"Invalid payload: {ex.Message}");
         }
 
-        IReadOnlyList<InstallEntry> installs;
-        try
-        {
-            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
-            installs = [];
-        }
-
-        CleanCommand.CleanupAll(_paths, installs, _diagnostics);
+        var installs = CleanCommand.LoadInstallsBestEffort(_registry, _diagnostics, cancellationToken);
+        CleanCommand.CleanupAll(_paths, _environment.Launcher, installs, _diagnostics);
         return 0;
     }
 

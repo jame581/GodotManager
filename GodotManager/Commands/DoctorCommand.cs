@@ -11,40 +11,32 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 {
     private readonly RegistryService _registry;
     private readonly AppPaths _paths;
+    private readonly EnvironmentService _environment;
     private readonly DiagnosticContext? _diagnostics;
 
-    public DoctorCommand(RegistryService registry, AppPaths paths, DiagnosticContext? diagnostics = null)
+    public DoctorCommand(RegistryService registry, AppPaths paths, EnvironmentService environment, DiagnosticContext? diagnostics = null)
     {
         _registry = registry;
         _paths = paths;
+        _environment = environment;
         _diagnostics = diagnostics;
     }
 
     internal sealed class Settings : GlobalSettings { }
 
     /// <summary>
-    /// Whether anything actually landed in a relocation destination. Existence alone
-    /// does not answer it: <see cref="AppPaths"/> best-effort-creates the install roots on
-    /// every run (except the global one while a move into it is still pending), so an empty
-    /// destination is a normal state for a machine whose migration has not run. An unreadable directory counts as empty, which keeps the
-    /// advice on the safe side -- never tell someone to delete a directory when we
-    /// cannot confirm its contents were copied somewhere else.
+    /// What is in a relocation destination. Existence alone does not say whether the
+    /// migration ran: <see cref="AppPaths"/> best-effort-creates the install roots on every
+    /// run (except the global one while a move into it is still pending), so an empty
+    /// destination is a normal state for a machine whose migration has not run.
+    /// <see cref="DestinationState.Unreadable"/> is its own state because the two questions
+    /// asked of it want opposite answers, each on the safe side: it blocks the move (the
+    /// directory exists and cannot be shown empty), and it never counts as content that
+    /// landed -- we must not tell someone to delete a directory when we cannot confirm its
+    /// contents were copied somewhere else.
     /// </summary>
-    private static bool HasContent(string directory)
-    {
-        try
-        {
-            return Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any();
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    private enum DestinationState { Absent, Empty, HasContent, Unreadable }
 
-    private enum DestinationState { Absent, Empty, HasContent }
-
-    /// <summary>An unreadable destination counts as having content: the safe side, since it blocks the move.</summary>
     private static DestinationState ProbeDestination(string directory)
     {
         if (!Directory.Exists(directory))
@@ -60,7 +52,7 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         }
         catch
         {
-            return DestinationState.HasContent;
+            return DestinationState.Unreadable;
         }
     }
 
@@ -185,7 +177,7 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         // install on an upgraded machine -- one summary line for those rather than a
         // two-line block each; a per-install line only for an entry godman did write
         // (LauncherEntry == true) that has since gone missing.
-        var launcher = new LauncherService(_paths, _diagnostics);
+        var launcher = _environment.Launcher;
         var predating = registry.Installs.Where(x => x.LauncherEntry == null && !launcher.Exists(x)).ToList();
         if (predating.Count > 0)
         {
@@ -282,7 +274,7 @@ internal sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             var removable = !referenced
                 && destination is not null
                 && state == DestinationState.HasContent
-                && pending.All(r => HasContent(r.NewRoot));
+                && pending.All(r => ProbeDestination(r.NewRoot) == DestinationState.HasContent);
 
             if (removable)
             {

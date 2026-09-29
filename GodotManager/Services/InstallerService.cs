@@ -212,17 +212,57 @@ internal sealed class InstallerService
         // run against the scope it was activated in.
         var previousActive = request.Activate ? registry.GetActive() : null;
 
-        // A --force reinstall replaces the entry with a fresh Id, and the Linux .desktop name
-        // carries the Id, so the replaced entry's file would survive as a duplicate "Godot X"
-        // in the app menu. Captured here, before RemoveAll drops them; their launcher files
-        // are deleted only after the save below succeeds.
+        // Captured here, before RemoveAll drops them; their launcher files are deleted only
+        // after the save below succeeds.
         var replaced = registry.Installs
             .Where(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase))
             .ToList();
         var activeIdBeforeReplace = registry.ActiveId;
 
+        // A --force reinstall in place keeps the entry's Id. ActiveId lives in the per-user
+        // registry, and on Linux a global install runs under sudo, which resets HOME: the
+        // process doing the reinstall loads root's registry, never sees the user's ActiveId,
+        // and could not move it. A fresh Id would leave the user's pointer dangling --
+        // GetActive() null, `deactivate` refusing, the shim still running -- on the main
+        // Linux global flow. Same scope only: an entry of another scope is not this
+        // install's. It also keeps the Linux .desktop name (which carries the Id) stable, so
+        // no duplicate "Godot X" survives in the app menu.
+        var replacedSameScope = replaced.FirstOrDefault(x => x.Scope == entry.Scope);
+        if (replacedSameScope is not null)
+        {
+            entry.Id = replacedSameScope.Id;
+        }
+
+        // Only when *this* registry says the replaced entry was the active one -- what the
+        // Id above cannot do for a process that cannot see it -- the activation is
+        // re-applied to the reinstalled directory: the shim names an executable, not the
+        // directory, so a different version merged over the old one would otherwise leave
+        // the shim running the old binary under a registry that says the new one is active.
+        var replacedActive = replaced.FirstOrDefault(x => x.Id == activeIdBeforeReplace && x.Scope == entry.Scope);
+
+        // Whether the opt-in Windows desktop shortcut exists, read before anything below can
+        // delete it (RemoveActiveAsync does). It belongs to the activation, which the
+        // reinstall in place inherits, so a reinstall must not take it away.
+        var keepDesktopShortcut = replacedActive is not null && _environment.Launcher.DesktopShortcutExists(replacedActive);
+
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
+
+        // The Start Menu name has to be chosen before the save, since it is recorded on the
+        // entry: a second install of one version and edition takes a suffixed name instead
+        // of overwriting the first's shortcut. Windows only -- the Linux .desktop name
+        // already carries the id.
+        if (OperatingSystem.IsWindows() && request.CreateLauncherEntry)
+        {
+            entry.LauncherFileName = LauncherService.ChooseStartMenuFileName(entry, registry.Installs);
+        }
+
         registry.Installs.Add(entry);
+
+        var reapplyActivation = replacedActive is not null && !request.Activate;
+        if (reapplyActivation)
+        {
+            registry.MarkActive(entry.Id);
+        }
 
         if (request.Activate)
         {
@@ -249,10 +289,28 @@ internal sealed class InstallerService
             registry.MarkActive(entry.Id);
             // Without the launcher entry: that is created below, only once the save lands.
             await _environment.ApplyActiveAsync(
-                entry, dryRun: false, createDesktopShortcut: false, ensureLauncherEntry: false, cancellationToken);
+                entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
         }
 
         await _registry.SaveAsync(registry, cancellationToken);
+
+        // After the save, unlike the --activate branch above: the files were merged already, so
+        // a failed write leaves the shim naming a directory that still exists and a registry
+        // that still describes it, rather than a shim ahead of the registry.
+        if (reapplyActivation)
+        {
+            // Best-effort: the install is committed, so a shim or PATH write that fails here
+            // must not report the whole install as failed and skip the launcher work below.
+            try
+            {
+                await _environment.ApplyActiveAsync(
+                    entry, dryRun: false, createDesktopShortcut: keepDesktopShortcut, ensureLauncherEntry: false, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _diagnostics?.Warn($"Reinstalled {entry.Version}, but could not refresh its activation: {ex.Message}");
+            }
+        }
 
         // After the save, symmetric with remove: a failed registry write must neither leave
         // a launcher entry pointing at an unregistered install nor have deleted the entry of
@@ -265,11 +323,12 @@ internal sealed class InstallerService
         {
             _environment.Launcher.Delete(old);
 
-            // The desktop shortcut belongs to the activation, and replacing the active entry
-            // without --activate never deactivates it: no later remove or deactivate would
-            // see the replacement as active, so the shortcut would outlive `remove --delete`.
-            // (With --activate, RemoveActiveAsync above already deleted it.)
-            if (old.Id == activeIdBeforeReplace)
+            // The desktop shortcut belongs to the activation. When the replacement inherited
+            // it, the activation above already wrote it under the replacement's name; the old
+            // file goes only if that name differs. Otherwise the replaced entry was active in
+            // another scope and the shortcut has no owner left, so it goes.
+            if (old.Id == activeIdBeforeReplace
+                && (!ReferenceEquals(old, replacedActive) || !_environment.Launcher.SharesDesktopShortcut(old, entry)))
             {
                 _environment.Launcher.DeleteDesktopShortcut(old);
             }
@@ -530,6 +589,52 @@ internal sealed class InstallerService
     internal static bool NeedsSeparateElevatedActivation(InstallScope requestScope, InstallScope? previousActiveScope) =>
         requestScope == InstallScope.User
         && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
+
+    /// <summary>
+    /// The activation half of an install, decided the way <c>activate</c> decides it and
+    /// before anything is written (CLAUDE.md, "Decide elevation before the first
+    /// machine-wide write"): a user-scope install over an active global one must clear
+    /// machine-wide state, which an unelevated process cannot do, so it installs unactivated
+    /// and <see cref="CompleteActivationAsync"/> hands the activation to the elevated child.
+    /// The split is Windows-only (<see cref="ElevatedActivator.IsRequired"/> is false
+    /// elsewhere). Shared by the CLI and the TUI install dialog, which had each composed
+    /// this predicate, the request split and the launcher call by hand; they still present
+    /// the outcome themselves, and the CLI announces the UAC prompt between the two calls.
+    /// </summary>
+    public Task<InstallActivationPlan> PlanActivationAsync(
+        InstallRequest request, CancellationToken cancellationToken = default) =>
+        PlanActivationAsync(request, ElevatedActivator.IsRequired, cancellationToken);
+
+    internal async Task<InstallActivationPlan> PlanActivationAsync(
+        InstallRequest request,
+        Func<InstallScope, InstallScope?, bool> isElevationRequired,
+        CancellationToken cancellationToken = default)
+    {
+        if (!request.Activate || request.DryRun)
+        {
+            return new InstallActivationPlan(request, ActivateSeparately: false);
+        }
+
+        var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
+        return isElevationRequired(request.Scope, currentActive?.Scope)
+            && NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope)
+                ? new InstallActivationPlan(request with { Activate = false }, ActivateSeparately: true)
+                : new InstallActivationPlan(request, ActivateSeparately: false);
+    }
+
+    /// <summary>
+    /// The separate activation <see cref="PlanActivationAsync(InstallRequest, CancellationToken)"/>
+    /// asked for, run through <see cref="ElevatedActivator"/> exactly as <c>activate</c> does;
+    /// null when the plan needed none. Returns the outcome instead of printing it: the TUI
+    /// calls this while Terminal.Gui owns the screen. Takes no cancellation token on
+    /// purpose: the install has already committed, so a cancel from the dialog must not turn
+    /// it into a "cancelled" one (the elevated launch never took one either).
+    /// </summary>
+    public async Task<ElevatedOperationResult?> CompleteActivationAsync(
+        InstallActivationPlan plan, InstallEntry installed) =>
+        plan.ActivateSeparately
+            ? await ElevatedActivator.RunAsync(installed.Id, createDesktopShortcut: false)
+            : null;
 
     /// <summary>
     /// Projects a request onto the wire format the elevated child is launched with.

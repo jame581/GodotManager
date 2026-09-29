@@ -83,8 +83,27 @@ internal sealed class LauncherService
     /// </summary>
     public void Delete(InstallEntry entry)
     {
+        // An install made with --no-shortcut owns no file, but on Windows an entry with no
+        // recorded name resolves to the plain one -- which another install of the same
+        // version and edition may hold. Removing the opted-out one must not delete that.
+        if (entry.LauncherEntry == false)
+        {
+            return;
+        }
+
         TryDelete(GetEntryPath(entry, _paths));
     }
+
+    public bool DesktopShortcutExists(InstallEntry entry) =>
+        OperatingSystem.IsWindows() && File.Exists(GetDesktopShortcutPath(entry, _paths));
+
+    /// <summary>
+    /// Whether two entries map to the same desktop shortcut file. The name carries only
+    /// version and edition, so a reinstall in place of the same ones rewrites the file it
+    /// found, while a different version at that path has to delete the old name.
+    /// </summary>
+    internal bool SharesDesktopShortcut(InstallEntry a, InstallEntry b) =>
+        string.Equals(GetDesktopShortcutPath(a, _paths), GetDesktopShortcutPath(b, _paths), StringComparison.OrdinalIgnoreCase);
 
     public void DeleteDesktopShortcut(InstallEntry entry)
     {
@@ -94,7 +113,7 @@ internal sealed class LauncherService
         }
     }
 
-    public bool Exists(InstallEntry entry) => File.Exists(GetEntryPath(entry, _paths));
+    public bool Exists(InstallEntry entry) => entry.LauncherEntry != false && File.Exists(GetEntryPath(entry, _paths));
 
     /// <summary>
     /// Removes every launcher file godman owns in <paramref name="scope"/>. On Linux the
@@ -220,7 +239,37 @@ internal sealed class LauncherService
     internal static string GetEntryPath(InstallEntry entry, AppPaths paths) =>
         Path.Combine(
             paths.GetLauncherDirectory(entry.Scope),
-            OperatingSystem.IsWindows() ? DisplayName(entry) + ".lnk" : BuildDesktopFileName(entry));
+            OperatingSystem.IsWindows() ? StartMenuFileName(entry) : BuildDesktopFileName(entry));
+
+    /// <summary>
+    /// The Start Menu file name: the one recorded for this entry, or the plain one built from
+    /// its version and edition (see <see cref="InstallEntry.LauncherFileName"/>).
+    /// </summary>
+    internal static string StartMenuFileName(InstallEntry entry) =>
+        entry.LauncherFileName ?? PlainStartMenuFileName(entry);
+
+    private static string PlainStartMenuFileName(InstallEntry entry) => DisplayName(entry) + ".lnk";
+
+    /// <summary>
+    /// The name to record for <paramref name="entry"/>'s Start Menu shortcut: null (the plain
+    /// name) unless another install in the same scope, one that has a shortcut, already holds
+    /// it, in which case the entry's short id disambiguates. Pure and platform-independent so
+    /// it can be tested anywhere; the caller stores the result on Windows only. Decided once,
+    /// at install time, and recorded: the name cannot be recomputed from the siblings later,
+    /// because removing the first install would then rename the second's shortcut out from
+    /// under it.
+    /// </summary>
+    internal static string? ChooseStartMenuFileName(InstallEntry entry, IEnumerable<InstallEntry> installs)
+    {
+        var plain = PlainStartMenuFileName(entry);
+        var taken = installs.Any(other =>
+            other.Id != entry.Id
+            && other.Scope == entry.Scope
+            && other.LauncherEntry != false
+            && string.Equals(StartMenuFileName(other), plain, StringComparison.OrdinalIgnoreCase));
+
+        return taken ? $"{DisplayName(entry)} ({entry.Id.ToString("N")[..8]}).lnk" : null;
+    }
 
     private static string GetDesktopShortcutPath(InstallEntry entry, AppPaths paths) =>
         Path.Combine(paths.DesktopDirectory, DisplayName(entry) + ".lnk");

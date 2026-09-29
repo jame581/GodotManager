@@ -12,15 +12,15 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 {
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
-    private readonly RegistryService _registry;
     private readonly AppPaths _paths;
+    private readonly DiagnosticContext _diagnostics;
 
-    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, RegistryService registry, AppPaths paths)
+    public InstallCommand(InstallerService installer, GodotDownloadUrlBuilder urlBuilder, AppPaths paths, DiagnosticContext diagnostics)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
-        _registry = registry;
         _paths = paths;
+        _diagnostics = diagnostics;
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -79,17 +79,8 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 throw denied;
             }
 
-            var activateSeparately = false;
-            if (request.Activate && !settings.DryRun)
-            {
-                var currentActive = (await _registry.LoadAsync()).GetActive();
-                if (ElevatedActivator.IsRequired(request.Scope, currentActive?.Scope)
-                    && InstallerService.NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope))
-                {
-                    activateSeparately = true;
-                    request = request with { Activate = false };
-                }
-            }
+            var activation = await _installer.PlanActivationAsync(request, cancellationToken);
+            request = activation.Request;
 
             if (settings.DryRun)
             {
@@ -138,14 +129,14 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             // below: the install itself happened, and whether its archive was verified is
             // no less true for the activation having failed.
             var activationFailed = false;
-            if (activateSeparately)
+            if (activation.ActivateSeparately)
             {
                 AnsiConsole.MarkupLine("[yellow]Administrator access is required to switch away from the active global install. A UAC prompt will appear.[/]");
-                var elevated = await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false);
-                if (!elevated.Succeeded)
+                var elevated = await _installer.CompleteActivationAsync(activation, result);
+                if (elevated is { Succeeded: false } failed)
                 {
-                    AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {elevated.Error}");
-                    if (elevated.Hint is { } hint)
+                    AnsiConsole.MarkupLineInterpolated($"[red]Activation failed:[/] {failed.Error}");
+                    if (failed.Hint is { } hint)
                     {
                         AnsiConsole.MarkupLineInterpolated($"[grey]Tip: {hint}[/]");
                     }
@@ -153,9 +144,9 @@ internal sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                     activationFailed = true;
                 }
             }
-            else if (settings.Activate)
+            else if (activation.ActivatedInProcess)
             {
-                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope);
+                ActivateCommand.WarnIfShadowedByGlobalShim(_paths, request.Scope, _diagnostics);
             }
 
             // Only when verification was actually attempted and did not succeed.

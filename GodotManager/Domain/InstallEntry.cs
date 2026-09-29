@@ -50,6 +50,16 @@ internal sealed class InstallEntry
     /// </summary>
     public bool? LauncherEntry { get; set; }
 
+    /// <summary>
+    /// Windows only: the file name of this install's Start Menu shortcut, recorded when the
+    /// plain <c>Godot {version} ({edition}).lnk</c> was already held by another install in the
+    /// scope (two installs of one version and edition at different <c>--path</c>s), so the
+    /// second one no longer overwrites the first's shortcut and removing one no longer deletes
+    /// the other's. Null means the plain name -- every entry before 1.4.1, and every install
+    /// that had it to itself -- and nothing else is ever recorded.
+    /// </summary>
+    public string? LauncherFileName { get; set; }
+
     public DateTimeOffset AddedAt { get; set; } = DateTimeOffset.UtcNow;
 
     [JsonIgnore]
