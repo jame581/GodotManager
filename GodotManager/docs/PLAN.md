@@ -377,7 +377,7 @@ follow-ups were closed in the same release.
 - **Known limitation (Windows)**: two installs of the same version and edition in one
   scope at different `--path`s share one Start Menu name; the second overwrites the
   first's shortcut, since the `.lnk` filename carries no per-install id the way the
-  Linux `.desktop` filename does.
+  Linux `.desktop` filename does. *(Fixed in 1.4.1 for new installs; see below.)*
 
 Spec: `GodotManager/docs/superpowers/specs/2026-09-28-launcher-entries-and-1.3-followups-design.md`
 
@@ -402,22 +402,55 @@ parity review of those fixes found one regression and three smaller gaps, also f
 - The TUI install dialog shows one "Installed, not activated" box
   (`InstallProgressPresentation.BuildCompletionDialog`).
 
-## 1.4.1 — Open follow-ups
+## 1.4.1 — Follow-ups from the 1.4.0 review ✅ COMPLETE
 
-Deferred from the 1.4.0 review; none is a regression from 1.3.0.
+All five issues deferred from 1.4.0, plus the Windows Start Menu name collision. None is a
+regression from 1.3.0. User-facing notes: `GodotManager/docs/release-notes/1.4.1.md`.
 
-- [#3](https://github.com/jame581/GodotManager/issues/3) — Linux: `sudo godman remove` of
-  an active global install skips deactivation, because sudo resets HOME and `ActiveId`
-  lives in the per-user registry. Hard to reach; the hint should say to `deactivate` first.
-- [#4](https://github.com/jame581/GodotManager/issues/4) — Refactor: move the
-  install → elevated-activate flow, duplicated in `InstallCommand` and `InstallDialog`,
-  into one `InstallerService` method.
-- [#5](https://github.com/jame581/GodotManager/issues/5) — The shadow-probe failure uses
-  `WarnAlways` in `ActivateCommand` (the best-effort convention says `-V` only).
-- [#6](https://github.com/jame581/GodotManager/issues/6) — Refactor: dedupe clean's
-  registry read, the extra `LauncherService` instances, and doctor's
-  `HasContent`/`ProbeDestination`.
-- [#7](https://github.com/jame581/GodotManager/issues/7) — Windows counterparts of the
-  Linux clean/doctor fixes (legacy global root in `clean`, doctor's plan must equal the
-  constructor's), doctor's view of legacy-only registry entries under a relative prefix,
-  and `install --force` over the active install leaving `ActiveId` dangling.
+- [#3](https://github.com/jame581/GodotManager/issues/3) — `LinuxElevation.CheckRemove`
+  extends a refused global remove's hint with "run `godman deactivate` first" when the
+  entry is the active one (sudo resets HOME, so the elevated remove would not deactivate
+  it). CLI and TUI call the same method; the hint-less pre-1.4.0-root refusal is left alone.
+- [#4](https://github.com/jame581/GodotManager/issues/4) — `InstallerService.PlanActivationAsync`
+  / `CompleteActivationAsync` back both `InstallCommand` and `InstallDialog` (predicate,
+  request split, elevated launch). Two calls rather than one `InstallAndActivate`, because
+  the CLI announces the UAC prompt between them after its live progress display has
+  cleared. `CompleteActivationAsync` takes no cancellation token on purpose.
+- [#5](https://github.com/jame581/GodotManager/issues/5) — the shadow-probe failure warns
+  only under `-V`; `ActivateCommand` and `InstallCommand` take the `DiagnosticContext`.
+- [#6](https://github.com/jame581/GodotManager/issues/6) — `CleanCommand.LoadInstallsBestEffort`;
+  clean and doctor use `EnvironmentService.Launcher`; doctor's `HasContent` folded into
+  `ProbeDestination` with an `Unreadable` state (pinned by a test).
+- [#7](https://github.com/jame581/GodotManager/issues/7) —
+  1. `clean` on Windows removes an unmigrated legacy global root
+     (`GetLegacyGlobalInstallRoots` no longer returns `[]` there, skips a root holding the
+     running executable) and `HasGlobalCleanupTargets` counts it, so UAC is decided first.
+  2. `AppPaths.PlanWindowsMigrations` drives both the Windows constructor and
+     `_migrationMoves`. The global move now runs under any absolute `GODMAN_GLOBAL_ROOT`
+     (as on Linux) instead of only at the default `%ProgramFiles%`, so doctor's advice
+     matches what runs.
+  3. **Not fixed, documented:** doctor may call the only copy of pre-1.4.0 installs
+     "removable" under a *relative* `GODMAN_GLOBAL_ROOT`, once the current registry exists
+     (doctor cannot see entries only the legacy registry lists). Contrived; the relative
+     value is already unsupported for migration.
+  4. `install --force` keeps the replaced entry's **Id**. The first attempt carried
+     `ActiveId` over, and a review showed it did nothing on the main Linux global flow:
+     sudo loads root's registry, which never held the user's `ActiveId`. Reusing the Id
+     keeps the user's pointer valid whoever runs the install. When the process's own
+     registry says the entry was active, the activation is re-applied (a different version
+     merged over the old one otherwise leaves the shim on the old binary) and the Windows
+     desktop shortcut is kept.
+- **Windows Start Menu collision** — the shortcut name is chosen once at install time and
+  recorded on `InstallEntry.LauncherFileName` (null = plain name, so existing entries and
+  older registries are unchanged). Recorded, not recomputed from siblings: removing the
+  first install would otherwise rename the second's. Two pre-1.4.1 installs that already
+  share the plain name keep sharing it.
+
+**Verification.** Every elevation E2E test returns early under root
+(`Environment.IsPrivilegedProcess`), so the suite has to be run as a non-root user to
+execute them. Regression tests were mutation-checked (fix removed, test fails) where
+possible. The Windows-only paths (constructor plan, desktop-shortcut handling, `.lnk`
+creation) are covered by pure-function tests on Linux and otherwise only by the
+`windows-latest` CI leg. A parity review of the branch found the `ActiveId` flaw above,
+a vacuous Linux test (the legacy-root clause is only separable on Windows), and untested
+guards; all were fixed.

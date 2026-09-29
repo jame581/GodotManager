@@ -129,7 +129,7 @@ godman install --version 4.5.1 --edition Standard --platform linux --activate --
 - `install` — download (auto URL) or use `--archive`; options: `--version`, `--edition`, `--platform`, `--scope`, `--path`, `--activate`, `--force`, `--dry-run`, `--no-shortcut` (skip creating an application-launcher entry).
 - `activate <id>` — switch active install; options: `--dry-run`, `--create-desktop-shortcut` (Windows only — adds a desktop shortcut for the newly active install; no-op elsewhere).
 - `deactivate` — deactivate the current active install (clears `GODOT_HOME`, removes shims).
-- `remove <id> [--delete] [--dry-run]` — unregister (optionally delete files); `--dry-run` previews without changes.
+- `remove <id> [--delete] [--dry-run]` — unregister (optionally delete files); `--dry-run` previews without changes. On Linux, removing the *active* global install without write access stops and tells you to run `godman deactivate` first (it needs no sudo), since sudo would not deactivate it for you.
 - `doctor` — check registry/env/shim.
 - `tui` — interactive menu for the above.
 - `clean [--yes]` — remove installs, shims, launcher entries, config. Launcher entries do not follow `GODMAN_HOME`/`GODMAN_GLOBAL_ROOT`, so `clean` under a sandbox `GODMAN_HOME` still deletes godman's entries from your real application menu.
@@ -173,7 +173,7 @@ left behind.
 - **Global installs**: `C:\Program Files\godman\installs\`
 - **User shim**: `%APPDATA%\godman\bin\godot.cmd`
 - **Global shim**: `C:\Program Files\godman\bin\godot.cmd`
-- **Launcher entries (Start Menu)**: `Programs\godman\Godot <version> (<edition>).lnk`, one per install — under the per-user Start Menu for user scope, the common Start Menu for global scope.
+- **Launcher entries (Start Menu)**: `Programs\godman\Godot <version> (<edition>).lnk`, one per install — under the per-user Start Menu for user scope, the common Start Menu for global scope. A second install of the same version and edition in the same scope gets its short id added: `Godot <version> (<edition>) (<id>).lnk`.
 
 ## Building & Tests
 ```bash
@@ -225,15 +225,16 @@ dotnet test -v detailed
   `<value>/lib/godman/installs.json` does not exist), `list` and `doctor` warn, and
   global `install`, `activate` and `remove` refuse to run until it is fixed. An empty
   value counts as unset; a relative one is never migrated or created. On Windows it stands in for
-  `%ProgramFiles%`, as it always has.
+  `%ProgramFiles%`, as it always has; since 1.4.1 a legacy `<prefix>\GodotManager` under it is moved to
+  `<prefix>\godman` on the first run, as the one under the default `%ProgramFiles%` always was.
 - **Windows environment variables**: After activation, `GODOT_HOME` is set in the registry and current process. New terminal sessions will automatically load it; existing sessions can verify with `doctor` command.
 - **Windows PATH**: The shim directory is automatically added to your PATH during activation. Restart your terminal after activation to use the `godot` command.
 - **Troubleshooting**: If something seems off after install/activate, run the command again with `--verbose` (`-V`) to see diagnostic warnings for any best-effort operations that failed silently.
 - **Checksum verification**: installs from auto-built URLs are checked against `SHA512-SUMS.txt` published on `godotengine/godot-builds`. A mismatch aborts the install and deletes the downloaded archive. Verification is skipped **silently** — not an error, no warning — in two cases: a custom `--url` or a local `--archive`, which have no upstream release to check against; and a release that publishes no sums file at all, which is normal for a number of Godot versions. Only when verification was genuinely attempted and could not be completed (a network failure, an HTTP error other than "not published", or an archive missing from the published list) does the install continue with a warning — and that warning names the specific reason, so `--verbose` is not needed to see it.
 - **Interrupted downloads resume**: partial downloads are kept under the download cache and resumed on the next `install`. Run `godman doctor` to see how much space they use, or `godman clean` to discard them.
-- **`--force` merges, it does not replace**: installing over an existing directory overwrites the files godman extracts and leaves anything else in that directory untouched. This matters when `--path` points at a directory you also use for other things.
-- **Application-launcher entries**: `install` creates one per install (skip with `--no-shortcut`), named for its version, edition, scope, and a short id so two installs never collide — except see the Windows limitation below. `activate` backfills the entry for installs made before 1.4.0. `remove` and `clean` delete it; `deactivate` leaves it in place, since the install itself is still there. `doctor` reports any install that's missing its entry (installs opted out with `--no-shortcut` are not reported).
-- **Known limitation (Windows)**: two installs of the same version and edition in the same scope at different `--path`s share one Start Menu name — the file has no per-install id like the Linux `.desktop` entry does, so the second install's shortcut overwrites the first's. Removing either of the two then deletes that shared Start Menu shortcut too; re-run `godman activate <id>` on the surviving install to restore it. The optional desktop shortcut (`activate --create-desktop-shortcut`) belongs to the active install and is only removed with it.
+- **`--force` merges, it does not replace**: installing over an existing directory overwrites the files godman extracts and leaves anything else in that directory untouched. This matters when `--path` points at a directory you also use for other things. The reinstalled entry keeps its id, so an install that was active stays active (its shim is rewritten and its desktop shortcut kept).
+- **Application-launcher entries**: `install` creates one per install (skip with `--no-shortcut`), named for its version, edition, scope, and a short id so two installs never collide (on Windows the plain `Godot <version> (<edition>)` name is used until a second install of the same version and edition needs the id too). `activate` backfills the entry for installs made before 1.4.0. `remove` and `clean` delete it; `deactivate` leaves it in place, since the install itself is still there. `doctor` reports any install that's missing its entry (installs opted out with `--no-shortcut` are not reported).
+- **Windows Start Menu names**: from 1.4.1 each install records the shortcut file it created, so removing one of two same-version installs no longer deletes the other's shortcut. Two installs made *before* 1.4.1 that already share one plain name keep sharing it: removing either deletes that shortcut, so re-run `godman activate <id>` on the survivor to restore it. The optional desktop shortcut (`activate --create-desktop-shortcut`) belongs to the active install and is only removed with it; a `--force` reinstall of the active install keeps it.
 - The Godot logo used for Linux launcher entries is by Andrea Calabró, licensed CC BY 4.0.
 
 ## Author

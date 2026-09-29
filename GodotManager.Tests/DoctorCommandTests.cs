@@ -796,9 +796,9 @@ public class DoctorCommandTests : IDisposable
     [Fact]
     public async Task Doctor_WithUnreadableCache_WarnsUnderVerboseInsteadOfThrowing()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess)
         {
-            return; // Unix permission bits don't apply on Windows.
+            return; // Unix permission bits don't apply on Windows, and root reads through chmod 000.
         }
 
         File.WriteAllBytes(
