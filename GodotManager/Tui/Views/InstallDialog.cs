@@ -14,7 +14,6 @@ internal sealed class InstallDialog : Dialog
     private readonly InstallerService _installer;
     private readonly GodotDownloadUrlBuilder _urlBuilder;
     private readonly AppPaths _paths;
-    private readonly RegistryService _registry;
     private readonly IApplication _app;
 
     private readonly TextField _versionField;
@@ -39,13 +38,11 @@ internal sealed class InstallDialog : Dialog
         InstallerService installer,
         GodotDownloadUrlBuilder urlBuilder,
         AppPaths paths,
-        RegistryService registry,
         IApplication app)
     {
         _installer = installer;
         _urlBuilder = urlBuilder;
         _paths = paths;
-        _registry = registry;
         _app = app;
 
         Title = "Install Godot";
@@ -190,13 +187,6 @@ internal sealed class InstallDialog : Dialog
 
         try
         {
-            // Same predicate InstallCommand uses (CLAUDE.md: both front-ends go through
-            // one elevation decision). The dialog always activates, so a user-scope
-            // install over an active global one installs unactivated here and hands the
-            // activation to the elevated child, exactly as `activate` does. Inside the
-            // try so a registry read failure lands in the dialog's own error handling.
-            var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
-
             // Same Linux pre-check as InstallCommand, before anything is downloaded. Only the
             // target scope counts: the dialog always activates, but switching away from an
             // active global install is not stopped -- the shadow warning below reports it.
@@ -204,12 +194,14 @@ internal sealed class InstallDialog : Dialog
             {
                 throw denied;
             }
-            var activateSeparately = ElevatedActivator.IsRequired(scope, currentActive?.Scope)
-                && InstallerService.NeedsSeparateElevatedActivation(scope, currentActive?.Scope);
-            if (activateSeparately)
-            {
-                request = request with { Activate = false };
-            }
+
+            // Same plan InstallCommand asks for (CLAUDE.md: both front-ends go through one
+            // elevation decision). The dialog always activates, so a user-scope install over
+            // an active global one installs unactivated here and hands the activation to the
+            // elevated child, exactly as `activate` does. Inside the try so a registry read
+            // failure lands in the dialog's own error handling.
+            var activation = await _installer.PlanActivationAsync(request, cancellationToken);
+            request = activation.Request;
 
             InstallEntry result = await _installer.InstallWithElevationAsync(
                 request,
@@ -230,9 +222,8 @@ internal sealed class InstallDialog : Dialog
 
             // A failure is reported in the completion box below, not in a box of its own:
             // two boxes read as "failed" then "Success".
-            ElevatedOperationResult? separateActivation = activateSeparately
-                ? await ElevatedActivator.RunAsync(result.Id, createDesktopShortcut: false)
-                : null;
+            ElevatedOperationResult? separateActivation =
+                await _installer.CompleteActivationAsync(activation, result);
 
             // NotApplicable covers both "no published sums to check against" and
             // "this release publishes none upstream" -- neither is an error, so
@@ -248,7 +239,7 @@ internal sealed class InstallDialog : Dialog
             // (ShimShadowing.GetWarning): a surviving machine-wide shim outranks this
             // in-process activation. Not after the elevated split -- that child ran
             // elevated and could remove the global shim itself, exactly as the CLI skips it.
-            var shadowWarning = request.Activate
+            var shadowWarning = activation.ActivatedInProcess
                 ? ShimShadowing.GetWarning(_paths, scope)
                 : null;
 

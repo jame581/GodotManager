@@ -551,6 +551,52 @@ internal sealed class InstallerService
         && ElevatedActivator.TouchesMachineState(requestScope, previousActiveScope);
 
     /// <summary>
+    /// The activation half of an install, decided the way <c>activate</c> decides it and
+    /// before anything is written (CLAUDE.md, "Decide elevation before the first
+    /// machine-wide write"): a user-scope install over an active global one must clear
+    /// machine-wide state, which an unelevated process cannot do, so it installs unactivated
+    /// and <see cref="CompleteActivationAsync"/> hands the activation to the elevated child.
+    /// The split is Windows-only (<see cref="ElevatedActivator.IsRequired"/> is false
+    /// elsewhere). Shared by the CLI and the TUI install dialog, which had each composed
+    /// this predicate, the request split and the launcher call by hand; they still present
+    /// the outcome themselves, and the CLI announces the UAC prompt between the two calls.
+    /// </summary>
+    public Task<InstallActivationPlan> PlanActivationAsync(
+        InstallRequest request, CancellationToken cancellationToken = default) =>
+        PlanActivationAsync(request, ElevatedActivator.IsRequired, cancellationToken);
+
+    internal async Task<InstallActivationPlan> PlanActivationAsync(
+        InstallRequest request,
+        Func<InstallScope, InstallScope?, bool> isElevationRequired,
+        CancellationToken cancellationToken = default)
+    {
+        if (!request.Activate || request.DryRun)
+        {
+            return new InstallActivationPlan(request, ActivateSeparately: false);
+        }
+
+        var currentActive = (await _registry.LoadAsync(cancellationToken)).GetActive();
+        return isElevationRequired(request.Scope, currentActive?.Scope)
+            && NeedsSeparateElevatedActivation(request.Scope, currentActive?.Scope)
+                ? new InstallActivationPlan(request with { Activate = false }, ActivateSeparately: true)
+                : new InstallActivationPlan(request, ActivateSeparately: false);
+    }
+
+    /// <summary>
+    /// The separate activation <see cref="PlanActivationAsync(InstallRequest, CancellationToken)"/>
+    /// asked for, run through <see cref="ElevatedActivator"/> exactly as <c>activate</c> does;
+    /// null when the plan needed none. Returns the outcome instead of printing it: the TUI
+    /// calls this while Terminal.Gui owns the screen. Takes no cancellation token on
+    /// purpose: the install has already committed, so a cancel from the dialog must not turn
+    /// it into a "cancelled" one (the elevated launch never took one either).
+    /// </summary>
+    public async Task<ElevatedOperationResult?> CompleteActivationAsync(
+        InstallActivationPlan plan, InstallEntry installed) =>
+        plan.ActivateSeparately
+            ? await ElevatedActivator.RunAsync(installed.Id, createDesktopShortcut: false)
+            : null;
+
+    /// <summary>
     /// Projects a request onto the wire format the elevated child is launched with.
     /// </summary>
     internal static ElevatedInstallPayload BuildElevatedPayload(InstallRequest request) =>
