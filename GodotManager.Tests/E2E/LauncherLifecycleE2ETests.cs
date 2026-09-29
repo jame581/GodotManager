@@ -273,27 +273,39 @@ public class LauncherLifecycleE2ETests : IDisposable
         Assert.Equal(other.Id, registry.ActiveId);
     }
 
+    // The desktop shortcut is opt-in and belongs to the activation, which the replacement
+    // inherits, so a reinstall in place must not take it away -- with or without --activate
+    // (the TUI dialog always activates). One fixture per case: the InstallAsync helper reads the
+    // entry back by version, so a second 4.5.1 install in the same registry would be ambiguous.
+    private async Task AssertReinstallKeepsAndRewritesTheDesktopShortcut(params string[] flags)
+    {
+        var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force");
+        var active = await InstallAsync("4.5.1", "--path", target, "--activate");
+        Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
+        var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
+        var placeholder = System.Text.Encoding.UTF8.GetBytes("shortcut");
+        File.WriteAllBytes(shortcut, placeholder);
+
+        await InstallAsync("4.5.1", ["--path", target, "--force", .. flags]);
+
+        Assert.True(File.Exists(shortcut), "the reinstall took the active install's desktop shortcut away");
+        Assert.NotEqual(placeholder, File.ReadAllBytes(shortcut)); // rewritten, not merely left in place
+    }
+
     [Fact]
     public async Task Install_Force_OverTheActiveInstall_KeepsAndRewritesItsDesktopShortcut()
     {
-        // The desktop shortcut is opt-in and belongs to the activation, which the
-        // replacement inherits, so a reinstall in place must not take it away -- with or
-        // without --activate (the TUI dialog always activates).
         if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
-        foreach (var flags in new[] { Array.Empty<string>(), new[] { "--activate" } })
-        {
-            var target = Path.Combine(_fixture.Paths.GetInstallRoot(InstallScope.User), "godot-4.5.1-force-" + flags.Length);
-            var active = await InstallAsync("4.5.1", "--path", target, "--activate");
-            Directory.CreateDirectory(_fixture.Paths.DesktopDirectory);
-            var shortcut = Path.Combine(_fixture.Paths.DesktopDirectory, $"Godot {active.Version} ({active.Edition}).lnk");
-            var placeholder = System.Text.Encoding.UTF8.GetBytes("shortcut");
-            File.WriteAllBytes(shortcut, placeholder);
 
-            await InstallAsync("4.5.1", ["--path", target, "--force", .. flags]);
+        await AssertReinstallKeepsAndRewritesTheDesktopShortcut();
+    }
 
-            Assert.True(File.Exists(shortcut), $"a reinstall ({string.Join(' ', flags)}) took the active install's desktop shortcut away");
-            Assert.NotEqual(placeholder, File.ReadAllBytes(shortcut)); // rewritten, not merely left in place
-        }
+    [Fact]
+    public async Task Install_ForceActivate_OverTheActiveInstall_KeepsAndRewritesItsDesktopShortcut()
+    {
+        if (!OperatingSystem.IsWindows()) return; // desktop shortcuts are Windows-only
+
+        await AssertReinstallKeepsAndRewritesTheDesktopShortcut("--activate");
     }
 
     [Fact]
