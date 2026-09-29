@@ -86,6 +86,33 @@ internal sealed class LauncherService
         TryDelete(GetEntryPath(entry, _paths));
     }
 
+    /// <summary>
+    /// Carries the desktop shortcut from an entry to the one replacing it in place
+    /// (<c>install --force</c> over the active install). Only a shortcut that exists is
+    /// carried -- it is opt-in -- and it is rewritten either way, since the replacement may
+    /// be another version at the same path; the old file goes when its name differs.
+    /// </summary>
+    public void MoveDesktopShortcut(InstallEntry from, InstallEntry to)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var fromPath = GetDesktopShortcutPath(from, _paths);
+        if (!File.Exists(fromPath))
+        {
+            return;
+        }
+
+        if (!string.Equals(fromPath, GetDesktopShortcutPath(to, _paths), StringComparison.OrdinalIgnoreCase))
+        {
+            TryDelete(fromPath);
+        }
+
+        CreateDesktopShortcut(to);
+    }
+
     public void DeleteDesktopShortcut(InstallEntry entry)
     {
         if (OperatingSystem.IsWindows())

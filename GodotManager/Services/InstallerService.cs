@@ -224,6 +224,18 @@ internal sealed class InstallerService
         registry.Installs.RemoveAll(x => string.Equals(x.Path, targetDir, StringComparison.OrdinalIgnoreCase));
         registry.Installs.Add(entry);
 
+        // Replacing the active entry in place gives the replacement a fresh Id. The shim and
+        // GODOT_HOME still name this same directory, so the activation moves to the
+        // replacement; without it ActiveId dangles and GetActive() is null while the shim
+        // keeps working. Same scope only: a global entry's shim must not be attributed to a
+        // user-scope replacement, whose deactivation would clean the wrong scope's shim.
+        // With --activate the block below marks it anyway.
+        var replacedActive = replaced.FirstOrDefault(x => x.Id == activeIdBeforeReplace && x.Scope == entry.Scope);
+        if (replacedActive is not null && !request.Activate)
+        {
+            registry.MarkActive(entry.Id);
+        }
+
         if (request.Activate)
         {
             // Same cleanup `activate` does. Without it, switching the active install through
@@ -265,13 +277,20 @@ internal sealed class InstallerService
         {
             _environment.Launcher.Delete(old);
 
-            // The desktop shortcut belongs to the activation, and replacing the active entry
-            // without --activate never deactivates it: no later remove or deactivate would
-            // see the replacement as active, so the shortcut would outlive `remove --delete`.
-            // (With --activate, RemoveActiveAsync above already deleted it.)
+            // The desktop shortcut belongs to the activation. When it was carried over to
+            // the replacement (above), the shortcut moves with it; otherwise the replaced
+            // entry was active in another scope and the shortcut has no owner left, so it
+            // goes. (With --activate, RemoveActiveAsync above already deleted it.)
             if (old.Id == activeIdBeforeReplace)
             {
-                _environment.Launcher.DeleteDesktopShortcut(old);
+                if (ReferenceEquals(old, replacedActive) && !request.Activate)
+                {
+                    _environment.Launcher.MoveDesktopShortcut(old, entry);
+                }
+                else
+                {
+                    _environment.Launcher.DeleteDesktopShortcut(old);
+                }
             }
         }
 
