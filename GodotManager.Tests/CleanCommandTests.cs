@@ -145,7 +145,7 @@ public class CleanCommandTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(globalRegistryPath)!);
         File.WriteAllText(globalRegistryPath, "{}");
 
-        CleanCommand.CleanupAll(_fixture.Paths);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher);
 
         Assert.False(File.Exists(globalRegistryPath));
     }
@@ -157,7 +157,7 @@ public class CleanCommandTests : IDisposable
             Path.Combine(_fixture.Paths.DownloadCacheDirectory, "abc123.archive"),
             "cached archive");
 
-        CleanCommand.CleanupAll(_fixture.Paths);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher);
 
         Assert.False(Directory.Exists(_fixture.Paths.DownloadCacheDirectory));
     }
@@ -175,7 +175,7 @@ public class CleanCommandTests : IDisposable
         var foreign = Path.Combine(_fixture.Paths.GetLauncherDirectory(InstallScope.User), "org.gnome.Foo.desktop");
         File.WriteAllText(foreign, "[Desktop Entry]\n");
 
-        CleanCommand.CleanupAll(_fixture.Paths, [user, global]);
+        CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher, [user, global]);
 
         Assert.False(_fixture.Launcher.Exists(user));
         Assert.False(_fixture.Launcher.Exists(global));
@@ -204,7 +204,7 @@ public class CleanCommandTests : IDisposable
         File.SetUnixFileMode(globalLauncherDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
-            CleanCommand.CleanupAll(_fixture.Paths, [global]);
+            CleanCommand.CleanupAll(_fixture.Paths, _fixture.Launcher, [global]);
 
             Assert.True(File.Exists(desktopFile));
             Assert.Contains($"Failed to remove launcher entry: {desktopFile}", console.Output);

@@ -460,6 +460,34 @@ public class DoctorCommandTests : IDisposable
         Assert.DoesNotContain("can be removed", output);
     }
 
+    [Fact]
+    public async Task Doctor_WithAnUnmovedGlobalRootAndAnUnreadableDestination_KeepsTheLegacyRootAndNeverCallsItRemovable()
+    {
+        // Two questions are asked of the destination and each has a safe answer for a
+        // directory doctor cannot list: it blocks the move (it exists), and it does not count
+        // as content that landed (so the old root is never offered for deletion).
+        if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess) return; // POSIX permission simulation
+        var (legacy, destination) = UnmovedRoot(InstallScope.Global);
+        Directory.CreateDirectory(destination);
+        File.WriteAllText(Path.Combine(destination, "landed"), "x");
+        File.SetUnixFileMode(destination, UnixFileMode.None);
+        try
+        {
+            var output = Flatten(await RunDoctorAsync(_fixture));
+
+            Assert.Contains("Still in use", output);
+            Assert.Contains($"{destination} already exists", output);
+            Assert.Contains("do not delete this directory", output);
+            Assert.DoesNotContain("can be removed", output);
+            Assert.True(Directory.Exists(legacy));
+        }
+        finally
+        {
+            File.SetUnixFileMode(destination,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
     [Theory]
     [InlineData("/home/u/sandbox")]
     [InlineData("sandbox")]

@@ -15,12 +15,14 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
 {
     private readonly AppPaths _paths;
     private readonly RegistryService _registry;
+    private readonly EnvironmentService _environment;
     private readonly DiagnosticContext? _diagnostics;
 
-    public CleanCommand(AppPaths paths, RegistryService registry, DiagnosticContext? diagnostics = null)
+    public CleanCommand(AppPaths paths, RegistryService registry, EnvironmentService environment, DiagnosticContext? diagnostics = null)
     {
         _paths = paths;
         _registry = registry;
+        _environment = environment;
         _diagnostics = diagnostics;
     }
 
@@ -37,7 +39,7 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         // are global targets this user cannot remove, rather than cleaning half and printing
         // a "Failed to remove" line per global item. Before the prompt, so the user is not
         // asked to confirm an operation that is about to be refused.
-        if (LinuxElevation.CheckClean(_paths, new LauncherService(_paths, _diagnostics), context.Arguments) is { } denied)
+        if (LinuxElevation.CheckClean(_paths, _environment.Launcher, context.Arguments) is { } denied)
         {
             return GodmanExceptionRenderer.Render("Clean failed:", denied);
         }
@@ -54,19 +56,8 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
         }
 
         // Read before anything is deleted: the registry is the only record of which desktop
-        // shortcuts on Windows are ours. Best-effort -- clean is the recovery tool, and it
-        // must still run on a machine whose installs.json is corrupt. The list only matters
-        // for Windows desktop shortcuts; everything else clean removes is found by location.
-        IReadOnlyList<InstallEntry> installs;
-        try
-        {
-            installs = _registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
-            installs = [];
-        }
+        // shortcuts on Windows are ours.
+        var installs = LoadInstallsBestEffort(_registry, _diagnostics, cancellationToken);
 
         if (OperatingSystem.IsWindows() && !WindowsElevationHelper.IsElevated() && HasGlobalCleanupTargets(_paths))
         {
@@ -74,13 +65,33 @@ internal sealed class CleanCommand : Command<CleanCommand.Settings>
             return RunElevatedCleanup();
         }
 
-        CleanupAll(_paths, installs, _diagnostics);
+        CleanupAll(_paths, _environment.Launcher, installs, _diagnostics);
         return 0;
     }
 
-    internal static void CleanupAll(AppPaths paths, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
+    /// <summary>
+    /// The registry's installs, or none when it cannot be read. Best-effort -- clean is the
+    /// recovery tool, and it must still run on a machine whose installs.json is corrupt. The
+    /// list only matters for Windows desktop shortcuts; everything else clean removes is
+    /// found by location. Shared with the elevated mirror so the two cannot drift.
+    /// </summary>
+    internal static IReadOnlyList<InstallEntry> LoadInstallsBestEffort(
+        RegistryService registry, DiagnosticContext? diagnostics, CancellationToken cancellationToken)
     {
-        var launcher = new LauncherService(paths, diagnostics);
+        try
+        {
+            return registry.LoadAsync(cancellationToken).GetAwaiter().GetResult().Installs;
+        }
+        catch (Exception ex)
+        {
+            diagnostics?.Warn($"could not read the registry before cleaning; desktop shortcuts will be left: {ex.Message}");
+            return [];
+        }
+    }
+
+    internal static void CleanupAll(
+        AppPaths paths, LauncherService launcher, IReadOnlyList<InstallEntry>? installs = null, DiagnosticContext? diagnostics = null)
+    {
         foreach (var scope in new[] { InstallScope.User, InstallScope.Global })
         {
             foreach (var removed in launcher.DeleteAll(scope, installs ?? []))
